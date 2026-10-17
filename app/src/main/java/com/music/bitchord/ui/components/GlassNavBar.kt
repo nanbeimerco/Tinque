@@ -12,15 +12,12 @@ package com.music.bitchord.ui.components
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -30,10 +27,10 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Pause
@@ -46,18 +43,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -70,14 +63,12 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBar
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarDefaults
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarScrollConnection
-import com.music.bitchord.ui.theme.rememberArtworkPalette
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
-import dev.chrisbanes.haze.materials.HazeMaterials
-import kotlinx.coroutines.launch
+import com.music.bitchord.ui.player.LocalPlayerDock
+import com.music.bitchord.ui.player.PlayerDock
+import com.music.bitchord.ui.player.playerDockArt
 
 /**
  * The liquid glass navigation bar: the iOS 26 shape where the now playing
@@ -98,7 +89,6 @@ import kotlinx.coroutines.launch
  * [song] null means nothing is playing, and the accessory is simply absent: the
  * bar is then the tab pill and Search alone, and the collapse still works.
  */
-@OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
 fun GlassNavBar(
     tabs: List<BottomTab>,
@@ -113,24 +103,17 @@ fun GlassNavBar(
     onNext: () -> Unit,
     onExpand: () -> Unit,
     onDismiss: () -> Unit = {},
-    modifier: Modifier = Modifier,
+    dock: PlayerDock? = null,
+    pull: MiniPlayerPull? = null,
     useGlass: Boolean = false,
-    hazeState: HazeState? = null,
+    modifier: Modifier = Modifier,
 ) {
     val pillShape = remember { RoundedCornerShape(percent = 50) }
     val isDark = isSystemInDarkTheme()
     val borderColor = if (isDark) GLASS_EDGE_COLOR else Color.Black.copy(alpha = 0.08f)
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val hideNavigationBarLabels by AppSettings.hideNavigationBarLabels.collectAsStateWithLifecycle()
-    val useArtworkColor by AppSettings.miniPlayerArtworkColor.collectAsStateWithLifecycle()
-    val miniArtworkPalette = rememberArtworkPalette(
-        imageUrl = song?.thumbnailUrl?.takeIf { useArtworkColor },
-        artPx = ROW_ART_PX,
-    )
 
     val contentColor = if (useGlass) glassContentColor() else MaterialTheme.colorScheme.onSurface
-    val miniContentColor = if (useArtworkColor) miniArtworkPalette.onBackground else contentColor
-    val miniSecondaryColor = if (useArtworkColor) miniArtworkPalette.onBackgroundVariant else null
     val selectedColor = if (useGlass) contentColor else MaterialTheme.colorScheme.primary
     val unselectedColor = if (useGlass) contentColor.copy(alpha = 0.65f) else MaterialTheme.colorScheme.onSurfaceVariant
     val indicatorColor = if (useGlass) glassIndicatorColor().copy(alpha = 0.5f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
@@ -139,49 +122,15 @@ fun GlassNavBar(
     val currentOnTabSelected by rememberUpdatedState(onTabSelected)
     val standaloneIndex = tabs.lastIndex
 
-    // Ensure tab bar is expanded whenever no song is playing
-    LaunchedEffect(song) {
-        if (song == null) {
-            scrollConnection.expand()
-        }
-    }
-
-    val surfaceModifier: @Composable () -> Modifier = if (useGlass) {
-        { Modifier.liquidGlass(shape = pillShape) }
-    } else {
-        {
-            if (reduceDynamicBlur || hazeState == null) {
+    // A factory, not a value. Each surface gets its own glass or clean background modifier.
+    val surfaceModifier: @Composable () -> Modifier = remember(useGlass, pillShape, borderColor) {
+        if (useGlass) {
+            { Modifier.liquidGlass(shape = pillShape) }
+        } else {
+            {
                 Modifier
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh, pillShape)
                     .border(GLASS_EDGE_WIDTH, borderColor, pillShape)
-            } else {
-                Modifier
-                    .optimizedHazeEffect(
-                        state = hazeState,
-                        style = HazeMaterials.regular(MaterialTheme.colorScheme.surface),
-                    )
-                    .border(GLASS_EDGE_WIDTH, borderColor, pillShape)
-            }
-        }
-    }
-    val miniSurfaceModifier: @Composable () -> Modifier = if (!useArtworkColor) {
-        surfaceModifier
-    } else {
-        {
-            when {
-                useGlass -> Modifier
-                    .liquidGlass(shape = pillShape)
-                    .background(miniArtworkPalette.background.copy(alpha = 0.24f), pillShape)
-                    .border(GLASS_EDGE_WIDTH, miniArtworkPalette.divider.copy(alpha = 0.55f), pillShape)
-                reduceDynamicBlur || hazeState == null -> Modifier
-                    .background(miniArtworkPalette.background.copy(alpha = 0.90f), pillShape)
-                    .border(GLASS_EDGE_WIDTH, miniArtworkPalette.divider.copy(alpha = 0.55f), pillShape)
-                else -> Modifier
-                    .optimizedHazeEffect(
-                        state = hazeState,
-                        style = HazeMaterials.regular(miniArtworkPalette.background),
-                    )
-                    .border(GLASS_EDGE_WIDTH, miniArtworkPalette.divider.copy(alpha = 0.55f), pillShape)
             }
         }
     }
@@ -190,7 +139,7 @@ fun GlassNavBar(
         selectedTabKey = selectedIndex,
         scrollConnection = scrollConnection,
         modifier = modifier
-            .navigationBarsPadding()
+            .windowInsetsPadding(floatingBarInsets)
             .padding(horizontal = PAGE_GUTTER)
             .padding(bottom = 2.dp)
             .fillMaxWidth(),
@@ -202,15 +151,16 @@ fun GlassNavBar(
                     isInline = true,
                     isPlaying = isPlaying,
                     isLoading = isLoading,
-                    contentColor = miniContentColor,
-                    artworkSecondaryColor = miniSecondaryColor,
+                    contentColor = contentColor,
                     onPlayPause = onPlayPause,
                     onPrevious = onPrevious,
                     onNext = onNext,
                     onExpand = onExpand,
                     onDismiss = onDismiss,
+                    dock = dock,
+                    pull = pull,
                     useGlass = useGlass,
-                    modifier = accessoryModifier.then(miniSurfaceModifier()),
+                    modifier = accessoryModifier.then(surfaceModifier()),
                 )
             }
         },
@@ -221,15 +171,16 @@ fun GlassNavBar(
                     isInline = false,
                     isPlaying = isPlaying,
                     isLoading = isLoading,
-                    contentColor = miniContentColor,
-                    artworkSecondaryColor = miniSecondaryColor,
+                    contentColor = contentColor,
                     onPlayPause = onPlayPause,
                     onPrevious = onPrevious,
                     onNext = onNext,
                     onExpand = onExpand,
                     onDismiss = onDismiss,
+                    dock = dock,
+                    pull = pull,
                     useGlass = useGlass,
-                    modifier = accessoryModifier.fillMaxWidth().then(miniSurfaceModifier()),
+                    modifier = accessoryModifier.fillMaxWidth().then(surfaceModifier()),
                 )
             }
         },
@@ -249,16 +200,11 @@ fun GlassNavBar(
         // Expanded, this is meant to be the plain [FloatingBottomBar] with a
         // different material — same outer width, same pill inset, same tab
         // padding, same 25dp glyph — so the two bars measure identically and the
-        // toggle changes the surface rather than the layout. The horizontal tab
-        // padding is gone with it: the tabs divide the pill by weight now, the
-        // way the plain bar's do, so a per-tab horizontal padding would only
-        // inset the ripple.
+        // toggle changes the surface rather than the layout.
         sizes = FloatingTabBarDefaults.sizes(
             tabBarContentPadding = PaddingValues(PILL_INSET),
             tabExpandedContentPadding = PaddingValues(vertical = TAB_VERTICAL_PADDING),
         ),
-        // Held too: this is declared `Any?`, so a fresh list every pass is a
-        // changed argument by identity and defeats skipping on its own.
         contentKey = remember(selectedIndex, tabs, contentColor, hideNavigationBarLabels) {
             listOf(selectedIndex, tabs, contentColor, hideNavigationBarLabels)
         },
@@ -302,9 +248,6 @@ fun GlassNavBar(
                                 color = tint,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                // The library's Tab stacks the glyph and the label
-                                // with nothing between them; the plain bar spaces
-                                // them, and this is where that gap goes.
                                 modifier = Modifier.padding(top = TAB_ICON_LABEL_GAP),
                             )
                         }
@@ -323,11 +266,6 @@ fun GlassNavBar(
  * element carrying it between the bar's states has one thing to interpolate:
  * [isInline] narrows the artwork, drops the artist line and drops the skip
  * button, which is what makes it fit the collapsed row's height.
- *
- * The content is [MiniPlayer]'s — same artwork, same transport, same haptics —
- * and not Echo's, which reaches into a player connection this app doesn't have.
- * The press response is Echo's, and belongs to the glass rather than the row:
- * a surface you can push on is the whole point of the material.
  */
 @Composable
 private fun GlassNowPlaying(
@@ -336,12 +274,13 @@ private fun GlassNowPlaying(
     isPlaying: Boolean,
     isLoading: Boolean,
     contentColor: Color,
-    artworkSecondaryColor: Color? = null,
     onPlayPause: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
     onExpand: () -> Unit,
     onDismiss: () -> Unit = {},
+    dock: PlayerDock?,
+    pull: MiniPlayerPull?,
     useGlass: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -355,103 +294,59 @@ private fun GlassNowPlaying(
         label = "accessoryPressScale",
     )
 
-    val density = LocalDensity.current
-    val dismissThresholdPx = with(density) { 48.dp.toPx() }
-    val offsetY = remember { Animatable(0f) }
-    val scope = rememberCoroutineScope()
-
     val artSize = if (isInline) 32.dp else 40.dp
     val glyphSlot = if (isInline) 32.dp else 40.dp
     val glyphSize = if (isInline) 24.dp else 32.dp
 
     Box(
-        // Inline, the accessory is stretched to the row's height by the tab bar
-        // (`fillMaxHeight` on a row measured at IntrinsicSize.Max), and this row
-        // is shorter than that — the tab pill beside it, with a 25dp glyph in
-        // 10dp of padding, is the tallest thing in the row and sets the height.
-        // A Box defaults to TopStart, so the artwork and the transport sat a
-        // couple of dp above the pill's centre line. Expanded the Box wraps its
-        // content, so centring is a no-op there.
         contentAlignment = Alignment.Center,
         modifier = Modifier
+            .miniPlayerGestures(
+                pull = pull,
+                onNext = {
+                    haptics.play(Haptic.SkipNext)
+                    onNext()
+                },
+                onPrevious = {
+                    haptics.play(Haptic.SkipPrevious)
+                    onPrevious()
+                },
+            )
             .graphicsLayer {
                 scaleX = pressScale
                 scaleY = pressScale
-                translationY = offsetY.value
-                alpha = (1f - (offsetY.value / (dismissThresholdPx * 1.5f))).coerceIn(0f, 1f)
             }
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onDragEnd = {
-                        if (offsetY.value >= dismissThresholdPx) {
-                            scope.launch {
-                                offsetY.animateTo(dismissThresholdPx * 2f, tween(120))
-                                onDismiss()
-                            }
-                        } else {
-                            scope.launch {
-                                offsetY.animateTo(0f, spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow))
-                            }
-                        }
-                    },
-                    onDragCancel = {
-                        scope.launch {
-                            offsetY.animateTo(0f, spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow))
-                        }
-                    },
-                    onVerticalDrag = { change, dragAmount ->
-                        if (dragAmount > 0 || offsetY.value > 0) {
-                            change.consume()
-                            val next = (offsetY.value + dragAmount).coerceAtLeast(0f)
-                            scope.launch { offsetY.snapTo(next) }
-                        }
-                    },
-                )
-            }
-            .then(modifier),
+            .then(modifier)
+            .clickable(
+                interactionSource = pressSource,
+                indication = null,
+                onClick = onExpand,
+            ),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(
-                    interactionSource = pressSource,
-                    indication = null,
-                    onClick = onExpand,
-                )
                 .padding(
                     horizontal = if (isInline) 8.dp else 12.dp,
                     vertical = if (isInline) 4.dp else 8.dp,
                 ),
         ) {
-                AsyncImage(
+            AsyncImage(
                 model = song.artworkAt(ROW_ART_PX),
                 contentDescription = null,
                 modifier = Modifier
                     .size(artSize)
+                    .playerDockArt(dock = dock, corner = if (isInline) 6.dp else 8.dp)
                     .clip(RoundedCornerShape(if (isInline) 6.dp else 8.dp))
-                    .thumbnailBorder(RoundedCornerShape(if (isInline) 6.dp else 8.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             )
             Spacer(Modifier.width(if (isInline) 8.dp else 10.dp))
             if (isInline) {
                 Text(
                     text = song.title,
-                    // The same size the expanded row sets it in. Collapsing the
-                    // bar drops the artist line and the skip button, not the
-                    // title's weight in the row — a title that shrank as well
-                    // would read as a different component rather than the same
-                    // one folded up, and the shared element carrying it between
-                    // the two states has one less thing to interpolate.
-                    //
-                    // It costs nothing in height: the row is stretched to the
-                    // tab pill's 45dp either way, and titleMedium's line box
-                    // still clears the 32dp artwork beside it.
                     style = MaterialTheme.typography.titleMedium,
                     color = contentColor,
-                    // The inline row shares its width with the tab pill and the
-                    // Search circle, so most titles will not fit at this size.
-                    // Cut with an ellipsis rather than wrapped or scaled.
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
@@ -466,8 +361,7 @@ private fun GlassNowPlaying(
                     Text(
                         text = song.artist,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = artworkSecondaryColor
-                            ?: if (useGlass) contentColor.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (useGlass) contentColor.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -492,7 +386,7 @@ private fun GlassNowPlaying(
             if (isLoading) {
                 Box(Modifier.size(glyphSlot), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(
-                        color = if (useGlass || artworkSecondaryColor != null) contentColor else MaterialTheme.colorScheme.primary,
+                        color = if (useGlass) contentColor else MaterialTheme.colorScheme.primary,
                         strokeWidth = 2.dp,
                         modifier = Modifier.size(if (isInline) 18.dp else 22.dp),
                     )
@@ -513,9 +407,6 @@ private fun GlassNowPlaying(
                     )
                 }
             }
-            // Dropped inline: the collapsed row is sharing its width with the
-            // tab pill and the Search circle, and the title is what has to
-            // survive that, not a second transport button.
             if (!isInline) {
                 Spacer(Modifier.width(8.dp))
                 IconButton(

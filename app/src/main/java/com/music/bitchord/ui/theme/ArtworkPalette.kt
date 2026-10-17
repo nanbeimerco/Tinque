@@ -96,7 +96,7 @@ fun rememberArtworkPalette(
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
 
     // The two swatches everything else is derived from, or null until read.
-    var seed by remember(imageUrl) { mutableStateOf(imageUrl?.let(seedCache::get)) }
+    var seed by remember(imageUrl) { mutableStateOf(imageUrl?.let(::getCachedArtworkSeed)) }
     // Whether the colours were there from the first frame. If they were, there
     // is nothing to crossfade *from* and animating would only put a delay in
     // front of a surface that could already be right.
@@ -119,7 +119,7 @@ fun rememberArtworkPalette(
         // Quantising 128² pixels is not free, and this coroutine is on the main
         // dispatcher — left there it stutters whatever is animating the surface in.
         val found = withContext(Dispatchers.Default) { seedOf(bitmap) } ?: return@LaunchedEffect
-        seedCache[imageUrl] = found
+        putCachedArtworkSeed(imageUrl, found)
         seed = found
     }
 
@@ -161,6 +161,21 @@ fun rememberArtworkPalette(
  */
 private val seedCache = object : LinkedHashMap<String, Seed>(0, 0.75f, true) {
     override fun removeEldestEntry(eldest: Map.Entry<String, Seed>) = size > SEED_CACHE_ENTRIES
+}
+
+private val SIZE_HINT_PATTERN = Regex("""w\d+-h\d+""")
+
+private fun normalizeSeedKey(url: String): String = url.replace(SIZE_HINT_PATTERN, "")
+
+private fun getCachedArtworkSeed(url: String): Seed? =
+    seedCache[url] ?: seedCache[normalizeSeedKey(url)]
+
+private fun putCachedArtworkSeed(url: String, seed: Seed) {
+    seedCache[url] = seed
+    val norm = normalizeSeedKey(url)
+    if (norm != url) {
+        seedCache[norm] = seed
+    }
 }
 
 /** Deep enough to cover a session's browsing without holding a screenful of colours. */

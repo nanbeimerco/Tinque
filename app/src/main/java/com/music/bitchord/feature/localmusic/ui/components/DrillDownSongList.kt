@@ -1,6 +1,8 @@
 package com.music.bitchord.feature.localmusic.ui.components
 
 import android.os.Build
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -8,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import com.music.bitchord.ui.utils.debouncedCombinedClickable
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -578,7 +581,7 @@ fun DrillDownSongList(
         imageUrl = pageArtworkUrl,
         artPx = HEADER_ART_PX,
     )
-    SideEffect {
+    LaunchedEffect(artworkPalette.background) {
         onArtworkPaletteChanged?.invoke(artworkPalette.takeIf { fullScreenArtwork })
     }
     // Detail pages draw their artwork behind the translucent app bar. Keep the
@@ -917,6 +920,18 @@ private fun CollectionPageBackground(
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val softenFoot = !reduceDynamicBlur && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    var blurReady by remember(imageUrl) { mutableStateOf(false) }
+    LaunchedEffect(imageUrl) {
+        if (softenFoot) {
+            delay(280L)
+            blurReady = true
+        }
+    }
+    val footAlpha by animateFloatAsState(
+        targetValue = if (softenFoot && blurReady) 1f else 0f,
+        animationSpec = tween(280),
+        label = "softFootAlpha",
+    )
 
     Box(Modifier.fillMaxSize().clipToBounds()) {
         if (!imageUrl.isNullOrBlank()) {
@@ -937,14 +952,20 @@ private fun CollectionPageBackground(
                 // Follow BitChord's release-page treatment: keep the sleeve
                 // sharp above, and blend in a blurred copy toward its lower
                 // fifth so it merges naturally into the artwork-derived wash.
-                if (softenFoot) {
+                //
+                // Deferred until the slide-in transition finishes to avoid
+                // running an offscreen-composited 48dp blur while in motion.
+                if (softenFoot && footAlpha > 0f) {
                     AsyncImage(
                         model = imageUrl,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                            .graphicsLayer {
+                                compositingStrategy = CompositingStrategy.Offscreen
+                                alpha = footAlpha
+                            }
                             .drawWithContent {
                                 drawContent()
                                 drawRect(SOFT_FOOT_MASK, blendMode = BlendMode.DstIn)

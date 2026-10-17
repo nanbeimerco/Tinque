@@ -11,7 +11,10 @@ package com.music.bitchord.ui.components.backdrop.shadow
 
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.ClipOp
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -28,6 +31,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import com.music.bitchord.ui.components.backdrop.internal.ShapeProvider
 import com.music.bitchord.ui.components.backdrop.internal.blur
+import com.music.bitchord.ui.components.backdrop.internal.clipOutline
 import kotlin.math.ceil
 
 internal class ShadowElement(
@@ -40,7 +44,9 @@ internal class ShadowElement(
     }
 
     override fun update(node: ShadowNode) {
-        node.shapeProvider = shapeProvider
+        if (node.shapeProvider != shapeProvider) {
+            node.shapeProvider = shapeProvider
+        }
         node.shadow = shadow
         node.invalidateDraw()
     }
@@ -76,55 +82,72 @@ internal class ShadowNode(
     override val shouldAutoInvalidate: Boolean = false
 
     private var shadowLayer: GraphicsLayer? = null
+    private var clipPath: Path? = null
 
     private val paint = Paint()
 
     override fun ContentDrawScope.draw() {
-        val shadow = shadow() ?: return drawContent()
+        val shadow = shadow()
+        if (shadow == null || shadow.alpha <= 0f || shadow.radius.value <= 0f) {
+            return drawContent()
+        }
 
-        val shadowLayer = shadowLayer
-        if (shadowLayer != null) {
-            val size = size
-            val density: Density = this
-            val layoutDirection = layoutDirection
+        val size = size
+        val density: Density = this
+        val layoutDirection = layoutDirection
 
-            val radius = shadow.radius.toPx()
-            val offsetX = shadow.offset.x.toPx()
-            val offsetY = shadow.offset.y.toPx()
-            val shadowSize = IntSize(
-                ceil(size.width + radius * 4f + offsetX).toInt(),
-                ceil(size.height + radius * 4f + offsetY).toInt()
-            )
-            val outline = shapeProvider.shape.createOutline(size, layoutDirection, density)
+        val offsetX = shadow.offset.x.toPx()
+        val offsetY = shadow.offset.y.toPx()
+        val outline = shapeProvider.shape.createOutline(size, layoutDirection, density)
 
-            configurePaint(shadow)
+        configurePaint(shadow)
 
-            shadowLayer.alpha = shadow.alpha
-            shadowLayer.blendMode = shadow.blendMode
-            shadowLayer.record(shadowSize) {
-                translate(radius * 2f + offsetX, radius * 2f + offsetY) {
-                    val canvas = drawContext.canvas
-                    canvas.drawOutline(outline, paint)
-                    canvas.translate(-offsetX, -offsetY)
-                    canvas.drawOutline(outline, ShadowMaskPaint)
-                    canvas.translate(offsetX, offsetY)
+        if (shadow.alpha == 1f && shadow.blendMode == DrawScope.DefaultBlendMode) {
+            val path =
+                if (outline is Outline.Rounded) {
+                    clipPath ?: Path().also { clipPath = it }
+                } else {
+                    null
                 }
-            }
+            val canvas = drawContext.canvas
+            canvas.save()
+            canvas.clipOutline(outline, path, ClipOp.Difference)
+            canvas.translate(offsetX, offsetY)
+            canvas.drawOutline(outline, paint)
+            canvas.restore()
 
-            translate(-radius * 2f, -radius * 2f) {
-                drawLayer(shadowLayer)
+            drawContent()
+            return
+        }
+
+        val shadowLayer =
+            shadowLayer ?: requireGraphicsContext().createGraphicsLayer().apply {
+                compositingStrategy = CompositingStrategy.Offscreen
+            }.also { shadowLayer = it }
+
+        val radius = shadow.radius.toPx()
+        val shadowSize = IntSize(
+            ceil(size.width + radius * 4f + offsetX).toInt(),
+            ceil(size.height + radius * 4f + offsetY).toInt()
+        )
+
+        shadowLayer.alpha = shadow.alpha
+        shadowLayer.blendMode = shadow.blendMode
+        shadowLayer.record(shadowSize) {
+            translate(radius * 2f + offsetX, radius * 2f + offsetY) {
+                val canvas = drawContext.canvas
+                canvas.drawOutline(outline, paint)
+                canvas.translate(-offsetX, -offsetY)
+                canvas.drawOutline(outline, ShadowMaskPaint)
+                canvas.translate(offsetX, offsetY)
             }
         }
 
-        drawContent()
-    }
+        translate(-radius * 2f, -radius * 2f) {
+            drawLayer(shadowLayer)
+        }
 
-    override fun onAttach() {
-        val graphicsContext = requireGraphicsContext()
-        shadowLayer =
-            graphicsContext.createGraphicsLayer().apply {
-                compositingStrategy = CompositingStrategy.Offscreen
-            }
+        drawContent()
     }
 
     override fun onDetach() {
@@ -133,6 +156,7 @@ internal class ShadowNode(
             graphicsContext.releaseGraphicsLayer(layer)
             shadowLayer = null
         }
+        clipPath = null
     }
 
     private fun DrawScope.configurePaint(shadow: Shadow) {

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.app.Activity
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -43,6 +44,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -103,6 +105,7 @@ import com.music.bitchord.ui.screens.LOCAL_TAB_ARTISTS
 import com.music.bitchord.ui.screens.LOCAL_TAB_FOLDERS
 import com.music.bitchord.ui.screens.LOCAL_TAB_PLAYLISTS
 import com.music.bitchord.feature.localsearch.ui.LocalSearchScreen
+import com.music.bitchord.feature.localmusic.ui.FolderBrowserScreen
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.SheetValue
@@ -118,10 +121,12 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.music.bitchord.feature.localmusic.ui.components.AllFilesPermissionDialog
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -131,15 +136,31 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.material3.SheetState
+import androidx.compose.material3.ModalBottomSheetProperties
+import com.music.bitchord.ui.player.PlayerDock
+import com.music.bitchord.ui.player.LocalPlayerDock
+import com.music.bitchord.ui.player.PlayerSheetMotion
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -195,6 +216,7 @@ import com.music.bitchord.playback.rememberPlayerState
 import com.music.bitchord.playback.PlayerState
 import com.music.bitchord.ui.MainViewModel
 import com.music.bitchord.ui.components.BottomFadeScrim
+import com.music.bitchord.ui.components.FloatingBarsTapGuard
 import com.music.bitchord.ui.components.BottomTab
 import com.music.bitchord.ui.components.FLOATING_BAR_MAX_WIDTH
 import com.music.bitchord.ui.components.FloatingBottomBar
@@ -267,6 +289,9 @@ import java.util.Locale
 /** A full first screen of a native YouTube Music radio before AutoPlay tops it up. */
 private const val INITIAL_RADIO_TRACKS = 24
 
+/** M3's own scrim strength, which the player's dim stands in for. */
+private const val PLAYER_SCRIM_ALPHA = 0.32f
+
 class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -293,6 +318,7 @@ class MainActivity : AppCompatActivity() {
             val keepScreenOn by AppSettings.keepScreenOn.collectAsStateWithLifecycle()
             val showStatusBar by AppSettings.showStatusBar.collectAsStateWithLifecycle()
             val showNavigationBar by AppSettings.showNavigationBar.collectAsStateWithLifecycle()
+            val quietMode by AppSettings.quietMode.collectAsStateWithLifecycle()
             val screenOrientation by AppSettings.screenOrientationMode.collectAsStateWithLifecycle()
             val iosOverscrollFactory = rememberIosOverscrollFactory()
             val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
@@ -304,7 +330,7 @@ class MainActivity : AppCompatActivity() {
             DisposableEffect(composeView) {
                 onDispose { composeView.keepScreenOn = false }
             }
-            LaunchedEffect(showStatusBar, showNavigationBar) {
+            LaunchedEffect(showStatusBar, showNavigationBar, quietMode) {
                 applySystemBarPreferences()
             }
             LaunchedEffect(screenOrientation) {
@@ -387,8 +413,14 @@ class MainActivity : AppCompatActivity() {
     private fun applySystemBarPreferences() {
         val bars = WindowInsetsControllerCompat(window, window.decorView)
         bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (AppSettings.showStatusBar.value) bars.show(WindowInsetsCompat.Type.statusBars())
-        else bars.hide(WindowInsetsCompat.Type.statusBars())
+        // Quiet mode folds the status bar away in addition to whatever the
+        // user asked of it on its own: hiding it is the point of the mode,
+        // and the bar stays transiently revealable by swipe either way.
+        if (AppSettings.showStatusBar.value && !AppSettings.quietMode.value) {
+            bars.show(WindowInsetsCompat.Type.statusBars())
+        } else {
+            bars.hide(WindowInsetsCompat.Type.statusBars())
+        }
         if (AppSettings.showNavigationBar.value) bars.show(WindowInsetsCompat.Type.navigationBars())
         else bars.hide(WindowInsetsCompat.Type.navigationBars())
     }
@@ -455,9 +487,28 @@ private fun BitChordApp(
     // below goes with them, which is the part that costs a draw pass.
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val classicNavBar by AppSettings.classicNavBar.collectAsStateWithLifecycle()
+    val lockBottomBarExpanded by AppSettings.lockBottomBarExpanded.collectAsStateWithLifecycle()
     val useCollapsibleNavBar = !classicNavBar
     val glassSamplesBackdrop = glassActive && !reduceDynamicBlur
     var selectedTab by rememberSaveable { mutableIntStateOf(AppSettings.startupTab.value.index) }
+    // The order the user walked the tabs in, for top-level back: a back gesture
+    // from the top of Library or Folders answers "where was I, before this"
+    // rather than teleporting to the Songs tab — an edge swipe reads as a back,
+    // and a tab the user never visited is not a place a back gesture should
+    // land. Saveable so a log of the walk survives recreation too.
+    val tabHistory = rememberSaveable(
+        saver = listSaver<MutableList<Int>, Int>(
+            save = { ArrayList(it) },
+            restore = { it.toMutableList() },
+        ),
+    ) { mutableStateListOf<Int>() }
+    LaunchedEffect(selectedTab) {
+        if (tabHistory.lastOrNull() != selectedTab) {
+            tabHistory.add(selectedTab)
+            while (tabHistory.size > 32) tabHistory.removeAt(0)
+        }
+    }
+    val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
     val hideCollectionTopBar by AppSettings.hideCollectionTopBar.collectAsStateWithLifecycle()
     val hideFloatingCollectionControls by AppSettings.hideFloatingCollectionControls.collectAsStateWithLifecycle()
     val collectionBackHandlers = remember { mutableStateMapOf<String, () -> Unit>() }
@@ -505,6 +556,23 @@ private fun BitChordApp(
      * question this used to answer on its own: is the player covering the page?
      */
     var showNowPlaying by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val playerDock = remember { PlayerDock() }
+    val reducePlayerMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val playerSheetMotion = remember(playerDock, scope) {
+        PlayerSheetMotion(
+            scope = scope,
+            dock = playerDock,
+            shown = { showNowPlaying },
+            setShown = { showNowPlaying = it },
+        )
+    }
+    val currentWindowInfo = androidx.compose.ui.platform.LocalWindowInfo.current
+    val currentDensity = LocalDensity.current
+    LaunchedEffect(currentWindowInfo, currentDensity) {
+        playerSheetMotion.windowInfo = currentWindowInfo
+        playerSheetMotion.flingVelocity = with(currentDensity) { 400.dp.toPx() }
+    }
     // The far end of the relay from a widget's artwork. Cleared here rather than
     // where it was set, so the request is spent by being served — see
     // [PlayerDeepLink.handled]. The sheet itself is gated on there being a track,
@@ -514,14 +582,14 @@ private fun BitChordApp(
     val openPlayerRequested by PlayerDeepLink.pending.collectAsStateWithLifecycle()
     LaunchedEffect(openPlayerRequested) {
         if (openPlayerRequested) {
-            if (!playerDocked) showNowPlaying = true
+            if (!playerDocked) playerSheetMotion.open()
             PlayerDeepLink.handled()
         }
     }
 
     LaunchedEffect(Unit) {
         SingleSongPlaybackManager.closePlayerEvent.collect {
-            showNowPlaying = false
+            playerSheetMotion.close()
         }
     }
 
@@ -539,6 +607,7 @@ private fun BitChordApp(
     var showPlaybackTuning by remember { mutableStateOf(false) }
     var targetAlbumDrillDown by remember { mutableStateOf<String?>(null) }
     var targetArtistDrillDown by remember { mutableStateOf<String?>(null) }
+    var targetFolderDrillDown by remember { mutableStateOf<String?>(null) }
     var songActions by remember { mutableStateOf<Song?>(null) }
     /**
      * Whether the track menu that is up was opened from the player.
@@ -675,10 +744,18 @@ private fun BitChordApp(
         }
     }
 
-    val hasMusicBar = player.song != null && !playerDocked
     val navBarScroll = rememberFloatingTabBarScrollConnection(
-        inlineBehavior = if (hasMusicBar) FloatingTabBarInlineBehavior.OnScrollDown else FloatingTabBarInlineBehavior.Never,
+        inlineBehavior = if (lockBottomBarExpanded) {
+            FloatingTabBarInlineBehavior.Never
+        } else {
+            FloatingTabBarInlineBehavior.OnScrollDown
+        }
     )
+    LaunchedEffect(lockBottomBarExpanded) {
+        if (lockBottomBarExpanded) {
+            navBarScroll.expand()
+        }
+    }
     val onDismissMusicBar: () -> Unit = {
         controller?.stop()
         controller?.clearMediaItems()
@@ -816,9 +893,10 @@ private fun BitChordApp(
     val albumsLabel = stringResource(R.string.albums)
     val artistsLabel = stringResource(R.string.artists)
     val albumArtistsLabel = stringResource(R.string.album_artists)
+    val foldersLabel = stringResource(R.string.folders)
     val libraryLabel = stringResource(R.string.library)
     val searchLabel = stringResource(R.string.search)
-    val allTabs = remember(songsLabel, albumsLabel, artistsLabel, albumArtistsLabel, libraryLabel, searchLabel) {
+    val allTabs = remember(songsLabel, albumsLabel, artistsLabel, albumArtistsLabel, foldersLabel, libraryLabel, searchLabel) {
         listOf(
             BottomTab(songsLabel, Icons.Rounded.MusicNote),
             BottomTab(albumsLabel, Icons.Rounded.Album),
@@ -826,13 +904,12 @@ private fun BitChordApp(
             BottomTab(libraryLabel, Icons.Rounded.LibraryMusic),
             BottomTab(searchLabel, BitChordIcons.Search),
             BottomTab(albumArtistsLabel, Icons.Rounded.Person),
+            BottomTab(foldersLabel, Icons.Rounded.Folder),
         )
     }
     val tabs = remember(allTabs, visibleTabIndices) {
         visibleTabIndices.mapNotNull(allTabs::getOrNull)
     }
-
-    val scope = rememberCoroutineScope()
 
     val play: (List<Song>, Int) -> Unit = { songs, index ->
         playJob?.cancel()
@@ -873,8 +950,7 @@ private fun BitChordApp(
                 val startIndex = playable.indexOfFirst { (originalIndex, _) -> originalIndex >= requestedIndex }
                     .takeIf { it >= 0 } ?: 0
                 controller?.playSongs(playable.map { it.second }, startIndex)
-                // Nothing to raise where the player is already open beside the page.
-                if (!playerDocked) showNowPlaying = true
+                // Start playback in the mini-player; the user opens the full view by tapping it.
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -905,7 +981,7 @@ private fun BitChordApp(
         activeRadioSeed = null
         playJob = scope.launch {
             controller?.playSongs(listOf(song), 0)
-            if (!playerDocked) showNowPlaying = true
+            // Start playback in the mini-player; the user opens the full view by tapping it.
         }
     }
 
@@ -981,7 +1057,7 @@ private fun BitChordApp(
                     context.getString(R.string.radio_started, song.title),
                     Toast.LENGTH_SHORT,
                 ).show()
-                if (!playerDocked) showNowPlaying = true
+                // Start radio in the mini-player; the user opens the full view by tapping it.
             }
         }
     }
@@ -1866,15 +1942,34 @@ private fun BitChordApp(
         BackHandler(
             enabled = detail != null,
         ) { viewModel.closeDetail() }
-        // One back step out of Settings lands on Songs rather than exiting
+        // One back step out of Settings returns to the tab it was opened from.
         BackHandler(enabled = showSettings && detail == null) {
             showSettings = false
-            if (!showReplay) selectedTab = TAB_SONGS
         }
+        // Top-level back: undo the last tab change; with no tab before the
+        // current one, hand the app to the background the way a launcher leave
+        // does (playback and its notification keep running). This used to snap
+        // to the Songs tab, so a back gesture from the top level of Library,
+        // Folders or any other collection read as "switch the tab" instead of
+        // "go back" — and indeed switched to Songs on an edge swipe.
         BackHandler(
-            enabled = detail == null && !showSettings && !showReplay && selectedTab != TAB_SONGS,
+            enabled = detail == null && !showSettings && !showReplay &&
+                replayStory == null && !showReplayShare &&
+                !showListenBrainzLogin && !showLastfmLogin,
         ) {
-            selectedTab = TAB_SONGS
+            val target = if (tabHistory.size > 1) {
+                tabHistory.removeAt(tabHistory.lastIndex)
+                tabHistory.lastOrNull()
+            } else {
+                null
+            }
+            if (target != null && target != selectedTab) {
+                if (target != TAB_SEARCH) searchFocusTrigger = 0
+                viewModel.clearDetail()
+                selectedTab = target
+            } else {
+                (context as Activity).moveTaskToBack(true)
+            }
         }
         BackHandler(enabled = showListenBrainzLogin) { showListenBrainzLogin = false }
         BackHandler(enabled = showLastfmLogin) { showLastfmLogin = false }
@@ -2388,6 +2483,33 @@ private fun BitChordApp(
                                 contentPadding = listPadding,
                             )
                         }
+                        TAB_FOLDERS -> if (!hasStoragePermission) {
+                            Box(modifier = Modifier.fillMaxSize().padding(listPadding), contentAlignment = Alignment.Center) {
+                                LocalPermissionCard(
+                                    onRequestPermission = requestDefaultPermission,
+                                    onFallbackPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) requestAudioPermission else null,
+                                )
+                            }
+                        } else {
+                            FolderBrowserScreen(
+                                songs = localSongs,
+                                currentSong = player.song,
+                                isPlaying = player.isPlaying,
+                                onSongClick = play,
+                                onSongLongPress = openSongMenu,
+                                onSongSwipe = onSongSwipe,
+                                onShuffle = { songs ->
+                                    QueueShuffle.enableForNextQueue()
+                                    play(songs, songs.indices.random())
+                                },
+                                contentPadding = listPadding,
+                                customRootPath = localMusicFolderUri.ifBlank { null },
+                                initialPath = targetFolderDrillDown,
+                                onInitialPathConsumed = { targetFolderDrillDown = null },
+                                onArtworkPaletteChanged = onLocalArtworkPaletteChanged,
+                                onNavigationChanged = onCollectionNavigationChanged,
+                            )
+                        }
                         else -> Box(modifier = Modifier.fillMaxSize())
                     }
                 }
@@ -2514,75 +2636,101 @@ private fun BitChordApp(
                         if (index == TAB_ARTISTS && selectedTab == TAB_ARTISTS) {
                             targetArtistDrillDown = null
                         }
+                        if (index == TAB_FOLDERS && selectedTab == TAB_FOLDERS) {
+                            targetFolderDrillDown = null
+                        }
                         selectedTab = index
                     }
                 }
 
-                if (useCollapsibleNavBar) {
-                    // Collapsible floating bar replaces the two stacked bars with a
-                    // unified component: now playing controls dock into the tab bar,
-                    // and the pair folds together on scroll. Works with or without liquid glass.
-                    GlassNavBar(
-                        tabs = tabs,
-                        selectedIndex = visibleTabIndices.indexOf(selectedTab).coerceAtLeast(0),
-                        onTabSelected = onTabSelected,
-                        scrollConnection = navBarScroll,
-                        song = player.song?.takeUnless { playerDocked },
-                        isPlaying = player.isPlaying,
-                        isLoading = player.isLoading,
-                        onPlayPause = {
-                            controller?.let { if (it.isPlaying) it.pause() else it.play() }
-                        },
-                        onPrevious = { controller?.seekToPreviousMediaItem() },
-                        onNext = { controller?.seekToNextMediaItem() },
-                        onExpand = { showNowPlaying = true },
-                        onDismiss = onDismissMusicBar,
-                        useGlass = glassActive,
-                        hazeState = hazeState,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .widthIn(max = FLOATING_BAR_MAX_WIDTH)
-                            .fillMaxWidth(),
-                    )
-                } else Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        // Capped and centred rather than run to the page's edges
-                        // — see [FLOATING_BAR_MAX_WIDTH]. It sits on the Column
-                        // rather than on each bar so the two are held to the same
-                        // width and keep the shared left and right edge they have
-                        // on a phone. Before fillMaxWidth, so the fill has
-                        // already been bounded by the time it is applied.
-                        .widthIn(max = FLOATING_BAR_MAX_WIDTH)
-                        .fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    // Only where the player isn't already open beside the page:
-                    // a bar whose whole job is to stand in for the player, next
-                    // to the player, is a second copy of what is already there.
-                    player.song?.takeUnless { playerDocked }?.let { song ->
-                        MiniPlayer(
-                            song = song,
+                // Whichever bar is drawing reports its height here, for the
+                // guard to read at layout — never in composition, see the guard.
+                val floatingBarsHeight = remember { mutableIntStateOf(0) }
+                FloatingBarsTapGuard(
+                    barsHeight = { floatingBarsHeight.intValue },
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                )
+
+                CompositionLocalProvider(LocalPlayerDock provides playerDock) {
+                    if (useCollapsibleNavBar) {
+                        // Collapsible floating bar replaces the two stacked bars with a
+                        // unified component: now playing controls dock into the tab bar,
+                        // and the pair folds together on scroll. Works with or without liquid glass.
+                        GlassNavBar(
+                            tabs = tabs,
+                            selectedIndex = visibleTabIndices.indexOf(selectedTab).coerceAtLeast(0),
+                            onTabSelected = onTabSelected,
+                            scrollConnection = navBarScroll,
+                            song = player.song?.takeUnless { playerDocked },
                             isPlaying = player.isPlaying,
                             isLoading = player.isLoading,
-                            hazeState = hazeState,
                             onPlayPause = {
                                 controller?.let { if (it.isPlaying) it.pause() else it.play() }
                             },
                             onPrevious = { controller?.seekToPreviousMediaItem() },
                             onNext = { controller?.seekToNextMediaItem() },
-                            onExpand = { showNowPlaying = true },
+                            onExpand = if (reducePlayerMotion) {
+                                { showNowPlaying = true }
+                            } else {
+                                playerSheetMotion::open
+                            },
                             onDismiss = onDismissMusicBar,
-                            modifier = Modifier.fillMaxWidth(),
+                            dock = playerDock,
+                            pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                            useGlass = glassActive,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .widthIn(max = FLOATING_BAR_MAX_WIDTH)
+                                .fillMaxWidth()
+                                .onSizeChanged { floatingBarsHeight.intValue = it.height },
+                        )
+                    } else Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            // Capped and centred rather than run to the page's edges
+                            // — see [FLOATING_BAR_MAX_WIDTH]. It sits on the Column
+                            // rather than on each bar so the two are held to the same
+                            // width and keep the shared left and right edge they have
+                            // on a phone. Before fillMaxWidth, so the fill has
+                            // already been bounded by the time it is applied.
+                            .widthIn(max = FLOATING_BAR_MAX_WIDTH)
+                            .fillMaxWidth()
+                            .onSizeChanged { floatingBarsHeight.intValue = it.height },
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        // Only where the player isn't already open beside the page:
+                        // a bar whose whole job is to stand in for the player, next
+                        // to the player, is a second copy of what is already there.
+                        player.song?.takeUnless { playerDocked }?.let { song ->
+                            MiniPlayer(
+                                song = song,
+                                isPlaying = player.isPlaying,
+                                isLoading = player.isLoading,
+                                hazeState = hazeState,
+                                onPlayPause = {
+                                    controller?.let { if (it.isPlaying) it.pause() else it.play() }
+                                },
+                                onPrevious = { controller?.seekToPreviousMediaItem() },
+                                onNext = { controller?.seekToNextMediaItem() },
+                                onExpand = if (reducePlayerMotion) {
+                                    { showNowPlaying = true }
+                                } else {
+                                    playerSheetMotion::open
+                                },
+                                onDismiss = onDismissMusicBar,
+                                dock = playerDock,
+                                pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        FloatingBottomBar(
+                            tabs = tabs,
+                            selectedIndex = visibleTabIndices.indexOf(selectedTab).coerceAtLeast(0),
+                            hazeState = hazeState,
+                            onTabSelected = onTabSelected,
                         )
                     }
-                    FloatingBottomBar(
-                        tabs = tabs,
-                        selectedIndex = visibleTabIndices.indexOf(selectedTab).coerceAtLeast(0),
-                        hazeState = hazeState,
-                        onTabSelected = onTabSelected,
-                    )
                 }
             }
 
@@ -2599,27 +2747,107 @@ private fun BitChordApp(
         }
 
         // ---- Now Playing ----
-        // Only raised where it isn't already open beside the page.
-        val nowPlayingSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-        LaunchedEffect(showNowPlaying) {
-            if (showNowPlaying && nowPlayingSheetState.currentValue != SheetValue.Expanded) {
-                nowPlayingSheetState.show()
+        // Raised using PlayerSheetMotion and PlayerDock for smooth BitChord sleeve docking
+        val playerRaised = !playerDocked && showNowPlaying && playerSong != null
+        if (playerRaised) {
+            val sheetDensity = LocalDensity.current
+            val confirmSheetValue: (SheetValue) -> Boolean = { value ->
+                if (value == SheetValue.Hidden) {
+                    playerSheetMotion.close()
+                    false
+                } else {
+                    true
+                }
             }
-        }
-        if (!playerDocked && showNowPlaying && playerSong != null) {
+            val nowPlayingSheetState = rememberSaveable(
+                saver = SheetState.Saver(
+                    skipPartiallyExpanded = true,
+                    confirmValueChange = confirmSheetValue,
+                    density = sheetDensity,
+                    skipHiddenState = false,
+                ),
+            ) {
+                SheetState(
+                    skipPartiallyExpanded = true,
+                    density = sheetDensity,
+                    initialValue = if (playerSheetMotion.holding) SheetValue.Expanded else SheetValue.Hidden,
+                    confirmValueChange = confirmSheetValue,
+                )
+            }
+            DisposableEffect(nowPlayingSheetState) {
+                playerSheetMotion.sheet = nowPlayingSheetState
+                playerDock.sheetOffset = playerSheetMotion::position
+                onDispose {
+                    playerDock.sheetOffset = null
+                    playerSheetMotion.onSheetGone()
+                }
+            }
             ModalBottomSheet(
                 onDismissRequest = { showNowPlaying = false },
                 sheetState = nowPlayingSheetState,
+                scrimColor = Color.Transparent,
                 // The player fills the screen and paints its own background to
-                // the very top, so the sheet's default 28.dp top corners would
-                // only cut two notches out of the artwork behind the status bar.
-                shape = RectangleShape,
+                // the very top, so square it is — and not clipped along its top
+                // like a plain rectangle would be: collapsing to the mini
+                // player, the artwork travels ahead of the sheet, above the
+                // sheet's offset top edge, and a rectangle cut it off mid-air
+                // there. See [PlayerSheetShape].
+                shape = PlayerSheetShape,
                 sheetMaxWidth = Dp.Unspecified,
                 containerColor = Color.Transparent,
                 dragHandle = null,
                 contentWindowInsets = { WindowInsets(0, 0, 0, 0) },
+                properties = ModalBottomSheetProperties(shouldDismissOnBackPress = false),
             ) {
-                nowPlaying(playerSong, false)
+                BackHandler { playerSheetMotion.close() }
+                val sheetView = LocalView.current
+                val sheetWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+                DisposableEffect(sheetWindow) {
+                    playerSheetMotion.attachWindow(sheetWindow)
+                    // The sheet paints from its own window, whose surface saw
+                    // nothing of the activity's preferred refresh rate: the
+                    // same slide that runs at 0.45 a second by design was
+                    // paced by whatever the dialog window landed on. Carry
+                    // the setting over here, read once per sheet open — the
+                    // window goes away with the sheet, so there is nothing
+                    // to restore.
+                    if (sheetWindow != null && AppSettings.highPerformanceMode.value) {
+                        val rate = sheetView.display
+                            ?.resolvePerformanceRefreshRate(AppSettings.performanceRefreshRate.value)
+                            ?: 0
+                        if (rate > 0) {
+                            sheetWindow.attributes = sheetWindow.attributes.apply {
+                                preferredRefreshRate = rate.toFloat()
+                            }
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                                sheetView.requestedFrameRate = rate.toFloat()
+                            }
+                        }
+                    }
+                    onDispose { }
+                }
+                Box(
+                    Modifier
+                        .offset { IntOffset(0, playerSheetMotion.contentOffsetPx()) }
+                        .drawBehind {
+                            val open = playerDock.openFraction()
+                            if (open > 0f && !(open >= 1f && playerDock.attached)) {
+                                val top = playerSheetMotion.position().takeUnless { it.isNaN() } ?: 0f
+                                drawRect(
+                                    color = Color.Black.copy(alpha = PLAYER_SCRIM_ALPHA * open),
+                                    topLeft = Offset(0f, -top.toInt().toFloat()),
+                                    size = Size(size.width, size.height),
+                                )
+                            }
+                        }
+                        .onSizeChanged {
+                            playerSheetMotion.onMeasured(it.height.toFloat())
+                        },
+                ) {
+                    CompositionLocalProvider(LocalPlayerDock provides playerDock) {
+                        nowPlaying(playerSong, false)
+                    }
+                }
             }
         }
 
@@ -3638,6 +3866,7 @@ private const val TAB_ARTISTS = 2
 private const val TAB_LIBRARY = 3
 private const val TAB_SEARCH = 4
 private const val TAB_ALBUM_ARTISTS = 5
+private const val TAB_FOLDERS = 6
 
 
 
@@ -3648,3 +3877,19 @@ private const val TAB_ALBUM_ARTISTS = 5
  * prefix has to be the one thing both the writing and the reading agree on.
  */
 private const val TAB_KEY = "tab:"
+
+/**
+ * The player sheet's shape: square, as [RectangleShape] was, but reaching a
+ * whole sheet's height above the sheet's top edge.
+ *
+ * The sheet's Surface clips its content to this shape, and on the way down
+ * to the mini player the artwork travels ahead of the sheet carrying it —
+ * up above the sheet's top edge, where a plain rectangle cut it off mid-air,
+ * leaving only its lower part to arrive in the bar. Nothing else is drawn
+ * outside the sheet (its background is transparent and it casts no shadow),
+ * so at rest this is the rectangle it replaces.
+ */
+private object PlayerSheetShape : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
+        Outline.Rectangle(Rect(0f, -size.height, size.width, size.height))
+}

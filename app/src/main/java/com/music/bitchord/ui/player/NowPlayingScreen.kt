@@ -18,9 +18,12 @@ import android.window.OnBackInvokedCallback
 import android.window.OnBackInvokedDispatcher
 import androidx.activity.compose.BackHandler
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -30,11 +33,19 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitVerticalTouchSlopOrCancellation
@@ -43,6 +54,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -129,6 +141,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.MutableLongState
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableFloatStateOf
@@ -142,6 +155,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.structuralEqualityPolicy
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -149,9 +163,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.util.lerp
+import androidx.compose.ui.unit.lerp
+import com.music.bitchord.ui.player.LocalPlayerDock
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -160,7 +179,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
@@ -229,7 +251,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
+import com.music.bitchord.data.lyrics.CharGrowth
+import com.music.bitchord.data.lyrics.GrowingWord
 import com.music.bitchord.data.lyrics.LrcParser
+import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsStripText
 import com.music.bitchord.data.lyrics.LyricsSource
@@ -261,6 +286,14 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.lerp
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.layout.positionOnScreen
+import androidx.compose.ui.unit.IntSize
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
@@ -435,6 +468,68 @@ private val CONTROL_GAP_SPREAD_MAX = 48.dp
  * that is all it is, a cache of a measurement, not state anything observes.
  */
 private var lastControlSpread: Dp = 0.dp
+private var lastHeroHeight: Dp = 0.dp
+private var lastHeroSettled = false
+private var lastPlayerBounds = IntSize.Zero
+
+/**
+ * How much of the sheet's travel the rest of the player has gone by before
+ * the artwork arrives at the mini player: it is fully faded with this share of
+ * the way still to go.
+ */
+private const val DOCK_FADE_LEAD = 0.15f
+
+/** The least the faded player is drawn at while docking — see the player's fade. */
+private const val DOCK_FADE_FLOOR = 1f / 255f
+
+/**
+ * What one frame of docking into the mini player worked out — see
+ * [PlayerDock]. Written while the sleeve is laid out and read further down
+ * the same frame, by the tile inside the sleeve and by the player's draw; plain
+ * fields rather than state, because nothing should recompose or re-lay out for
+ * them — the sheet's offset already drives every frame that reads them.
+ */
+private class DockFrame {
+    /**
+     * Where the player sits on screen with the sheet fully open. State, the
+     * one field here that is: it arrives a frame after the sheet first lays
+     * out, and the frame it arrives in has to hear about it.
+     */
+    var anchor: Offset? by mutableStateOf(null)
+    /** The player's size [anchor] was measured at. */
+    var anchorFor = IntSize.Zero
+    /** The mini player's cover, in the sleeve's box. */
+    var miniInBox: Rect? = null
+    /** The sheet's offset this frame, in the whole pixels it is placed at. */
+    var offset = 0f
+    /** How much of that the artwork rides — see `dockRide`. */
+    var ride = 0f
+    /** The sleeve as laid out, in the same box. */
+    var sleeve: Rect = Rect.Zero
+    /**
+     * The sleeve's corner as a shape, made again only when its radius moves:
+     * both of the sleeve's clipping layers ask for it, on every frame of any
+     * transition, and an unchanged radius needs no new shape.
+     */
+    private var cornerRadius = Dp.Unspecified
+    private var corner: Shape = RectangleShape
+    fun cornerShape(radius: Dp): Shape {
+        if (radius != cornerRadius) {
+            cornerRadius = radius
+            corner = RoundedCornerShape(radius)
+        }
+        return corner
+    }
+    /** Where the sleeve's pixels land in the player, for drawing it on top. */
+    var portalLeft = 0f
+    var portalTop = 0f
+    var portalScale = 1f
+    /** The player itself, for placing the sleeve within it. */
+    var host: LayoutCoordinates? = null
+}
+
+/** The placeholder tile's corners — one shape, not a new one every frame it moves. */
+private val TileShape = RoundedCornerShape(8.dp)
 
 /**
  * How long the shuffle glyph ignores further taps after one lands.
@@ -512,11 +607,6 @@ fun dockedPlayerWidth(windowWidth: Dp): Dp =
         // in windows narrow enough that there is no pane at all.
         .coerceAtMost(windowWidth - DOCKED_PAGE_MIN_WIDTH)
 
-/** Share of a lyric line's own length spent fading out, and its bounds. */
-private const val LYRIC_FADE_FRACTION = 0.28f
-private const val LYRIC_FADE_MIN_MS = 160f
-private const val LYRIC_FADE_MAX_MS = 700f
-
 /**
  * How far back the part of the playing line that hasn't been sung yet is held.
  *
@@ -530,49 +620,120 @@ private const val UNSUNG_ALPHA_STRIP = 0.55f
 
 /**
  * The bloom behind the line being sung, at its very strongest.
- *
- * Kept well under half strength: the halo is drawn from the same white as the
- * text, so at full alpha it stops reading as light and starts reading as a
- * second, badly printed copy of the words. What is actually drawn is this
- * scaled by how long the word is being held, so only a properly carried note
- * ever sees the whole of it.
  */
 private const val GLOW_ALPHA = 0.62f
-private val GLOW_RADIUS = 9.dp
 
 /**
- * How far behind the sweep's leading edge the bloom reaches, at full strength.
- *
- * The glow belongs to the word being sung, not to everything sung so far —
- * lighting the whole revealed stretch made the line brighten as it went and
- * turned the last line of a verse into a slab of white. Scaled down towards
- * [GLOW_TRAIL_FLOOR] as the singing quickens; see
- * [LyricLine.glowIntensity][com.music.bitchord.data.lyrics.LyricLine.glowIntensity].
+ * How far the bloom spreads off a letter. Tight, because it is a letter's worth
+ * of light now rather than a word's: a wide radius on something this small is
+ * a smudge behind the text instead of a glow coming off it.
  */
+private val GLOW_RADIUS = 6.dp
 private val GLOW_TRAIL = 62.dp
 private const val GLOW_TRAIL_FLOOR = 0.55f
 
 /**
  * Room reserved inside each copy of a line for the halo to spread into.
- *
- * A blur is computed on its layer's own bitmap, so a halo with nowhere to go
- * inside those bounds is a halo with a hard edge — which is what cropped the
- * bloom to the line's box. Every copy carries the same inset so they still lay
- * out identically, and the list gives the width back by taking it off its own
- * padding and row spacing.
  */
 private val GLOW_ROOM = 10.dp
 
 /**
  * How the answering vocal is drawn: smaller than the lead and a shade behind
  * it, the way Apple Music hangs a backing line under the one it answers.
- *
- * Small enough to be read as a second voice at a glance and no smaller —
- * these are the words of the song, not a caption.
  */
-private val BACKING_FONT_SIZE = 19.sp
-private val BACKING_LINE_HEIGHT = 24.sp
+private val BACKING_FONT_SIZE = 23.sp
+private val BACKING_LINE_HEIGHT = 29.sp
 private const val BACKING_ALPHA = 0.72f
+private const val BACKING_OPEN_MS = 400
+
+/** Where a lyric line is in its own animation; see [SweptLyricLine]. */
+private const val PHASE_BEFORE = 0
+private const val PHASE_MOVING = 1
+private const val PHASE_AFTER = 2
+
+/** An instrumental break that is playing, so its fill is read off the clock. */
+private const val GAP_RUNNING = -1f
+
+private const val BACKING_LEAD_MS = 250L
+private const val BACKING_CLOSE_MS = 450
+private val BACKING_RISE = 6.dp
+private const val BACKING_REST_SCALE = 0.94f
+private const val BACKING_FADE_LEAD = 1.6f
+
+private val WIPE_FEATHER = 30.dp
+private val WORD_RISE = 2.dp
+private const val GROW_HEADROOM = 3f
+private val DUET_LANE = 44.dp
+private val GAP_ROW_HEIGHT = 40.dp
+private val GAP_ROW_SPACING = 16.dp
+
+private val LINE_FALLOFF_ALPHA = floatArrayOf(1f, 0.8f, 0.7f, 0.58f, 0.46f)
+private val LINE_FALLOFF_BLUR = arrayOf(0.dp, 1.dp, 1.dp, 1.7.dp, 2.4.dp)
+
+private const val BROWSING_ALPHA = 0.8f
+private const val INACTIVE_SCALE = 0.98f
+private const val PRESSED_SCALE = 0.96f
+
+private const val GAP_DOTS = 3
+private val GAP_DOT_SIZE = 13.dp
+private val GAP_DOT_GAP = 5.dp
+private const val GAP_DOT_REST = 0.25f
+private const val GAP_REST_SCALE = 0.76f
+
+/** How long the panel takes to settle on a new line, and how far ahead it starts. */
+private const val SCROLL_LEAD_MIN_MS = 350L
+private const val SCROLL_LEAD_MAX_MS = 500L
+
+/**
+ * The curve every handover runs on: away quickly, in slowly and softly.
+ *
+ * One curve for the lot — dimming, blurring, scaling and the scroll — so a
+ * line handing over reads as a single movement rather than four that happen to
+ * start together.
+ */
+private val LYRIC_EASING = CubicBezierEasing(0.41f, 0f, 0.12f, 0.99f)
+private const val LYRIC_SETTLE_MS = 400
+private const val STAGGER_STEPS = 3
+private const val STAGGER_FRACTION = 0.06f
+
+/** One handover: how far the panel is going, and how long it is taking. */
+private class ScrollRun(val id: Int, val delta: Float, val durationMs: Int) {
+    /** The last row to arrive does so this long after the panel sets off. */
+    val spanMs: Float get() = durationMs * (1f + STAGGER_FRACTION * STAGGER_STEPS)
+}
+
+private fun scrollLead(lines: List<LyricLine>, positionMs: Long): Long {
+    val current = lines.indexOfLast { it.timeMs <= positionMs }
+    if (current < 0) return SCROLL_LEAD_MIN_MS
+    val next = lines.getOrNull(current + 1) ?: return SCROLL_LEAD_MIN_MS
+    val gap = next.timeMs - lines[current].endMs
+    return gap.coerceIn(SCROLL_LEAD_MIN_MS, SCROLL_LEAD_MAX_MS)
+}
+
+/** Keep every unfinished vocal visible, including overlaps spanning more than two rows. */
+private fun activeLyricRows(lines: List<LyricLine>, positionMs: Long): List<Int> {
+    val latest = lines.indexOfLast { it.timeMs <= positionMs }
+    if (latest < 0) return emptyList()
+    return (0..latest).filter { index ->
+        val line = lines[index]
+        index == latest || (!line.isGap &&
+            (line.hasKnownEnd || line.background?.hasKnownEnd == true) &&
+            line.timeMs <= positionMs && positionMs < line.endMs)
+    }
+}
+
+private inline fun DrawScope.clipShiftedDown(
+    left: Float,
+    top: Float,
+    right: Float,
+    bottom: Float,
+    dy: Float,
+    block: DrawScope.() -> Unit,
+) {
+    clipRect(left = left, top = top, right = right, bottom = bottom) {
+        translate(top = dy, block = block)
+    }
+}
 
 private const val LYRICS_UNAVAILABLE_HOLD_MS = 5_000L
 private const val LYRICS_UNAVAILABLE_FADE_MS = 900
@@ -747,6 +908,91 @@ fun NowPlayingScreen(
     // A docked pane sits beside the page rather than covering the screen, so
     // the status bar it's under belongs to the page, not this artwork — only
     // the full-screen sheet gets to repaint it.
+    val dock = LocalPlayerDock.current?.takeUnless { docked }
+    if (dock != null) {
+        // Attached on first placement below rather than here: until then the
+        // sheet's window may not have drawn anything, and the mini player's
+        // cover is the only artwork on screen.
+        DisposableEffect(dock) {
+            onDispose { dock.attached = false }
+        }
+    }
+    val dockFrame = remember { DockFrame() }
+    // 1 with the player fully open, falling to 0 as the sheet reaches the mini
+    // player. Held at 1 — the player exactly as it always was — with no dock,
+    // no cover to dock into, or before the sheet's first placement has told
+    // this where on screen it is.
+    //
+    // The sheet's fraction is read first and always, whatever comes of it: the
+    // layout and draw blocks calling this are re-run only for the state they
+    // read, and one that bailed out before reading it would never hear the
+    // sheet move.
+    val dockT: () -> Float = {
+        if (dock == null) {
+            1f
+        } else {
+            val open = dock.openFraction()
+            if (dockFrame.anchor != null && dock.hasMiniArt()) open else 1f
+        }
+    }
+    val docking: () -> Boolean = { dockT() < 1f }
+    val dockMoving by remember { derivedStateOf { docking() } }
+    // The rest of the player gets out of the way a little ahead of the artwork,
+    // so the cover lands on the bar rather than on a ghost of the player.
+    val dockFade: () -> Float = { ((dockT() - DOCK_FADE_LEAD) / (1f - DOCK_FADE_LEAD)).coerceIn(0f, 1f) }
+    // The sleeve, drawn over the faded player while it docks — see the sleeve.
+    val sleeveLayer = rememberGraphicsLayer()
+
+    // The player's own end of the docking: where it sits on screen, the fade,
+    // and the artwork drawn over that fade.
+    val dockHost: Modifier = Modifier
+        .then(
+            if (dock != null) {
+                Modifier.onGloballyPositioned { coordinates ->
+                    dockFrame.host = coordinates
+                    // Where the player would be fully open, on screen: its
+                    // position now, less the sheet's offset that placed it
+                    // there. Constant for the life of the sheet, and that
+                    // plus the offset of any later frame is where the
+                    // player is in that frame.
+                    //
+                    // Measured once, and again only if the player's size
+                    // changes: this is called on every frame the sheet
+                    // moves, with the same answer each time. Measuring it
+                    // each time also walked the artwork back and forth by a
+                    // pixel, the sheet rounding its offset its own way.
+                    if (dockFrame.anchor != null && dockFrame.anchorFor == coordinates.size) {
+                        return@onGloballyPositioned
+                    }
+                    val offset = dock.offset() ?: return@onGloballyPositioned
+                    dockFrame.anchorFor = coordinates.size
+                    dockFrame.anchor = coordinates.positionOnScreen() - Offset(0f, offset.toInt().toFloat())
+                    if (!dock.attached) dock.attached = true
+                }
+            } else {
+                Modifier
+            },
+        )
+        // Outside the fade below, so the artwork is the one thing on the
+        // player that doesn't fade on its way to the bar. Drawn on top of
+        // everything while it travels, as the one thing still moving.
+        .drawWithContent {
+            drawContent()
+            if (docking()) {
+                translate(dockFrame.portalLeft, dockFrame.portalTop) {
+                    val portalScale = dockFrame.portalScale
+                    scale(portalScale, portalScale, pivot = Offset.Zero) { drawLayer(sleeveLayer) }
+                }
+            }
+        }
+        // Never quite zero while docking. A layer at alpha 0 is skipped
+        // outright, children and all — and the sleeve records itself for
+        // the draw above from inside it, so for the last stretch of the
+        // way home the cover went on being drawn from a stale recording,
+        // bigger and higher than the bar's. One step of 255 is nothing to
+        // look at and keeps the subtree drawing.
+        .graphicsLayer { alpha = if (docking()) dockFade().coerceAtLeast(DOCK_FADE_FLOOR) else 1f }
+
     if (!docked) {
         val artLuminance = rememberArtworkLuminance(backdropArtworkUrl)
         val isLightArtwork = artLuminance?.let { it > LIGHT_ARTWORK_LUMINANCE_THRESHOLD } ?: false
@@ -1303,9 +1549,12 @@ fun NowPlayingScreen(
     // gives its frame up and takes it back every time the app leaves the screen,
     // and a banner that answered only to that would collapse behind the user's
     // back and blow itself out again in front of them on the way in.
-    var heroSettled by remember { mutableStateOf(false) }
+    var heroSettled by remember { mutableStateOf(lastHeroSettled || requestedArtUrl != null) }
     LaunchedEffect(artLoaded, canvasRendered) {
-        if (artLoaded || canvasRendered) heroSettled = true
+        if (artLoaded || canvasRendered) {
+            heroSettled = true
+            lastHeroSettled = true
+        }
     }
     // The clip that gets the banner, if any. Hoisted because the still frame
     // underneath keys its handover on exactly what is mounted here: both are
@@ -1319,34 +1568,18 @@ fun NowPlayingScreen(
     // — see [heroVisible].
     val heroT by animateFloatAsState(
         targetValue = if (
-            heroMode && (canvasRendered || artLoaded || heroSettled)
+            heroMode && (heroSettled || canvasRendered || artLoaded)
         ) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "heroCanvas",
     )
 
-    /**
-     * How much of the banner is actually on screen: its own fade, dissolved by
-     * the collapse rather than after it.
-     *
-     * The collapse used to be a threshold on this animation's *target* — the
-     * banner was told to go once [p] passed a half. That chained two 420ms
-     * animations end to end when they should have been the same one: for the
-     * first half of the collapse the banner sat at full size and full opacity
-     * with nothing appearing to move, since the card shrinking behind it is
-     * transparent while the banner is up; then the card finished collapsing and
-     * a full-screen banner cross-dissolved into a finished thumbnail. Two sizes
-     * of the same artwork on screen at once, which is what made every trip in
-     * and out of the lyrics look wrong.
-     *
-     * Multiplied by the collapse instead, the banner goes as the card shrinks:
-     * one movement, and the card is fading in the whole way down.
-     */
     val heroVisible = heroT * (1f - p)
     // How tall that banner is, worked out down in the layout where the sleeve's
-    // own geometry is known. Zero until the first measure, which is fine: there
-    // is nothing to show that early either.
-    var heroHeight by remember { mutableStateOf(0.dp) }
+    // own geometry is known. Seeded from [lastHeroHeight] so the banner is
+    // mounted on the very first frame of a sheet open without a Frame-2 jump.
+    var heroHeight by remember { mutableStateOf(lastHeroHeight) }
+    var playerBounds by remember { mutableStateOf(lastPlayerBounds) }
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     // What sits between the status bar and the artwork: the drag strip in a
     // sheet, plain padding in a pane. Read in three places — the strip itself,
@@ -1354,60 +1587,22 @@ fun NowPlayingScreen(
     // agree or the artwork and the credits under it move.
     val topStrip = if (docked) DOCKED_TOP_PAD else DISMISS_STRIP_HEIGHT
 
-    // The band of the player a vertical drag belongs to rather than to whatever
-    // is under it: from the top of the artwork to the bottom of the credits, in
-    // root coordinates. Everything in between is one block — the full sleeve
-    // with the title and artist beneath it — and a drag on it closes the player
-    // downwards and opens the queue upwards.
-    //
-    // Read off the layout rather than recomputed, so it stays the block's own
-    // shape whatever the screen: a height-bound sleeve on a tablet, a full-bleed
-    // banner on a phone.
-    //
-    // Only ever the *expanded* block, though. Once a panel is up the band is not
-    // this pair at all but the header, worked out from the state instead — see
-    // the gesture below. The two edges do travel with the sleeve as it collapses,
-    // which reads like the band could simply follow them the whole way, and that
-    // is exactly what went wrong: the sleeve takes [QUEUE_TRAVEL_MS] to get
-    // there, and for that whole half second the queue was already listed and
-    // scrollable underneath a band still lying across it. A drag on a row came
-    // out as the player closing.
-    //
-    // Bare numbers rather than a rect: the band runs the full width of the
-    // player either way, and on a height-bound sleeve the bare backdrop down
-    // each side of it should close the player too — it is part of the same
-    // gesture, and a hole there would be a strip the finger mysteriously
-    // slides off.
-    //
-    // Both start at zero, which is a band with no height and so no hole at all
-    // until the first layout pass. There is nothing on screen to drag then
-    // either.
     var dismissBandTop by remember { mutableFloatStateOf(0f) }
     var dismissBandBottom by remember { mutableFloatStateOf(0f) }
     // The suppressing Column's own coordinates, to put a pointer's local
     // position into the same space as the two edges above.
     var dismissBandSpace by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
-    Box(modifier = modifier.fillMaxSize()) {
-        // Anchored to the sleeve's bottom edge, so the screen carries on in the
-        // colours the artwork ended in rather than in a quantiser's idea of what
-        // the artwork was about. Position ticks recompose this screen twice a
-        // second and must not drag a full-screen blur along with them, which is
-        // why the mesh is passed as one immutable value.
-        //
-        // The seam is the *expanded* banner's bottom edge and is left there as
-        // the player collapses, rather than following the sleeve down: it is
-        // the anchor for a blurred layer, and moving it would re-blur the whole
-        // screen on every frame of the drag. Above it the mesh holds one colour,
-        // so a seam left behind a collapsed sleeve shows nothing at all.
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .onSizeChanged {
+                playerBounds = it
+                lastPlayerBounds = it
+            }
+            .then(dockHost),
+    ) {
         if (legacyMesh) {
-            // v1.5's backdrop, restored verbatim: no seam, because the blobs
-            // are not anchored to anything on screen — they fill the player and
-            // the artwork simply sits on top of them. Keyed on the track, so
-            // they drift when the player opens and on every skip, then rest.
-            // Position ticks recompose this screen twice a second and must not
-            // drag a full-screen blur along with them, which is why the palette
-            // is passed as one immutable value.
             MeshGradientBackground(
                 palette = rememberArtworkColors(backdropArtworkUrl, canvasFrame),
                 trackKey = song.videoId,
@@ -1421,112 +1616,8 @@ fun NowPlayingScreen(
             )
         }
 
-        // The artwork, edge to edge and running up behind the status bar,
-        // dissolving into the backdrop where the sleeve's bottom edge would
-        // have been. It lives out here rather than in the sleeve because that
-        // is the only way to escape the player's side gutter and its status-bar
-        // inset — a banner that stops short of either reads as a misplaced card
-        // rather than as the artwork the screen is made of.
         if (heroHeight > 0.dp) {
-            // The still sleeve first, so a clip fading in on top of it never
-            // shows the backdrop through the gap between them — and only until
-            // that fade has run. Both layers carry the same bottom gradient, so
-            // a still frame left lit under a settled clip is not hidden by it:
-            // down in the fade the clip is only part-opaque, and what shows
-            // through it there is the cover art rather than the backdrop. That
-            // is the artwork and the clip on screen at once.
-            //
-            // So it is dropped outright once the clip is opaque, rather than
-            // held at alpha 0: nothing under a full-bleed clip is ever visible,
-            // and a full-screen AsyncImage kept mounted for no one is a bitmap
-            // and a layer the compositor still has to carry.
-            //
-            // Kept mounted through the handover in either direction rather than
-            // dropped the moment [p] crosses the collapse threshold: the sleeve
-            // behind it is still transparent at that point, so pulling the
-            // banner straight out leaves a frame or two with no artwork anywhere
-            // on screen before the card catches up.
-            if (heroMode && !(stillCovered && heroClip != null) &&
-                (p < 0.5f || heroVisible > 0.001f)
-            ) {
-                if (!useRemoteArtworkFallback) {
-                    localPreviewRequest?.let { previewRequest ->
-                        AsyncImage(
-                            model = previewRequest,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .fillMaxWidth()
-                                .height(heroHeight)
-                                // Match the full-size image's bottom dissolve.
-                                // Without this mask the fast preview stayed
-                                // opaque underneath it and covered the blurred
-                                // backdrop along the hero's lower edge.
-                                .graphicsLayer {
-                                    alpha = heroVisible
-                                    compositingStrategy = CompositingStrategy.Offscreen
-                                }
-                                .drawWithContent {
-                                    drawContent()
-                                    drawRect(
-                                        brush = Brush.verticalGradient(
-                                            colors = listOf(Color.Black, Color.Transparent),
-                                            startY = size.height * (1f - HERO_FADE_FRACTION),
-                                            endY = size.height,
-                                        ),
-                                        blendMode = BlendMode.DstIn,
-                                    )
-                                },
-                        )
-                    }
-                }
-                AsyncImage(
-                    // Decoded at the same size the sleeve asks for, so the two
-                    // share one entry in Coil's cache and one bitmap: the pair
-                    // cross-fade into each other, and asking twice at two sizes
-                    // would decode the same art twice and let the banner fade in
-                    // before its own copy had arrived.
-                    //
-                    // Literally the same request object as the sleeve's, not an
-                    // identical one — see [artRequest] for why that distinction
-                    // is the whole of it.
-                    model = artRequest,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .fillMaxWidth()
-                        .height(heroHeight)
-                        // Haze must observe the drawable layer itself. A
-                        // source on the surrounding layout only captured its
-                        // mesh backdrop, leaving the cover sharp in the pill.
-                        .hazeSource(playerHaze)
-                        .graphicsLayer {
-                            // Hands its opacity to the clip as the clip takes
-                            // over, and takes it straight back if there is no
-                            // clip mounted to hand it to.
-                            alpha = heroVisible *
-                                (1f - if (heroClip != null) canvasCover.floatValue else 0f)
-                            // The mask below erases part of what this layer
-                            // drew, which it can only do in a buffer of its own.
-                            compositingStrategy = CompositingStrategy.Offscreen
-                        }
-                        .drawWithContent {
-                            drawContent()
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    colors = listOf(Color.Black, Color.Transparent),
-                                    startY = size.height * (1f - HERO_FADE_FRACTION),
-                                    endY = size.height,
-                                ),
-                                blendMode = BlendMode.DstIn,
-                            )
-                        },
-                )
-            }
-
-            // Motion artwork over it, in the same frame.
+            // Motion artwork over the banner, in the same frame.
             //
             // Always composed while there's a clip to play, never gated on
             // [heroVisible]: the clip has to be mounted and decoding *before*
@@ -1538,14 +1629,17 @@ fun NowPlayingScreen(
                         isPlaying = isPlaying,
                         onRenderedChanged = { canvasRendered = it },
                         onFrameCaptured = { canvasFrame = it },
-                        refreshFrameEveryMs = meshRefreshMs,
+                        refreshFrameEveryMs = if (dockMoving) null else meshRefreshMs,
                         onCoverChanged = { canvasCover.floatValue = it },
                         bottomFade = HERO_FADE_FRACTION,
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .fillMaxWidth()
                             .height(heroHeight)
-                            .hazeSource(playerHaze),
+                            .hazeSource(playerHaze)
+                            .graphicsLayer {
+                                alpha = (1f - 2f * p).coerceIn(0f, 1f) * (if (docking()) dockFade() else 1f)
+                            },
                     )
                 }
             }
@@ -1832,11 +1926,16 @@ fun NowPlayingScreen(
                     // standing: still one pass to settle when the cancellation
                     // does land on time, and a fast-converging approach rather
                     // than a full-amplitude swing on the passes where it doesn't.
-                    val granted = with(density) {
-                        val steppedPx = (controlSpread.toPx() +
-                            (target.toPx() - controlSpread.toPx()) * 0.4f)
-                            .roundToInt()
-                        steppedPx.toDp()
+                    val isOpening = dockT() < 0.1f
+                    val granted = if (isOpening) {
+                        target
+                    } else {
+                        with(density) {
+                            val steppedPx = (controlSpread.toPx() +
+                                (target.toPx() - controlSpread.toPx()) * 0.4f)
+                                .roundToInt()
+                            steppedPx.toDp()
+                        }
                     }
                     if (granted != controlSpread) {
                         SideEffect {
@@ -1909,42 +2008,297 @@ fun NowPlayingScreen(
                 // to notice.
                 val bannerSettled = !lyricsOpen || heroHeight == 0.dp
                 if (bannerSettled && bannerBottom != heroHeight) {
-                    SideEffect { heroHeight = bannerBottom }
+                    SideEffect {
+                        heroHeight = bannerBottom
+                        lastHeroHeight = bannerBottom
+                    }
                 }
 
-                // Empty state lives on this Box, not the AsyncImage: a
-                // background *and* a painter both trying to fill the same
-                // clipped shape is what read as two overlapping squares
-                // whenever there was nothing to paint. One layer, one square.
-                // [artLoaded] is hoisted to the screen, where the banner needs
-                // it too.
+                // Where the sleeve is drawn, as a function of the collapse — see
+                // [p] — in this box's own pixels. Called at measure, placement
+                // and draw; composition never reads it.
+                //
+                // Three rects rather than two. The card is the square sleeve
+                // ([artStart], [artTop], [artWidth] x [artHeight]); the banner is the
+                // full-bleed artwork — the player's whole width, up behind the
+                // status bar, down to [heroHeight]; the thumbnail is the header.
+                // [heroT] carries the expanded sleeve from the card to the
+                // banner, and the collapse carries either one down to the
+                // thumbnail. One layer the whole way: opening the queue or the
+                // lyrics shrinks the full-bleed artwork itself into the header,
+                // instead of dissolving it over a second, card-sized copy that
+                // shrinks underneath.
+                val bannerTopPx = with(density) {
+                    -(statusBarTop.roundToPx() + topStrip.roundToPx() + ART_BOX_TOP_PAD.roundToPx())
+                }
+                val boxWidthPx = constraints.maxWidth
+                val effectivePlayerWidth = if (playerBounds.width > 0) {
+                    playerBounds.width
+                } else {
+                    boxWidthPx + with(density) { (PLAYER_GUTTER * 2).roundToPx() }
+                }
+                val effectiveHeroHeight = if (heroHeight > 0.dp) heroHeight else bannerBottom
+                fun bannerShare(): Float =
+                    if (effectiveHeroHeight > 0.dp && effectivePlayerWidth > 0) heroT else 0f
+                fun bannerShown(): Float = bannerShare() * (1f - p)
+                fun cardScale(): Float = artScale + (1f - artScale) * p
+                fun cardRect(): Rect = with(density) {
+                    Rect(
+                        offset = Offset(artStart.roundToPx().toFloat(), artTop.roundToPx().toFloat()),
+                        size = Size(artWidth.roundToPx().toFloat(), artHeight.roundToPx().toFloat()),
+                    )
+                }
+                fun sleeveRect(): Rect {
+                    val card = cardRect()
+                    val share = bannerShare()
+                    if (share == 0f) return card
+                    val banner = with(density) {
+                        Rect(
+                            offset = Offset(-(effectivePlayerWidth - boxWidthPx) / 2f, bannerTopPx.toFloat()),
+                            size = Size(effectivePlayerWidth.toFloat(), effectiveHeroHeight.roundToPx().toFloat()),
+                        )
+                    }
+                    val thumbSide = with(density) { THUMB_SIZE.roundToPx().toFloat() }
+                    val thumb = Rect(Offset.Zero, Size(thumbSide, thumbSide))
+                    return lerp(card, lerp(banner, thumb, p), share)
+                }
+                val boxLeftPx = ((effectivePlayerWidth - boxWidthPx) / 2f).roundToInt()
+                fun miniInBox(): Rect? {
+                    if (dock == null || !docking()) return null
+                    val mini = dock.miniArtOnScreen() ?: return null
+                    val anchor = dockFrame.anchor ?: return null
+                    val offset = dock.offset() ?: return null
+                    dockFrame.offset = offset.toInt().toFloat()
+                    return mini.translate(
+                        -(anchor.x + boxLeftPx),
+                        -(anchor.y + dockFrame.offset - bannerTopPx),
+                    )
+                }
+                fun dockRide(sleeve: Rect, mini: Rect): Float {
+                    val travel = dock?.sheetTravel ?: return 0f
+                    if (travel <= 0f) return 0f
+                    return ((mini.top + dockFrame.offset - sleeve.top) / travel).coerceIn(0f, 1f)
+                }
+                fun towardsDock(rect: Rect, mini: Rect?): Rect {
+                    if (mini == null) return rect
+                    val unridden = dockFrame.offset * (1f - dockFrame.ride)
+                    return lerp(mini, rect.translate(0f, -unridden), dockT())
+                }
+                fun sleeveShown(): Float = bannerShown() * dockT()
+                fun sleeveCorner(): Dp {
+                    val corner = 8.dp * (1f - sleeveShown())
+                    val t = dockT()
+                    return if (dock == null || t >= 1f) corner else lerp(dock.miniArtCorner(), corner, t)
+                }
+
+                // The sleeve proper — card, banner and thumbnail in turn, see
+                // [sleeveRect]. Separate from the slot below, which keeps the
+                // card's place for the stats line and the gestures: a banner
+                // is not where the stats sit, nor where a drag should start.
                 Box(
                     modifier = Modifier
-                        // The lambda overload deliberately: the Dp one reads
-                        // its arguments at composition, so an animated offset
-                        // recomposes and re-measures this Box — cover, clip and
-                        // all — once per frame. Read at placement instead, the
-                        // same movement costs a placement pass.
+                        .layout { measurable, _ ->
+                            val mini = miniInBox()
+                            val open = sleeveRect()
+                            if (mini != null) dockFrame.ride = dockRide(open, mini)
+                            val rect = towardsDock(open, mini)
+                            dockFrame.miniInBox = mini
+                            dockFrame.sleeve = rect
+                            val placeable = measurable.measure(
+                                Constraints.fixed(
+                                    rect.width.roundToInt().coerceAtLeast(0),
+                                    rect.height.roundToInt().coerceAtLeast(0),
+                                ),
+                            )
+                            layout(0, 0) {
+                                val x = rect.left.roundToInt()
+                                val y = rect.top.roundToInt()
+                                dockFrame.portalLeft = (boxLeftPx + x).toFloat()
+                                dockFrame.portalScale = 1f
+                                dockFrame.portalTop = (y - bannerTopPx).toFloat()
+                                placeable.place(x, y)
+                            }
+                        }
+                        .drawWithContent {
+                            if (docking()) {
+                                sleeveLayer.record { this@drawWithContent.drawContent() }
+                            } else {
+                                drawContent()
+                            }
+                        }
+                        .graphicsLayer {
+                            val share = bannerShare()
+                            val idle = cardScale()
+                            val t = dockT()
+                            val open = idle + (1f - idle) * share
+                            val scale = if (t >= 1f) open else 1f + (open - 1f) * t
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = swipeSettle * (1f - p) * (1f - share) * t
+                        }
+                        .hazeSource(playerHaze)
+                        .graphicsLayer {
+                            val clipAlpha = if (heroClip != null) {
+                                canvasCover.floatValue * (if (docking()) dockFade() else 1f)
+                            } else {
+                                0f
+                            }
+                            alpha = 1f - clipAlpha
+                        }
+                        .graphicsLayer {
+                            val shown = sleeveShown()
+                            shadowElevation = if (artLoaded) {
+                                10.dp.toPx() * (1f - 2f * shown).coerceAtLeast(0f) * dockT()
+                            } else {
+                                0f
+                            }
+                            shape = dockFrame.cornerShape(sleeveCorner())
+                            clip = artLoaded
+                        }
+                        .graphicsLayer {
+                            shape = dockFrame.cornerShape(sleeveCorner())
+                            clip = true
+                            compositingStrategy = if (sleeveShown() > 0f) {
+                                CompositingStrategy.Offscreen
+                            } else {
+                                CompositingStrategy.Auto
+                            }
+                        }
+                        .drawWithContent {
+                            drawContent()
+                            val shown = sleeveShown()
+                            if (shown > 0f) {
+                                drawRect(
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(Color.Black, Color.Black.copy(alpha = 1f - shown)),
+                                        startY = size.height * (1f - HERO_FADE_FRACTION),
+                                        endY = size.height,
+                                    ),
+                                    blendMode = BlendMode.DstIn,
+                                )
+                            }
+                        },
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .layout { measurable, _ ->
+                                val card = towardsDock(cardRect(), dockFrame.miniInBox)
+                                val sleeve = dockFrame.sleeve
+                                val placeable = measurable.measure(
+                                    Constraints.fixed(
+                                        card.width.roundToInt().coerceAtLeast(0),
+                                        card.height.roundToInt().coerceAtLeast(0),
+                                    ),
+                                )
+                                layout(0, 0) {
+                                    placeable.place(
+                                        (card.left - sleeve.left).roundToInt(),
+                                        (card.top - sleeve.top).roundToInt(),
+                                    )
+                                }
+                            }
+                            .graphicsLayer {
+                                val share = bannerShare()
+                                val idle = cardScale()
+                                val t = dockT()
+                                val scale = if (t >= 1f) {
+                                    idle / (idle + (1f - idle) * share)
+                                } else {
+                                    (1f + (idle - 1f) * t) / (1f + (idle + (1f - idle) * share - 1f) * t)
+                                }
+                                scaleX = scale
+                                scaleY = scale
+                                translationX = swipeSettle * (1f - p) * share * t
+                                shape = TileShape
+                                clip = share > 0f
+                            }
+                            .background(Color.Black.copy(alpha = 0.18f)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (!artLoaded && !canvasRendered) {
+                            Icon(
+                                imageVector = BitChordIcons.MusicNote,
+                                contentDescription = null,
+                                tint = Color.White.copy(alpha = 0.35f),
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .graphicsLayer {
+                                        val scale = 1f - 0.5f * p
+                                        scaleX = scale
+                                        scaleY = scale
+                                    },
+                            )
+                        }
+                    }
+                    if (!useRemoteArtworkFallback) {
+                        localPreviewRequest?.let { previewRequest ->
+                            AsyncImage(
+                                model = previewRequest,
+                                contentDescription = null,
+                                contentScale = sleeveContentScale,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                    AsyncImage(
+                        model = artRequest,
+                        contentDescription = null,
+                        contentScale = sleeveContentScale,
+                        onState = {
+                            artLoaded = it is AsyncImagePainter.State.Success
+                            if (it is AsyncImagePainter.State.Success) {
+                                val image = it.result.image
+                                val aspectRatio = image.width.toFloat() / image.height.coerceAtLeast(1)
+                                if (aspectRatio.isFinite() && aspectRatio in 0.25f..4f) {
+                                    loadedArtworkAspectRatio = aspectRatio
+                                }
+                            }
+                            if (it is AsyncImagePainter.State.Error) {
+                                if (localPreviewArtUrl != null && !fullLocalArtworkAllowed) {
+                                    fullLocalArtworkAllowed = true
+                                    artFailed = false
+                                } else if (!useRemoteArtworkFallback && remoteArtFallbackUrl != null) {
+                                    useRemoteArtworkFallback = true
+                                    artFailed = false
+                                } else {
+                                    artFailed = true
+                                }
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .drawWithContent { if (artLoaded || !canvasRendered) drawContent() },
+                    )
+
+                    if (!heroMode) {
+                        canvas?.takeIf { p < 0.5f }?.let { clip ->
+                            CanvasArtworkPlayer(
+                                canvas = clip,
+                                isPlaying = isPlaying,
+                                onRenderedChanged = { canvasRendered = it },
+                                onFrameCaptured = { canvasFrame = it },
+                                refreshFrameEveryMs = if (dockMoving) null else meshRefreshMs,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                }
+
+                // The card's slot: where the sleeve sits as a card, whether or
+                // not it is being drawn as one. Holds the stats line and takes
+                // the gestures, both of which belong to the card's place even
+                // while the artwork runs full bleed around it.
+                Box(
+                    modifier = Modifier
                         .offset { IntOffset(artStart.roundToPx(), artTop.roundToPx()) }
                         .size(width = artWidth, height = artHeight)
-                        // Where the dismiss band starts. Read here, above the
-                        // paused shrink below, so the band covers the sleeve's
-                        // slot rather than the 86% of it that is drawn while
-                        // paused — the ring of backdrop the shrink opens up is
-                        // still the artwork as far as a finger is concerned, and
-                        // a band that breathed with the shrink would hand it
-                        // back and forth on every play and pause.
                         .onGloballyPositioned { dismissBandTop = it.boundsInRoot().top }
                         .graphicsLayer {
-                            // The paused shrink and the swipe nudge only make
-                            // sense on the full sleeve.
-                            val idle = artScale + (1f - artScale) * p
+                            val idle = cardScale()
                             scaleX = idle
                             scaleY = idle
                             translationX = swipeSettle * (1f - p)
                         }
-                        // Collapsed, the sleeve is the way back: tapping the
-                        // thumbnail puts the queue or the lyrics away again.
                         .then(
                             if (queueOpen || lyricsOpen) {
                                 Modifier.clickable {
@@ -1999,179 +2353,33 @@ fun NowPlayingScreen(
                         shape = RoundedCornerShape(lerp(10.dp, 7.dp, p)),
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        // The sleeve proper. Separated from the box around it so
-                    // the banner can dissolve the card — shadow, corners, tile
-                    // and all — without taking the stats line with it.
-                    //
-                    // Held fully opaque until this track's own art is in,
-                    // regardless of [heroT]: the banner is sticky across skips
-                    // by design (see [heroSettled]), but its still image is not
-                    // — a new track's cover has to come from somewhere while
-                    // the banner waits on Coil, and the sleeve underneath,
-                    // with its loading icon, is that somewhere. Once
-                    // [artLoaded] catches up the two are showing the same
-                    // bitmap, so hiding one behind the other is invisible.
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            // The compact sleeve is the source while full
-                            // bleed artwork is off, including its Canvas.
-                            .hazeSource(playerHaze)
-                            .graphicsLayer { alpha = if (artLoaded) 1f - heroVisible else 1f }
-                            // A drop shadow grounds a photo; on the flat
-                            // placeholder tile it has nothing to sit behind, so
-                            // it just reads as a second, darker square ringing
-                            // the first. Only cast it once there's actually art.
-                            .shadow(
-                                if (artLoaded) lerp(14.dp, 6.dp, p) else 0.dp,
-                                RoundedCornerShape(lerp(10.dp, 7.dp, p)),
+                        if (showNerdStats && p < 0.5f) {
+                            val nerdStyle = MaterialTheme.typography.labelSmall.copy(
+                                shadow = Shadow(
+                                    color = Color.Black.copy(alpha = 0.55f),
+                                    offset = Offset(0f, 1f),
+                                    blurRadius = 4f,
+                                ),
                             )
-                            .clip(RoundedCornerShape(lerp(10.dp, 7.dp, p)))
-                            .background(Color.Black.copy(alpha = 0.18f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (!artLoaded && !canvasRendered) {
-                            Icon(
-                                imageVector = BitChordIcons.MusicNote,
-                                contentDescription = null,
-                                tint = Color.White.copy(alpha = 0.35f),
-                                modifier = Modifier.size(lerp(40.dp, 20.dp, p)),
-                            )
-                        }
-                        if (!useRemoteArtworkFallback) {
-                            localPreviewRequest?.let { previewRequest ->
-                                AsyncImage(
-                                    model = previewRequest,
-                                    contentDescription = null,
-                                    contentScale = sleeveContentScale,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
-                        }
-                        AsyncImage(
-                            // Decode at the sleeve's *expanded* size, always.
-                            // Coil otherwise sizes the decode to however large
-                            // this is when the request goes out — and changing
-                            // track from the queue does that while the sleeve is
-                            // collapsed to a thumbnail, leaving a thumbnail-sized
-                            // bitmap to be blown back up when the queue closes.
-                            // Skipping tracks with the transport keeps it sharp
-                            // only because the sleeve happens to be full size at
-                            // that moment.
-                            //
-                            // Asked for at the source's own size rather than the
-                            // sleeve's: it is the same request the full-bleed
-                            // banner makes, and the banner is taller than the
-                            // sleeve is wide. One ask, one decode, one bitmap for
-                            // both — and nothing to upscale when the two swap.
-                            model = artRequest,
-                            contentDescription = null,
-                            // Video thumbnails are 16:9; letterboxing them inside
-                            // the square sleeve looks like a broken frame.
-                            contentScale = sleeveContentScale,
-                            onState = {
-                                artLoaded = it is AsyncImagePainter.State.Success
-                                if (it is AsyncImagePainter.State.Success) {
-                                    val image = it.result.image
-                                    val aspectRatio = image.width.toFloat() / image.height.coerceAtLeast(1)
-                                    if (aspectRatio.isFinite() && aspectRatio in 0.25f..4f) {
-                                        loadedArtworkAspectRatio = aspectRatio
-                                    }
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                                    .graphicsLayer { alpha = 1f - p * 2f },
+                            ) {
+                                nerdStats?.describe(context)?.let { stats ->
+                                    Text(
+                                        text = stats,
+                                        style = nerdStyle,
+                                        color = Color.White.copy(alpha = 0.65f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        textAlign = TextAlign.Center,
+                                    )
                                 }
-                                // Only the failure is latched, and only upwards:
-                                // the retry that clears it is [artFailed]'s own
-                                // effect, and clearing it from a Loading state
-                                // here would cancel that effect's wait every time
-                                // the painter passed back through Loading.
-                                if (it is AsyncImagePainter.State.Error) {
-                                    if (localPreviewArtUrl != null && !fullLocalArtworkAllowed) {
-                                        // If the platform thumbnail is unavailable,
-                                        // still try the exact embedded cover before
-                                        // falling back to any remote metadata URL.
-                                        fullLocalArtworkAllowed = true
-                                        artFailed = false
-                                    } else if (!useRemoteArtworkFallback && remoteArtFallbackUrl != null) {
-                                        useRemoteArtworkFallback = true
-                                        artFailed = false
-                                    } else {
-                                        artFailed = true
-                                    }
-                                }
-                            },
-                            // TextureView-backed canvas frames can arrive
-                            // before Coil has decoded the sleeve. Alpha alone
-                            // doesn't hide this layer for that window: a
-                            // TextureView composites through its own hardware
-                            // layer, and on some devices that layer wins the
-                            // stacking order against a sibling Compose layer
-                            // even when that layer's alpha is zero — so the
-                            // still image's empty placeholder still shows
-                            // through, above a perfectly healthy animated
-                            // cover. Skipping the draw call outright leaves
-                            // nothing there to composite, in the wrong order
-                            // or otherwise; the request stays mounted so
-                            // loading still finishes in the background and
-                            // [artLoaded] still flips the moment it does.
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .drawWithContent { if (artLoaded || !canvasRendered) drawContent() },
-                        )
-
-                        // Where the clip plays when it can't have the banner:
-                        // inside the same clip as the still art, taking the
-                        // sleeve's corners, shadow and paused shrink for free.
-                        if (!heroMode) {
-                            canvas?.takeIf { p < 0.5f }?.let { clip ->
-                                CanvasArtworkPlayer(
-                                    canvas = clip,
-                                    isPlaying = isPlaying,
-                                    onRenderedChanged = { canvasRendered = it },
-                                    onFrameCaptured = { canvasFrame = it },
-                                    refreshFrameEveryMs = meshRefreshMs,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
                             }
                         }
-                    }
-
-                    // Measured stats, pinned to the sleeve's own bottom-centre
-                    // rather than squeezed under the seek bar with the
-                    // "Lossless" badge — the badge is a claim, this is the
-                    // evidence, and the two no longer swap for each other on a
-                    // tap. Fades out with the sleeve as it collapses to a
-                    // thumbnail, where there's no room to read it anyway.
-                    if (showNerdStats && p < 0.5f) {
-                        // A plain white line reads fine over the usual dark
-                        // tile, but a light stretch of an animated cover — sky,
-                        // snow, a pale sleeve — washes it out entirely. The
-                        // shadow costs nothing on a dark background and is what
-                        // keeps it legible on a bright one.
-                        val nerdStyle = MaterialTheme.typography.labelSmall.copy(
-                            shadow = Shadow(
-                                color = Color.Black.copy(alpha = 0.55f),
-                                offset = Offset(0f, 1f),
-                                blurRadius = 4f,
-                            ),
-                        )
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(horizontal = 10.dp, vertical = 8.dp)
-                                .graphicsLayer { alpha = 1f - p * 2f },
-                        ) {
-                            nerdStats?.describe(context)?.let { stats ->
-                                Text(
-                                    text = stats,
-                                    style = nerdStyle,
-                                    color = Color.White.copy(alpha = 0.65f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                        }
-                    }
                     }
                 }
 
@@ -2211,7 +2419,7 @@ fun NowPlayingScreen(
                         imageVector = if (showNext) Icons.Rounded.FastForward else Icons.Rounded.FastRewind,
                         contentDescription = null,
                         tint = Color.White.copy(
-                            alpha = swipeHintProgress * if (enabled) 0.85f else 0.3f,
+                            alpha = swipeHintProgress * (if (enabled) 0.85f else 0.3f),
                         ),
                         modifier = Modifier
                             .align(Alignment.TopCenter)
@@ -2414,6 +2622,7 @@ fun NowPlayingScreen(
                             } else {
                                 LyricsPanel(
                                     lines = lyrics.orEmpty(),
+                                    trackKey = song.videoId,
                                     positionMs = positionMs,
                                     isPlaying = isPlaying,
                                     onSeekToLine = onSeek,
@@ -2456,6 +2665,7 @@ fun NowPlayingScreen(
                     } else {
                         LyricsPanel(
                             lines = lyrics.orEmpty(),
+                            trackKey = song.videoId,
                             positionMs = positionMs,
                             isPlaying = isPlaying,
                             onSeekToLine = onSeek,
@@ -2526,8 +2736,10 @@ fun NowPlayingScreen(
             // the feature is properly gone.
             if (showPlayerLyricsStrip && !lyricsOpen && (syncedLyricsEnabled || !lyrics.isNullOrEmpty())) {
                 Box(
+                    contentAlignment = Alignment.CenterStart,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(36.dp)
                         // The slider's touch target reaches ~13dp above the
                         // drawn bar, so the strip reads as further off it than
                         // it is. Nudged down into that dead space, the same way
@@ -3155,38 +3367,81 @@ private fun SweptLyricLine(
     glowAlpha: Float = 0f,
     glowRadius: Dp = GLOW_RADIUS,
     glowRoom: Dp = 0.dp,
+    feather: Boolean = false,
+    rise: Boolean = true,
+    alignEnd: Boolean = false,
+    fillWidth: Boolean = false,
 ) {
     var layout by remember(line) { mutableStateOf<TextLayoutResult?>(null) }
+    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val autoFit by AppSettings.autoFitOneLineLyrics.collectAsStateWithLifecycle()
     val showFurigana by AppSettings.showLyricsFurigana.collectAsStateWithLifecycle()
     val textMeasurer = rememberTextMeasurer()
     val richText = remember(line.text, style, showFurigana) {
         makeLyricRichText(line.text, style, Color.White, showFurigana)
     }
+    val hasRuby = richText.rubyRanges.isNotEmpty()
 
-    // Carried by every copy: identical insets keep them laying out identically,
-    // and the inset is what gives the blurred copy's layer somewhere to put the
-    // halo. Sits inside the blur and outside the draw lambdas, so text-layout
-    // coordinates and draw coordinates still agree.
-    //
-    // Off unless asked for. Only the full panel can afford it — it takes the
-    // space back off its own row spacing and content padding. Handed to the
-    // one-line strip above the scrubber, where there is no glow to make room
-    // for and nothing paying the space back, it just left the line sitting in
-    // a pocket of air with the chevron pushed off it.
+    // Filled in and read back a letter at a time inside the draw lambdas, and
+    // shared by all three copies of the line — they draw one after another on
+    // the same thread, so there is only ever one letter in hand.
+    val growth = remember { CharGrowth() }
+
+    val phase = remember(line, clock) {
+        derivedStateOf(structuralEqualityPolicy()) {
+            val now = clock.longValue
+            when {
+                now < line.animatesFromMs -> PHASE_BEFORE
+                now > line.animatesUntilMs -> PHASE_AFTER
+                else -> PHASE_MOVING
+            }
+        }
+    }
+    val drawnAt: () -> Long = {
+        when (phase.value) {
+            PHASE_MOVING -> clock.longValue
+            PHASE_BEFORE -> line.animatesFromMs - 1
+            else -> line.animatesUntilMs + 1
+        }
+    }
+
     val room = if (glowRoom > 0.dp) Modifier.padding(glowRoom) else Modifier
 
+    val riseAgainst: (Modifier) -> Modifier = { inner ->
+        if (!rise || reduceAnimation || hasRuby) {
+            inner
+        } else {
+            Modifier
+                .drawWithContent {
+                    val measured = layout
+                    if (measured == null || line.words.isEmpty()) {
+                        drawContent()
+                    } else {
+                        riseWith(
+                            layout = measured,
+                            line = line,
+                            positionMs = drawnAt(),
+                            inset = glowRoom.toPx(),
+                            peak = WORD_RISE.toPx(),
+                            growth = growth,
+                        )
+                    }
+                }
+                .then(inner)
+        }
+    }
+
     val sweep = Modifier.drawWithContent {
-        val position = clock.longValue
+        val position = drawnAt()
         when {
-            // Sung and done with: all of it is lit. Checked first so the lines
-            // above and below the playing one — which are in this same state
-            // for minutes at a time — cost a comparison per frame rather than
-            // a walk of their words.
             position >= line.endMs -> drawContent()
-            // Not started: nothing lit, the dim copy is the whole of it.
             position <= line.timeMs -> Unit
-            else -> layout?.let { sweepTo(it, richText.renderedOffset(line.revealedChars(position))) }
+            else -> layout?.let {
+                val rawChars = line.revealedChars(position)
+                val revealed = if (hasRuby) richText.renderedOffset(rawChars) else rawChars
+                val spans = if (hasRuby) emptyList() else line.sweepSpans
+                sweepTo(it, revealed, spans, feather)
+            }
         }
     }
 
@@ -3196,18 +3451,73 @@ private fun SweptLyricLine(
         }
         val displayedMaxLines = if (autoFit) 1 else maxLines
         val displayedOverflow = if (autoFit) TextOverflow.Clip else overflow
-        Box(Modifier.fillMaxSize()) {
-        Text(
-            text = richText.annotated,
-            inlineContent = richText.inlineContent,
-            style = fittedStyle,
-            color = Color.White.copy(alpha = dimAlpha),
-            maxLines = displayedMaxLines,
-            overflow = displayedOverflow,
-            onTextLayout = { layout = it },
-            modifier = room.fillMaxWidth(),
-        )
-        if (glowAlpha > 0.01f) {
+        val widthMod = if (fillWidth) Modifier.fillMaxWidth() else Modifier
+
+        Box(
+            widthMod,
+            contentAlignment = if (alignEnd) Alignment.TopEnd else Alignment.TopStart,
+        ) {
+            Text(
+                text = richText.annotated,
+                inlineContent = richText.inlineContent,
+                style = fittedStyle,
+                color = Color.White.copy(alpha = dimAlpha),
+                maxLines = displayedMaxLines,
+                overflow = displayedOverflow,
+                onTextLayout = { layout = it },
+                modifier = riseAgainst(room.then(widthMod)),
+            )
+            if (glowAlpha > 0.01f) {
+                if (hasRuby) {
+                    Text(
+                        text = richText.annotated,
+                        inlineContent = richText.inlineContent,
+                        style = fittedStyle,
+                        color = Color.White,
+                        maxLines = displayedMaxLines,
+                        overflow = displayedOverflow,
+                        modifier = widthMod
+                            .graphicsLayer { alpha = glowAlpha * line.glowIntensity(drawnAt()) }
+                            .blur(glowRadius, BlurredEdgeTreatment.Unbounded)
+                            .then(room)
+                            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                            .drawWithContent {
+                                val measured = layout ?: return@drawWithContent
+                                val position = drawnAt()
+                                glowAt(
+                                    layout = measured,
+                                    revealedChars = richText.renderedOffset(line.revealedChars(position)),
+                                    intensity = line.glowIntensity(position),
+                                )
+                            },
+                    )
+                } else {
+                    Text(
+                        text = richText.annotated,
+                        inlineContent = richText.inlineContent,
+                        style = fittedStyle,
+                        color = Color.White,
+                        maxLines = displayedMaxLines,
+                        overflow = displayedOverflow,
+                        modifier = widthMod
+                            .graphicsLayer { alpha = glowAlpha }
+                            .blur(glowRadius, BlurredEdgeTreatment.Unbounded)
+                            .then(room)
+                            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                            .drawWithContent {
+                                val measured = layout ?: return@drawWithContent
+                                glowGrown(
+                                    layout = measured,
+                                    line = line,
+                                    positionMs = drawnAt(),
+                                    inset = glowRoom.toPx(),
+                                    peak = WORD_RISE.toPx(),
+                                    growth = growth,
+                                )
+                            },
+                    )
+                }
+            }
             Text(
                 text = richText.annotated,
                 inlineContent = richText.inlineContent,
@@ -3215,59 +3525,81 @@ private fun SweptLyricLine(
                 color = Color.White,
                 maxLines = displayedMaxLines,
                 overflow = displayedOverflow,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // Read in the layer block rather than in composition: the
-                    // intensity changes every frame, and this way only the
-                    // layer's alpha is recomputed, not the line.
-                    .graphicsLayer { alpha = glowAlpha * line.glowIntensity(clock.longValue) }
-                    .blur(glowRadius, BlurredEdgeTreatment.Unbounded)
-                    .then(room)
-                    // The band is masked with a DstIn gradient, which needs a
-                    // layer of its own to erase into — against the backdrop it
-                    // would take the artwork with it.
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                    .drawWithContent {
-                        // Deliberately not the shared sweep: that lights
-                        // everything sung so far, and this is only the front of
-                        // it. No short-circuit either — the glow layer only
-                        // exists for the line being sung, so it is one line's
-                        // worth of arithmetic, not the whole panel's.
-                        val measured = layout ?: return@drawWithContent
-                        val position = clock.longValue
-                        glowAt(
-                            layout = measured,
-                            revealedChars = richText.renderedOffset(line.revealedChars(position)),
-                            intensity = line.glowIntensity(position),
-                        )
-                    },
+                modifier = riseAgainst(
+                    widthMod
+                        .graphicsLayer {
+                            compositingStrategy = if (feather) {
+                                CompositingStrategy.Offscreen
+                            } else {
+                                CompositingStrategy.Auto
+                            }
+                        }
+                        .then(room)
+                        .then(sweep),
+                ),
             )
-        }
-        Text(
-            text = richText.annotated,
-            inlineContent = richText.inlineContent,
-            style = fittedStyle,
-            color = Color.White,
-            maxLines = displayedMaxLines,
-            overflow = displayedOverflow,
-            modifier = room.fillMaxWidth().then(sweep),
-        )
         }
     }
 }
 
 /**
- * Draws this text clipped to a band trailing the sweep's leading edge — the
- * word being sung, roughly, rather than the whole of what has been.
- *
- * The band widens with [intensity] as well as brightening, so a held note
- * spreads its light over the words either side of it while patter keeps its
- * halo tight to the one syllable. Alpha alone made every word glow the same
- * shape, only more or less of it.
- *
- * Only ever one band: the edge is on exactly one visual line, and a wrapped
- * line's previous row has already been left behind by the time the band would
- * have reached back into it.
+ * Draws this text clipped to the letters of the words being held, each at its
+ * own brightness — the light the singing is actually giving off, rather than a
+ * band of it dragged along behind the highlight.
+ */
+private fun ContentDrawScope.glowGrown(
+    layout: TextLayoutResult,
+    line: LyricLine,
+    positionMs: Long,
+    inset: Float,
+    peak: Float,
+    growth: CharGrowth,
+) {
+    if (!line.isGrowing(positionMs)) return
+    val em = layout.layoutInput.style.fontSize.toPx()
+    val length = layout.layoutInput.text.length
+    for (word in line.growingWords) {
+        if (positionMs < word.startMs || positionMs > word.restsAtMs) continue
+        val span = line.wordSpans[word.index]
+        val fall = line.wordFall(word.index, positionMs)
+        for (char in span.first..minOf(span.last, length - 1)) {
+            word.sampleInto(char - span.first, positionMs, growth)
+            if (growth.bloom <= 0.01f) continue
+            val visualLine = layout.getLineForOffset(char)
+            val from = layout.xOn(char, visualLine, inset)
+            val to = layout.xOn(char + 1, visualLine, inset)
+            if (to <= from) continue
+            val dx = growth.shift * em
+            val dy = -growth.rise * peak * fall
+            val rowTop = layout.getLineTop(visualLine) + inset
+            val bottom = layout.getLineBottom(visualLine) + inset
+            val overhang = (to - from) * (growth.scale - 1f) / 2f
+            clipRect(
+                left = from - overhang + dx,
+                top = rowTop - peak * GROW_HEADROOM,
+                right = to + overhang + dx,
+                bottom = bottom,
+            ) {
+                translate(left = dx, top = dy) {
+                    scale(
+                        growth.scale,
+                        growth.scale,
+                        Offset((from + to) / 2f, (rowTop + bottom) / 2f),
+                    ) {
+                        this@glowGrown.drawContent()
+                    }
+                }
+                drawRect(
+                    color = Color.White.copy(alpha = growth.bloom),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Fallback glow band for lines using custom inline ruby annotations.
  */
 private fun ContentDrawScope.glowAt(
     layout: TextLayoutResult,
@@ -3282,13 +3614,11 @@ private fun ContentDrawScope.glowAt(
     val lineStart = layout.getLineStart(visualLine)
     val lineEnd = layout.getLineEnd(visualLine, visibleEnd = true)
 
-    val right = horizontalAt(layout, edge.coerceIn(lineStart.toFloat(), lineEnd.toFloat()), lineStart, lineEnd)
+    val right = horizontalAt(layout, edge.coerceIn(lineStart.toFloat(), lineEnd.toFloat()), visualLine, emptyList())
     val trail = GLOW_TRAIL.toPx() * (GLOW_TRAIL_FLOOR + (1f - GLOW_TRAIL_FLOOR) * intensity)
     val left = (right - trail).coerceAtLeast(layout.getLineLeft(visualLine))
     if (right <= left) return
 
-    // The band, cut out of the line. This is only the vertical and trailing
-    // bounds; how it fades across is the mask below.
     clipRect(
         left = left,
         top = layout.getLineTop(visualLine),
@@ -3298,15 +3628,6 @@ private fun ContentDrawScope.glowAt(
         this@glowAt.drawContent()
     }
 
-    // Full strength at the leading edge, ebbing away behind it. Without this
-    // the band has a hard back edge, and a hard edge travelling along at a
-    // constant distance behind the sweep is exactly what reads as a fixed-width
-    // block of light being dragged across the words.
-    //
-    // Painted over the whole node rather than inside the clip on purpose:
-    // DstIn keeps what the mask covers and erases the rest, and the brush
-    // clamps past its ends — transparent to the left of the band, opaque to
-    // the right, where the clip has already left nothing to keep.
     drawRect(
         brush = Brush.horizontalGradient(
             0f to Color.Transparent,
@@ -3319,32 +3640,166 @@ private fun ContentDrawScope.glowAt(
     )
 }
 
-/** Where a fractional character index sits across a visual line, in pixels. */
+/**
+ * Redraws this row with the word being sung lifted off the line, and the ones
+ * behind it settling back down.
+ */
+private fun ContentDrawScope.riseWith(
+    layout: TextLayoutResult,
+    line: LyricLine,
+    positionMs: Long,
+    inset: Float,
+    peak: Float,
+    growth: CharGrowth,
+) {
+    if (!line.isLifted(positionMs)) {
+        drawContent()
+        return
+    }
+    val em = layout.layoutInput.style.fontSize.toPx()
+    for (visualLine in 0 until layout.lineCount) {
+        val lineStart = layout.getLineStart(visualLine)
+        val lineEnd = layout.getLineEnd(visualLine, visibleEnd = true)
+        val top = layout.getLineTop(visualLine) + inset
+        val bottom = layout.getLineBottom(visualLine) + inset
+        var at = lineStart
+        var edge = layout.getLineLeft(visualLine) + inset
+        for (index in line.words.indices) {
+            val span = line.wordSpans[index]
+            val start = maxOf(span.first, lineStart)
+            val end = minOf(span.last + 1, lineEnd)
+            if (start >= end) continue
+            val held = line.growingAt(index)?.takeIf { positionMs in it.startMs..it.restsAtMs }
+            val lift = line.wordLift(index, positionMs)
+            if (held == null && lift <= 0.01f) continue
+            val from = layout.xOn(start, visualLine, inset)
+            val to = layout.xOn(end, visualLine, inset)
+            if (to <= from) continue
+            if (start > at) sliceRisen(edge, top, from, bottom, 0f)
+            if (held != null) {
+                growEach(
+                    layout, held, line, positionMs, visualLine,
+                    start, end, top, bottom, inset, peak, em, growth,
+                )
+            } else {
+                sliceRisen(from, top - peak, to, bottom, -lift * peak)
+            }
+            at = end
+            edge = to
+        }
+        if (at < lineEnd) {
+            sliceRisen(edge, top, layout.getLineRight(visualLine) + inset, bottom, 0f)
+        }
+    }
+}
+
+/**
+ * Redraws one held word a letter at a time, each at its own swell and height.
+ */
+@Suppress("LongParameterList")
+private fun ContentDrawScope.growEach(
+    layout: TextLayoutResult,
+    word: GrowingWord,
+    line: LyricLine,
+    positionMs: Long,
+    visualLine: Int,
+    start: Int,
+    end: Int,
+    top: Float,
+    bottom: Float,
+    inset: Float,
+    peak: Float,
+    em: Float,
+    growth: CharGrowth,
+) {
+    val fall = line.wordFall(word.index, positionMs)
+    val first = line.wordSpans[word.index].first
+    val ceiling = top - peak * GROW_HEADROOM
+    val middle = (top + bottom) / 2f
+    for (char in start until end) {
+        word.sampleInto(char - first, positionMs, growth)
+        val from = layout.xOn(char, visualLine, inset)
+        val to = layout.xOn(char + 1, visualLine, inset)
+        if (to <= from) continue
+        val dx = growth.shift * em
+        val dy = -growth.rise * peak * fall
+        val overhang = (to - from) * (growth.scale - 1f) / 2f
+        clipShiftedDown(
+            left = from - overhang + dx,
+            top = ceiling,
+            right = to + overhang + dx,
+            bottom = bottom,
+            dy = dy,
+        ) {
+            translate(left = dx) {
+                scale(growth.scale, growth.scale, Offset((from + to) / 2f, middle)) {
+                    this@growEach.drawContent()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Where an offset sits horizontally *on the row it was cut out of*.
+ */
+private fun TextLayoutResult.xOn(offset: Int, visualLine: Int, inset: Float): Float {
+    val left = getLineLeft(visualLine) + inset
+    val right = getLineRight(visualLine) + inset
+    return when {
+        offset <= getLineStart(visualLine) -> left
+        offset >= getLineEnd(visualLine, visibleEnd = true) -> right
+        else -> (getHorizontalPosition(offset, usePrimaryDirection = true) + inset)
+            .coerceIn(left, right)
+    }
+}
+
+/** One piece of a line, clipped to its own width and drawn at its own height. */
+private fun ContentDrawScope.sliceRisen(
+    from: Float,
+    top: Float,
+    to: Float,
+    bottom: Float,
+    dy: Float,
+) {
+    if (to <= from) return
+    clipShiftedDown(left = from, top = top, right = to, bottom = bottom, dy = dy) {
+        this@sliceRisen.drawContent()
+    }
+}
+
+/**
+ * Where a fractional character index sits across a visual line, in pixels.
+ */
 private fun horizontalAt(
     layout: TextLayoutResult,
     chars: Float,
-    lineStart: Int,
-    lineEnd: Int,
+    visualLine: Int,
+    spans: List<IntRange>,
 ): Float {
+    val lineStart = layout.getLineStart(visualLine)
+    val lineEnd = layout.getLineEnd(visualLine, visibleEnd = true)
+    val word = spans.firstOrNull { chars >= it.first && chars < it.last + 1 }
+    if (word != null && word.first >= lineStart && word.last + 1 <= lineEnd) {
+        val from = layout.xOn(word.first, visualLine, 0f)
+        val to = layout.xOn(word.last + 1, visualLine, 0f)
+        return from + (to - from) * (chars - word.first) / (word.last + 1 - word.first)
+    }
     val index = chars.toInt().coerceIn(lineStart, lineEnd)
-    val here = layout.getHorizontalPosition(index, usePrimaryDirection = true)
-    val next = layout.getHorizontalPosition(
-        (index + 1).coerceAtMost(lineEnd),
-        usePrimaryDirection = true,
-    )
+    val here = layout.xOn(index, visualLine, 0f)
+    val next = layout.xOn((index + 1).coerceAtMost(lineEnd), visualLine, 0f)
     return here + (next - here) * (chars - index)
 }
 
 /**
  * Draws this text clipped to its first [revealedChars] characters.
- *
- * Wrapped lines are handled a visual line at a time: the ones already passed
- * are drawn whole, the one holding the boundary is cut at it, and the rest are
- * left to the dim copy. Within a word the cut sits between two character
- * positions, so the edge advances smoothly rather than jumping a letter at a
- * time.
  */
-private fun ContentDrawScope.sweepTo(layout: TextLayoutResult, revealedChars: Float) {
+private fun ContentDrawScope.sweepTo(
+    layout: TextLayoutResult,
+    revealedChars: Float,
+    spans: List<IntRange>,
+    feather: Boolean,
+) {
     if (revealedChars <= 0f) return
     if (revealedChars >= layout.layoutInput.text.length) {
         drawContent()
@@ -3352,26 +3807,39 @@ private fun ContentDrawScope.sweepTo(layout: TextLayoutResult, revealedChars: Fl
     }
     for (visualLine in 0 until layout.lineCount) {
         val start = layout.getLineStart(visualLine)
-        // Lines beyond the boundary have nothing lit on them, and neither has
-        // anything after them.
         if (revealedChars <= start) return
         val end = layout.getLineEnd(visualLine, visibleEnd = true)
-        val right = if (revealedChars >= end) {
-            layout.getLineRight(visualLine)
+        val cut = revealedChars < end
+        val right = if (cut) {
+            horizontalAt(layout, revealedChars, visualLine, spans)
         } else {
-            horizontalAt(layout, revealedChars, start, end)
+            layout.getLineRight(visualLine)
         }
+        val top = layout.getLineTop(visualLine)
+        val bottom = layout.getLineBottom(visualLine)
         clipRect(
             left = layout.getLineLeft(visualLine),
-            top = layout.getLineTop(visualLine),
+            top = top,
             right = right,
-            bottom = layout.getLineBottom(visualLine),
+            bottom = bottom,
         ) {
             this@sweepTo.drawContent()
         }
+        if (!feather || !cut) continue
+        clipRect(top = top, bottom = bottom) {
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    0f to Color.White,
+                    1f to Color.Transparent,
+                    startX = (right - WIPE_FEATHER.toPx())
+                        .coerceAtLeast(layout.getLineLeft(visualLine)),
+                    endX = right,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
     }
 }
-
 
 /**
  * Apple Music's lyrics view: big tight type, the playing line crisp and
@@ -3384,6 +3852,7 @@ private fun ContentDrawScope.sweepTo(layout: TextLayoutResult, revealedChars: Fl
 @Composable
 private fun LyricsPanel(
     lines: List<LyricLine>,
+    trackKey: Any,
     positionMs: Long,
     isPlaying: Boolean,
     onSeekToLine: (Long) -> Unit,
@@ -3392,22 +3861,29 @@ private fun LyricsPanel(
     val clock = rememberLyricClock(positionMs, isPlaying)
 
     val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
+    val duet = remember(lines) { lines.any { it.alignment == LyricAlignment.End } }
 
-    // Which line is playing right now: the last one whose stamp has passed.
-    val activeLine by remember(lines, isSynced) {
+    val activeRows by remember(lines, isSynced) {
         derivedStateOf {
-            if (!isSynced) -1 else lines.indexOfLast { it.timeMs <= clock.longValue }
+            if (!isSynced) emptyList() else activeLyricRows(lines, clock.longValue)
         }
     }
-    val alsoActive by remember(lines, isSynced) {
+    val scrollLine = activeRows.firstOrNull() ?: -1
+    val leadLine by remember(lines, isSynced) {
         derivedStateOf {
-            if (!isSynced) return@derivedStateOf -1
-            val previous = activeLine - 1
-            val line = lines.getOrNull(previous)
-            if (line != null && line.hasKnownEnd && clock.longValue < line.endMs) previous else -1
+            if (!isSynced) {
+                -1
+            } else {
+                val now = clock.longValue
+                activeLyricRows(lines, now + scrollLead(lines, now)).firstOrNull() ?: -1
+            }
         }
     }
+    val focusLine = if (leadLine >= 0) leadLine else scrollLine
     val listState = rememberLazyListState()
+    val viewportHeight by remember(listState) {
+        derivedStateOf { listState.layoutInfo.viewportSize.height }
+    }
     val keepScroll = remember(listState) { keepScrollInList(listState) }
     var browsing by remember { mutableStateOf(false) }
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -3417,11 +3893,6 @@ private fun LyricsPanel(
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val lyricsFontScale by AppSettings.lyricsFontScale.collectAsStateWithLifecycle()
     val lyricsTextAlignment by AppSettings.lyricsTextAlignment.collectAsStateWithLifecycle()
-    val lyricTextAlign = when (lyricsTextAlignment) {
-        LyricsTextAlignment.LEFT -> TextAlign.Left
-        LyricsTextAlignment.CENTER -> TextAlign.Center
-        LyricsTextAlignment.RIGHT -> TextAlign.Right
-    }
 
     val glowing = !reduceAnimation && !reduceDynamicBlur && lyricsBlur &&
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -3432,39 +3903,57 @@ private fun LyricsPanel(
         }
     }
 
-    val currentLine by rememberUpdatedState(activeLine)
+    val currentLine by rememberUpdatedState(focusLine)
     val activeOnScreen by remember(listState) {
         derivedStateOf {
             listState.layoutInfo.visibleItemsInfo.any { it.index == currentLine }
         }
     }
-    LaunchedEffect(browsing, activeOnScreen, listState.isScrollInProgress) {
-        if (browsing && activeOnScreen && !listState.isScrollInProgress) {
+    LaunchedEffect(browsing, activeOnScreen, listState.isScrollInProgress, isPlaying) {
+        if (isPlaying && browsing && activeOnScreen && !listState.isScrollInProgress) {
             delay(600)
             browsing = false
         }
     }
 
-    LaunchedEffect(browsing, listState.isScrollInProgress) {
-        if (browsing && !listState.isScrollInProgress) {
+    LaunchedEffect(browsing, listState.isScrollInProgress, isPlaying) {
+        if (isPlaying && browsing && !listState.isScrollInProgress) {
             delay(5_000)
             browsing = false
         }
     }
 
-    var placed by remember(lines) { mutableStateOf(false) }
-    LaunchedEffect(activeLine, browsing) {
-        if (isSynced && !browsing && !listState.isScrollInProgress &&
-            activeLine >= 0 && activeLine in lines.indices
+    var run by remember(lines) { mutableStateOf(ScrollRun(0, 0f, LYRIC_SETTLE_MS)) }
+    val since = remember(lines) { mutableFloatStateOf(0f) }
+    LaunchedEffect(run.id) {
+        if (run.id == 0) return@LaunchedEffect
+        animate(
+            initialValue = 0f,
+            targetValue = run.spanMs,
+            animationSpec = tween(run.spanMs.toInt(), easing = LinearEasing),
+        ) { value, _ -> since.floatValue = value }
+    }
+    var placed by remember(trackKey) { mutableStateOf(false) }
+    LaunchedEffect(focusLine, browsing, isSynced) {
+        if (isSynced && !browsing &&
+            focusLine >= 0 && focusLine in lines.indices
         ) {
-            val viewport = snapshotFlow { listState.layoutInfo.viewportSize.height }
-                .first { it > 0 }
-            val third = viewport / 3
-            if (placed) {
-                listState.animateScrollToItem(activeLine, scrollOffset = -third)
-            } else {
-                listState.scrollToItem(activeLine, scrollOffset = -third)
-                placed = true
+            snapshotFlow { listState.layoutInfo.viewportSize.height }.first { it > 0 }
+            val visible = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == focusLine }
+            when {
+                !placed || reduceAnimation -> {
+                    listState.scrollToItem(focusLine, scrollOffset = 0)
+                    placed = true
+                }
+                visible != null -> {
+                    val span = scrollLead(lines, clock.longValue).toInt()
+                    run = ScrollRun(run.id + 1, visible.offset.toFloat(), span)
+                    listState.animateScrollBy(
+                        value = visible.offset.toFloat(),
+                        animationSpec = tween(durationMillis = span, easing = LYRIC_EASING),
+                    )
+                }
+                else -> listState.animateScrollToItem(focusLine, scrollOffset = 0)
             }
         }
     }
@@ -3488,12 +3977,11 @@ private fun LyricsPanel(
             .bleedHorizontally(PLAYER_GUTTER)
             .nestedScroll(keepScroll)
             .fadingEdges(),
-        // Each row carries GLOW_ROOM of its own inset for the halo, so the
-        // list hands that much back — otherwise the lines would sit a glow's
-        // width further apart and further in than they used to.
         contentPadding = PaddingValues(
-            vertical = 40.dp - GLOW_ROOM,
-            horizontal = PLAYER_GUTTER - GLOW_ROOM,
+            top = 40.dp - GLOW_ROOM,
+            bottom = with(LocalDensity.current) { viewportHeight.toDp() } * 0.8f,
+            start = PLAYER_GUTTER - GLOW_ROOM,
+            end = PLAYER_GUTTER - GLOW_ROOM,
         ),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
@@ -3531,133 +4019,244 @@ private fun LyricsPanel(
                 return@itemsIndexed
             }
 
-            val offset = if (activeLine < 0) 0 else index - activeLine
+            val offset = if (scrollLine < 0) 0 else index - scrollLine
             val distance = abs(offset)
-            val isActive = isSynced && (index == activeLine || index == alsoActive)
+            val isActive = isSynced && index in activeRows
+            val step = distance.coerceAtMost(LINE_FALLOFF_ALPHA.lastIndex)
             val blur by animateDpAsState(
                 targetValue = when {
                     !isSynced || reduceDynamicBlur || !lyricsBlur || browsing || isActive -> 0.dp
-                    else -> (distance * 1.6f).coerceAtMost(7f).dp
+                    else -> LINE_FALLOFF_BLUR[step]
                 },
+                animationSpec = tween(LYRIC_SETTLE_MS, easing = LYRIC_EASING),
                 label = "lyricBlur",
             )
             val lineAlpha by animateFloatAsState(
                 targetValue = when {
                     !isSynced -> 0.95f
                     isActive -> 1f
-                    browsing -> if (offset < 0)
-                        (0.55f - distance * 0.05f).coerceAtLeast(0.30f)
-                    else
-                        (0.45f - distance * 0.09f).coerceAtLeast(0.12f)
-                    offset < 0 -> (0.55f - distance * 0.05f).coerceAtLeast(0.30f)
-                    else -> (0.45f - distance * 0.09f).coerceAtLeast(0.12f)
+                    browsing -> BROWSING_ALPHA
+                    else -> LINE_FALLOFF_ALPHA[step]
                 },
+                animationSpec = tween(LYRIC_SETTLE_MS, easing = LYRIC_EASING),
                 label = "lyricAlpha",
             )
             if (line.isGap) {
-                val noteSize by animateDpAsState(
-                    targetValue = if (isActive) 34.dp else 26.dp,
-                    label = "noteSize",
-                )
-                Box(
-                    modifier = Modifier
-                        .blur(blur, BlurredEdgeTreatment.Unbounded)
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable(enabled = isSynced) { onSeekToLine(line.timeMs) }
-                        // Keep the same gap and seek target when the decorative
-                        // glyph is hidden, so synced scrolling stays aligned.
-                        .padding(GLOW_ROOM)
-                        .size(noteSize),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (!hideLyricsGapNote) {
-                        Icon(
-                            imageVector = BitChordIcons.MusicNote,
-                            contentDescription = stringResource(R.string.instrumental),
-                            tint = Color.White.copy(alpha = lineAlpha),
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                val until = lines.getOrNull(index + 1)?.timeMs ?: line.endMs
+                val gapFill = remember(line, until, clock) {
+                    derivedStateOf(structuralEqualityPolicy()) {
+                        val now = clock.longValue
+                        when {
+                            now <= line.timeMs -> 0f
+                            now >= until -> 1f
+                            else -> GAP_RUNNING
+                        }
                     }
                 }
+                val swell by animateFloatAsState(
+                    targetValue = if (isActive) 1f else 0f,
+                    animationSpec = tween(
+                        durationMillis = if (isActive) 400 else 350,
+                        easing = LYRIC_EASING,
+                    ),
+                    label = "gapSwell",
+                )
+                Box(
+                    contentAlignment = Alignment.CenterStart,
+                    modifier = Modifier
+                        .height((GAP_ROW_HEIGHT + GAP_ROW_SPACING) * swell)
+                        .clipToBounds(),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .blur(blur, BlurredEdgeTreatment.Unbounded)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(enabled = isSynced) { onSeekToLine(line.timeMs) }
+                            .padding(GLOW_ROOM)
+                            .size(
+                                width = GAP_DOT_SIZE * 3 + GAP_DOT_GAP * 2,
+                                height = GAP_DOT_SIZE,
+                            )
+                            .graphicsLayer {
+                                val grow = GAP_REST_SCALE + (1f - GAP_REST_SCALE) * swell
+                                scaleX = grow
+                                scaleY = grow
+                                transformOrigin = TransformOrigin(0f, 0.5f)
+                                alpha = lineAlpha * swell
+                            }
+                            .drawBehind {
+                                if (hideLyricsGapNote) return@drawBehind
+                                val span = (until - line.timeMs).coerceAtLeast(1L)
+                                val through = gapFill.value.takeUnless { it == GAP_RUNNING }
+                                    ?: ((clock.longValue - line.timeMs).toFloat() / span).coerceIn(0f, 1f)
+                                val radius = GAP_DOT_SIZE.toPx() / 2f
+                                val stride = (GAP_DOT_SIZE + GAP_DOT_GAP).toPx()
+                                repeat(GAP_DOTS) { dot ->
+                                    val lit = (through * GAP_DOTS - dot).coerceIn(0f, 1f)
+                                    drawCircle(
+                                        color = Color.White.copy(
+                                            alpha = GAP_DOT_REST + (1f - GAP_DOT_REST) * lit,
+                                        ),
+                                        radius = radius,
+                                        center = Offset(radius + dot * stride, size.height / 2f),
+                                    )
+                                }
+                            },
+                    )
+                }
             } else {
+                val alignEnd = (duet && line.alignment == LyricAlignment.End) ||
+                    (!duet && lyricsTextAlignment == LyricsTextAlignment.RIGHT)
+                val alignCenter = !duet && lyricsTextAlignment == LyricsTextAlignment.CENTER
+                val resolvedTextAlign = when {
+                    alignEnd -> TextAlign.End
+                    alignCenter -> TextAlign.Center
+                    else -> TextAlign.Start
+                }
                 val style = if (isSynced) {
                     MaterialTheme.typography.headlineLarge.copy(
                         fontSize = (27f * lyricsFontScale).sp,
                         lineHeight = (33f * lyricsFontScale).sp,
+                        textAlign = resolvedTextAlign,
                     )
                 } else {
                     MaterialTheme.typography.headlineMedium.copy(
                         fontSize = (23f * lyricsFontScale).sp,
                         lineHeight = (31f * lyricsFontScale).sp,
                         fontWeight = FontWeight.SemiBold,
+                        textAlign = resolvedTextAlign,
                     )
                 }
-                // The playing line swells a touch. Anchored to its left edge,
-                // so the words don't slide sideways under the highlight as it
-                // grows — scaling about the centre would fight the sweep.
+                val sung = offset < 0
+                val behind = if (run.delta >= 0f) index - focusLine else focusLine - index
+                val staggerDelay = behind.coerceIn(0, STAGGER_STEPS) *
+                    STAGGER_FRACTION * run.durationMs
+                val interaction = remember { MutableInteractionSource() }
+                val pressed by interaction.collectIsPressedAsState()
                 val scale by animateFloatAsState(
-                    targetValue = if (isActive) 1.04f else 1f,
+                    targetValue = when {
+                        pressed -> PRESSED_SCALE
+                        isActive -> 1f
+                        else -> INACTIVE_SCALE
+                    },
+                    animationSpec = tween(
+                        durationMillis = if (pressed) 120 else LYRIC_SETTLE_MS,
+                        easing = LYRIC_EASING,
+                    ),
                     label = "lyricScale",
                 )
-                // Apple's bloom on the line being sung. Fades in and out with
-                // the line rather than switching, so a handover is one line's
-                // light going down as the next one's comes up.
                 val glow by animateFloatAsState(
                     targetValue = if (isActive && glowing) GLOW_ALPHA else 0f,
                     animationSpec = tween(durationMillis = 420),
                     label = "lyricGlow",
                 )
+                val originX = when {
+                    alignEnd -> 1f
+                    alignCenter -> 0.5f
+                    else -> 0f
+                }
                 val shape = Modifier
                     .fillMaxWidth()
+                    .padding(
+                        start = if (duet && line.alignment == LyricAlignment.End) DUET_LANE else 0.dp,
+                        end = if (duet && line.alignment != LyricAlignment.End) DUET_LANE else 0.dp,
+                    )
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale
-                        transformOrigin = TransformOrigin(0f, 0.5f)
+                        transformOrigin = TransformOrigin(originX, 0.5f)
                         alpha = lineAlpha
+                        translationY = if (staggerDelay <= 0f) {
+                            0f
+                        } else {
+                            val elapsed = since.floatValue
+                            run.delta * (
+                                LYRIC_EASING.transform(
+                                    (elapsed / run.durationMs).coerceIn(0f, 1f),
+                                ) - LYRIC_EASING.transform(
+                                    ((elapsed - staggerDelay) / run.durationMs)
+                                        .coerceIn(0f, 1f),
+                                )
+                                )
+                        }
                     }
                     .blur(blur, BlurredEdgeTreatment.Unbounded)
                     .clip(RoundedCornerShape(10.dp))
-                    .clickable(enabled = isSynced) { onSeekToLine(line.timeMs) }
-                // Lead and answering vocal are one row: they are one line of
-                // the song, they scale and dim together, and tapping either
-                // seeks to the same place.
+                    .clickable(
+                        enabled = isSynced,
+                        interactionSource = interaction,
+                        indication = LocalIndication.current,
+                    ) { onSeekToLine(line.timeMs) }
+
+                val backingOpen = line.background?.let { backing ->
+                    val due by remember(backing, clock) {
+                        derivedStateOf {
+                            val now = clock.longValue
+                            now >= backing.timeMs - BACKING_LEAD_MS && now < backing.endMs
+                        }
+                    }
+                    val wanted = !isSynced || if (backing.isWordSynced) {
+                        due
+                    } else {
+                        isActive || index == focusLine
+                    }
+                    animateFloatAsState(
+                        targetValue = if (wanted) 1f else 0f,
+                        animationSpec = when {
+                            reduceAnimation -> tween(0)
+                            wanted -> tween(BACKING_OPEN_MS, easing = LYRIC_EASING)
+                            else -> tween(
+                                BACKING_CLOSE_MS,
+                                delayMillis = if (index < focusLine) run.durationMs else 0,
+                                easing = FastOutSlowInEasing,
+                            )
+                        },
+                        label = "backingOpen",
+                    )
+                }
                 Column(modifier = shape) {
                     PanelVoice(
                         line = line,
                         clock = clock,
                         style = style,
                         isActive = isActive,
+                        sung = sung,
+                        synced = isSynced,
                         browsing = browsing,
                         glowAlpha = glow,
                         room = GLOW_ROOM,
-                        textAlign = lyricTextAlign,
+                        alignEnd = alignEnd,
+                        textAlign = resolvedTextAlign,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     line.background?.let { backing ->
-                        PanelVoice(
-                            line = backing.withoutBracketPunctuation(),
-                            clock = clock,
-                            style = style.copy(
-                                fontSize = (BACKING_FONT_SIZE.value * lyricsFontScale).sp,
-                                lineHeight = (BACKING_LINE_HEIGHT.value * lyricsFontScale).sp,
-                            ),
-                            isActive = isActive,
-                            browsing = browsing,
-                            // No bloom on the second voice. The glow marks
-                            // what is being sung *at you*; putting it on both
-                            // makes the row read as two equal lines, which is
-                            // the thing this split exists to stop.
-                            glowAlpha = 0f,
-                            room = 0.dp,
-                            textAlign = lyricTextAlign,
-                            modifier = Modifier
+                        Column(
+                            Modifier
                                 .fillMaxWidth()
-                                // No top inset: the lead's own bottom room is
-                                // the gap, which leaves the two voices closer
-                                // to each other than to the rows either side.
-                                .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
-                                .graphicsLayer { alpha = BACKING_ALPHA },
-                        )
+                                .then(backingOpen?.let { Modifier.revealBacking(it, alignEnd) } ?: Modifier),
+                        ) {
+                            PanelVoice(
+                                line = backing.withoutBracketPunctuation(),
+                                clock = clock,
+                                style = style.copy(
+                                    fontSize = (BACKING_FONT_SIZE.value * lyricsFontScale).sp,
+                                    lineHeight = (BACKING_LINE_HEIGHT.value * lyricsFontScale).sp,
+                                ),
+                                isActive = isActive,
+                                sung = sung,
+                                synced = isSynced,
+                                browsing = browsing,
+                                glowAlpha = 0f,
+                                room = 0.dp,
+                                alignEnd = alignEnd,
+                                textAlign = resolvedTextAlign,
+                                rise = false,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = GLOW_ROOM, end = GLOW_ROOM, bottom = GLOW_ROOM)
+                                    .graphicsLayer { alpha = BACKING_ALPHA },
+                            )
+                        }
                     }
                 }
             }
@@ -3665,15 +4264,9 @@ private fun LyricsPanel(
     }
 }
 
-
 /**
  * One voice of a row in [LyricsPanel] — the lead, or the answering line drawn
  * under it.
- *
- * Both go through the same sweep. A backing vocal carries its own word
- * timings, so it lights up on its own clock rather than borrowing the lead's:
- * that is the whole point of splitting it out, and it is why the bracket no
- * longer gets cut off when the next line's stamp arrives mid-phrase.
  */
 @Composable
 private fun PanelVoice(
@@ -3681,62 +4274,60 @@ private fun PanelVoice(
     clock: MutableLongState,
     style: TextStyle,
     isActive: Boolean,
+    sung: Boolean,
+    synced: Boolean,
     browsing: Boolean,
     glowAlpha: Float,
     room: Dp,
+    alignEnd: Boolean,
     textAlign: TextAlign,
+    rise: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     if (line.isWordSynced && !browsing) {
-        // Every word-synced line goes through the sweep, not just the playing
-        // one — a line that has already been sung is fully revealed and one
-        // still to come is not, which falls out of the same arithmetic.
-        //
-        // Running it only on the active line meant swapping this composable
-        // for a plain Text the instant a line handed over, and the two
-        // disagreed about the brightness of the words: the tail of the line
-        // popped up to meet the rest of it in a single frame. Animating the
-        // tail instead lets a finished line close up as it dims away.
         val tail by animateFloatAsState(
-            targetValue = if (isActive) UNSUNG_ALPHA else 1f,
+            targetValue = if (sung) 1f else UNSUNG_ALPHA,
             label = "lyricTail",
         )
         SweptLyricLine(
             line = line,
             clock = clock,
-            style = style.copy(textAlign = textAlign),
+            style = style,
             dimAlpha = tail,
             modifier = modifier,
             glowAlpha = glowAlpha,
             glowRoom = room,
+            feather = isActive,
+            rise = rise,
+            alignEnd = alignEnd,
+            fillWidth = textAlign == TextAlign.Center,
         )
     } else if (line.isWordSynced) {
-        // Browsing: keep the sweep so sung lines stay fully lit and unsung
-        // ones stay dim, but skip the bloom — it is a playback flourish, not
-        // a browsing aid.  Non-active lines get the same dim tail as when we
-        // are not browsing; the active line stays at full brightness.
         val tail by animateFloatAsState(
-            targetValue = if (isActive) UNSUNG_ALPHA else 1f,
+            targetValue = if (sung) 1f else UNSUNG_ALPHA,
             label = "lyricTail",
         )
         SweptLyricLine(
             line = line,
             clock = clock,
-            style = style.copy(textAlign = textAlign),
+            style = style,
             dimAlpha = tail,
             modifier = modifier,
             glowAlpha = 0f,
             glowRoom = room,
+            rise = rise,
+            alignEnd = alignEnd,
+            fillWidth = textAlign == TextAlign.Center,
         )
     } else {
-        // Non word-synced: during playback the sweep is not available so we
-        // rely on graphicsLayer alpha (set by the parent) to dim inactive
-        // lines.  During browsing the same rule applies — do not default to
-        // full white.
+        val lit by animateFloatAsState(
+            targetValue = if (!synced || sung || isActive) 1f else UNSUNG_ALPHA,
+            label = "lyricLit",
+        )
         LyricTextDisplay(
             text = line.text,
             style = style,
-            color = Color.White,
+            color = Color.White.copy(alpha = lit),
             textAlign = textAlign,
             modifier = modifier.padding(room).fillMaxWidth(),
         )
@@ -3744,41 +4335,36 @@ private fun PanelVoice(
 }
 
 /**
+ * Opens the answering voice under its lead as [progress] runs from 0 to 1.
+ */
+private fun Modifier.revealBacking(progress: State<Float>, alignEnd: Boolean): Modifier = this
+    .layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        val open = progress.value
+        val rise = BACKING_RISE.toPx()
+        layout(placeable.width, (placeable.height * open).roundToInt()) {
+            placeable.placeWithLayer(0, 0) {
+                alpha = (open * BACKING_FADE_LEAD).coerceAtMost(1f)
+                translationY = rise * (1f - open)
+                val grow = BACKING_REST_SCALE + (1f - BACKING_REST_SCALE) * open
+                scaleX = grow
+                scaleY = grow
+                transformOrigin = TransformOrigin(if (alignEnd) 1f else 0f, 0f)
+            }
+        }
+    }
+
+/**
  * The answering vocal without the parentheses every text-only source wraps it
- * in — see [withBackgroundVocals]. Apple Music draws its own equivalent line
- * bare, and the brackets were only ever there to mark the split before there
- * was a row of its own to draw it on.
- *
- * The LRC writer still gets the line with its brackets: that punctuation is
- * what the provider published, so a downloaded file keeps it. This is a
- * display-only trim, done here rather than in the data layer, and applied to
- * the words too, not just [LyricLine.text] — [SweptLyricLine] measures the
- * words against the text it draws, and a sweep reading "(echoed" against a
- * line reading "echoed" would search for a substring that is no longer there.
+ * in — see [withBackgroundVocals].
  */
 private fun LyricLine.withoutBracketPunctuation(): LyricLine = copy(
     text = text.stripParens(),
-    words = words.mapNotNull { word ->
-        word.text.stripParens().takeIf { it.isNotEmpty() }?.let { word.copy(text = it) }
-    },
+    words = words.mapNotNull { word -> word.withoutChars { it == '(' || it == ')' } },
 )
 
 private fun String.stripParens(): String = replace("(", "").replace(")", "").trim()
 
-
-/**
- * The single lyric line above the scrubber.
- *
- * A line dims away just before its time is up and the next one arrives at full
- * strength — no fade in, so the change reads as a cut rather than a dissolve.
- * The fade is a fraction of the line's own length, so rapid-fire lines snap and
- * long held ones ebb out.
- *
- * Position is interpolated between the player's twice-a-second reports,
- * otherwise the fade would step. The alpha is applied in a graphicsLayer so
- * only the draw phase runs each frame; the text itself recomposes just once
- * per line.
- */
 private data class LyricRichText(
     val annotated: AnnotatedString,
     val inlineContent: Map<String, InlineTextContent>,
@@ -3856,9 +4442,6 @@ private fun makeLyricRichText(
                 placeholderVerticalAlign = PlaceholderVerticalAlign.AboveBaseline,
             ),
             children = {
-                // Inline content is measured inside the placeholder's fixed
-                // box. Fill it explicitly so the base glyph remains present
-                // and the reading is laid out above it on every Compose path.
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -3920,7 +4503,7 @@ private fun LyricTextDisplay(
             color = color,
             maxLines = if (autoFit) 1 else maxLines,
             overflow = if (autoFit) TextOverflow.Clip else overflow,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = if (textAlign != null) Modifier.fillMaxWidth() else Modifier,
         )
     }
 }
@@ -4004,46 +4587,24 @@ private fun CurrentLyricLine(
     }
     val current = lines.getOrNull(index)?.takeIf(LyricsStripText::isLyricLine)
     val firstSung = remember(lines) { LyricsStripText.firstLyricIndex(lines) }
-    // LRC files often begin with an empty timestamp or put the first sung line
-    // a few seconds into the track. Preview that first real line during the
-    // intro instead of replacing it with generated mood copy.
     val showingFirstLineEarly = current == null &&
         LyricsStripText.shouldPreviewFirstLyric(index, firstSung)
     val displayIndex = if (showingFirstLineEarly) firstSung else index
     val displayLine = current ?: if (showingFirstLineEarly) lines.getOrNull(firstSung) else null
     val instrumental = displayLine == null
-    // The strip is one line and switches the moment the next one is due, so
-    // the answering vocal — where there is one — has nowhere to go: showing
-    // it would mean either cutting it short when the next line arrives or
-    // holding the strip back and leaving a gap before the next line's own
-    // words appear. [LyricsPanel] has the room to draw it properly; here it
-    // is simply left off, same as before this line had a bracket in it.
     val text = displayLine?.text ?: LyricsStripText.statusTextOrNull(
         stringResource(R.string.instrumental),
         hideLyricsStatusText,
     ).orEmpty()
+
+    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(vertical = 4.dp)
-            .graphicsLayer {
-                if (instrumental) {
-                    // Nothing is being sung; hold it steady rather than fading.
-                    alpha = 0.5f
-                    return@graphicsLayer
-                }
-                val start = lines.getOrNull(displayIndex)?.timeMs ?: 0L
-                val end = lines.getOrNull(displayIndex + 1)?.timeMs
-                    ?: durationMs.takeIf { it > start }
-                    ?: (start + 4_000L)
-                val fade = ((end - start) * LYRIC_FADE_FRACTION)
-                    .coerceIn(LYRIC_FADE_MIN_MS, LYRIC_FADE_MAX_MS)
-                val remaining = (end - clock.longValue).toFloat()
-                alpha = 0.78f * (remaining / fade).coerceIn(0f, 1f)
-            },
+            .padding(vertical = 4.dp),
     ) {
         if (instrumental) {
             Icon(
@@ -4054,26 +4615,49 @@ private fun CurrentLyricLine(
             )
             Spacer(Modifier.width(6.dp))
         }
-        val swept = current?.takeIf { !showingFirstLineEarly && !instrumental && it.isWordSynced }
-        if (swept != null) {
-            SweptLyricLine(
-                line = swept,
-                clock = clock,
-                style = MaterialTheme.typography.titleMedium,
-                dimAlpha = UNSUNG_ALPHA_STRIP,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-        } else {
-            LyricTextDisplay(
-                text = text,
-                style = MaterialTheme.typography.titleMedium,
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
+        AnimatedContent(
+            targetState = Triple(displayIndex, displayLine, text),
+            transitionSpec = {
+                val duration = if (reduceAnimation) 0 else 340
+                if (reduceAnimation) {
+                    (fadeIn(snap()) togetherWith fadeOut(snap())).using(
+                        SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> snap() })
+                    )
+                } else {
+                    (fadeIn(animationSpec = tween(duration, easing = FastOutSlowInEasing)) +
+                        slideInVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> (height * 0.35f).toInt() })
+                        .togetherWith(
+                            fadeOut(animationSpec = tween(duration, easing = FastOutSlowInEasing)) +
+                                slideOutVertically(animationSpec = tween(duration, easing = FastOutSlowInEasing)) { height -> -(height * 0.35f).toInt() }
+                        ).using(
+                            SizeTransform(clip = false, sizeAnimationSpec = { _, _ -> tween(duration, easing = FastOutSlowInEasing) })
+                        )
+                }
+            },
+            label = "currentLyricTransition",
+            modifier = Modifier.weight(1f, fill = false),
+        ) { (_, lineItem, lineText) ->
+            val itemInstrumental = lineItem == null || lineItem.isGap
+            val swept = lineItem?.takeIf { !showingFirstLineEarly && !itemInstrumental && it.isWordSynced }
+            if (swept != null) {
+                SweptLyricLine(
+                    line = swept,
+                    clock = clock,
+                    style = MaterialTheme.typography.titleMedium,
+                    dimAlpha = UNSUNG_ALPHA_STRIP,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    rise = false,
+                )
+            } else {
+                LyricTextDisplay(
+                    text = lineText,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (itemInstrumental) Color.White.copy(alpha = 0.5f) else Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         Spacer(Modifier.width(6.dp))
         // Disclosure hint: this strip opens the full lyrics screen.

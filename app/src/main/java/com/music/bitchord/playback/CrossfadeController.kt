@@ -217,6 +217,7 @@ class CrossfadeController(
 
         incoming.volume = 0f
         incoming.repeatMode = outgoing.repeatMode
+        incoming.setPauseAtEndOfMediaItems(outgoing.pauseAtEndOfMediaItems)
         incoming.shuffleModeEnabled = false
         incoming.playbackParameters = outgoing.playbackParameters
         incoming.skipSilenceEnabled = outgoing.skipSilenceEnabled

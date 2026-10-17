@@ -1,8 +1,8 @@
 <resources>
-    <string name="app_name">MusicBeatSP</string>
-    <string name="quick_play_tile_label">MusicBeatSP再生</string>
-    <string name="quick_play_tile_start">MusicBeatSPの再生を開始</string>
-    <string name="quick_play_tile_stop">MusicBeatSPの再生を停止</string>
+    <string name="app_name">Tinque</string>
+    <string name="quick_play_tile_label">Tinque再生</string>
+    <string name="quick_play_tile_start">Tinqueの再生を開始</string>
+    <string name="quick_play_tile_stop">Tinqueの再生を停止</string>
     <string name="cast_connect_failed">Chromecastに接続できませんでした。</string>
     <string name="cast_track_unsupported">この曲はChromecastで再生できませんでした。</string>
     <string name="playback_channel_name">再生中</string>
@@ -719,6 +719,9 @@
     <string name="local_library_tabs_subtitle">ローカルライブラリのタブを表示・非表示・並び替え</string>
     <string name="local_folder_hierarchy">フォルダー階層表示</string>
     <string name="local_folder_hierarchy_subtitle">親フォルダーと子フォルダーが分かるようにインデントします</string>
+    <string name="music_folder_root">音楽フォルダーのルート</string>
+    <string name="music_folder_root_subtitle">フォルダービューの基準ディレクトリ</string>
+    <string name="auto_detected">自動検出</string>
     <string name="full_screen_collection_artwork">アルバム・ライブラリの全画面アート</string>
     <string name="full_screen_collection_artwork_subtitle">アルバムとライブラリのプレイリスト詳細を、カバーとグラデーションで表示します</string>
     <string name="hide_collection_top_bar">コレクション画面の上部バーを隠す</string>
@@ -828,12 +831,14 @@
     <string name="chromecast_local_file_unavailable">ローカルネットワーク経由でこのファイルをChromecastに共有できませんでした。</string>
     <string name="chromecast_playback_failed">Chromecastで再生できませんでした。スマートフォンとテレビが同じネットワークにあるか確認してください。</string>
     <string name="keep_screen_on">画面を常にオンにする</string>
-    <string name="keep_screen_on_subtitle">MusicBeatSPの使用中に画面が消灯しないようにします</string>
+    <string name="keep_screen_on_subtitle">Tinqueの使用中に画面が消灯しないようにします</string>
     <string name="keep_screen_on_during_lyrics">歌詞表示中は画面を常にオンにする</string>
     <string name="keep_screen_on_during_lyrics_subtitle">歌詞画面を開いている間、画面が自動消灯しないようにします</string>
     <string name="show_status_bar">ステータスバーを表示</string>
     <string name="show_navigation_bar">ナビゲーションバーを表示</string>
     <string name="system_bar_visibility_subtitle">非表示のバーはスワイプすると一時的に表示できます</string>
+    <string name="quiet_mode">クワイエットモード</string>
+    <string name="quiet_mode_subtitle">没入再生：メディア通知を表示せず、ステータスバーを隠します</string>
     <string name="screen_orientation">画面の向き</string>
     <string name="screen_orientation_subtitle">端末の回転に対するアプリの動作を選択します</string>
     <string name="orientation_system">システムに合わせる</string>
@@ -991,4 +996,14 @@
     <string name="show_navigation_bar_search_help">Androidの戻る、ホーム、アプリ切り替えボタンを表示します</string>
     <string name="show_tab_setting">%1$sタブを表示</string>
     <string name="show_tab_setting_subtitle">メインナビゲーションに%1$sを含めます</string>
+    <string name="equalizer_device_auto_preset_title">機器別の自動EQプリセット</string>
+    <string name="equalizer_device_auto_preset_subtitle">特定のオーディオ機器を接続したときに、指定したEQプリセットを自動的に割り当てます</string>
+    <string name="equalizer_device_auto_preset_none">自動切替なし（手動設定を維持）</string>
+    <string name="equalizer_device_auto_preset_off">EQをオフにする</string>
+    <string name="equalizer_device_auto_preset_peq_prefix">PEQ: %1$s</string>
+    <string name="equalizer_device_auto_preset_geq_prefix">5バンド: %1$s</string>
+    <string name="equalizer_device_connected_badge">接続中</string>
+    <string name="equalizer_device_select_preset">%1$s の自動プリセットを選択</string>
+    <string name="lock_bottom_bar_expanded">ボトムバーを展開状態で固定</string>
+    <string name="lock_bottom_bar_expanded_subtitle">スクロール時にナビゲーションバーとミニプレイヤーを縮小せず、展開した状態を維持します</string>
 </resources>

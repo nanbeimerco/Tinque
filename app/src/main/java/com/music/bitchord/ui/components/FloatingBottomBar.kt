@@ -16,12 +16,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +66,17 @@ data class BottomTab(
 )
 
 /**
+ * At least a gesture bar's height below the floating pill, even on devices
+ * that report a 0dp navigation bar inset (hidden gesture hint, custom ROMs,
+ * or immersive edge-to-edge configurations).
+ */
+internal val floatingBarInsets: WindowInsets
+    @Composable get() = WindowInsets.navigationBars.union(WindowInsets(bottom = GESTURE_BAR_FLOOR))
+
+/** A gesture bar's inset — 45px at the test phone's 3x density. */
+private val GESTURE_BAR_FLOOR = 15.dp
+
+/**
  * The gap between the pill's glass edge and the tabs inside it.
  *
  * Tighter than the 8 it was, which shows up as a selection indicator reaching
@@ -101,7 +115,7 @@ internal val TAB_ICON_LABEL_GAP = 2.dp
  * Stiffness 320 puts the whole movement at roughly a third of a second, quick
  * enough that the tap and the arrival feel like one event.
  */
-private val GlassSpring = spring<Float>(dampingRatio = 0.72f, stiffness = 320f)
+internal val GlassSpring = spring<Float>(dampingRatio = 0.72f, stiffness = 320f)
 
 /**
  * How far the indicator elongates along its travel, at full stride.
@@ -117,7 +131,7 @@ private val GlassSpring = spring<Float>(dampingRatio = 0.72f, stiffness = 320f)
  * Sixteen percent is enough to be felt and not enough to be caught at: past
  * about a fifth the pill starts reading as a stretched image of itself.
  */
-private const val STRETCH = 0.16f
+internal const val STRETCH = 0.16f
 
 /**
  * How much of the stretch is taken back out of the indicator's height.
@@ -128,7 +142,7 @@ private const val STRETCH = 0.16f
  * than drawn. Half keeps the sense of something with a volume to redistribute
  * while leaving the glyph its ground.
  */
-private const val SQUASH = 0.5f
+internal const val SQUASH = 0.5f
 
 @OptIn(ExperimentalHazeMaterialsApi::class)
 @Composable
@@ -196,7 +210,7 @@ fun FloatingBottomBar(
 
     Box(
         modifier = modifier
-            .navigationBarsPadding()
+            .windowInsetsPadding(floatingBarInsets)
             .padding(horizontal = PAGE_GUTTER)
             .padding(bottom = 2.dp)
             .fillMaxWidth()

@@ -10,18 +10,23 @@
 package com.music.bitchord.ui.components.backdrop.internal
 
 import androidx.compose.ui.graphics.Canvas
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 
-internal fun Canvas.clipOutline(outline: Outline, path: Path?) {
+internal fun Canvas.clipOutline(
+    outline: Outline,
+    path: Path?,
+    clipOp: ClipOp = ClipOp.Intersect
+) {
     when (outline) {
-        is Outline.Rectangle -> clipRect(outline.rect)
+        is Outline.Rectangle -> clipRect(outline.rect, clipOp)
         is Outline.Rounded -> {
             path!!.rewind()
             path.addRoundRect(outline.roundRect)
-            clipPath(path)
+            clipPath(path, clipOp)
         }
 
-        is Outline.Generic -> clipPath(outline.path)
+        is Outline.Generic -> clipPath(outline.path, clipOp)
     }
 }

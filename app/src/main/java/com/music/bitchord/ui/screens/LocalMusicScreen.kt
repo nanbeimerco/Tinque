@@ -932,9 +932,10 @@ fun LocalMusicScreen(
                         folders = nonBlacklistedFolders,
                         onFolderClick = { folder ->
                             drillDownLabel = folder.name
-                            drillDownSongs = songs.filter { (it.localPath ?: "").substringBeforeLast('/') == folder.path }
-                            drillDownArt = null
-                            drillDownFullScreenArtwork = false
+                            val folderSongs = songs.filter { (it.localPath ?: "").substringBeforeLast('/') == folder.path }
+                            drillDownSongs = folderSongs
+                            drillDownArt = folderSongs.firstOrNull { !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl
+                            drillDownFullScreenArtwork = true
                         },
                         onToggleBlacklist = { path, isBlacklisted ->
                             AppSettings.setFolderBlacklisted(path, isBlacklisted)

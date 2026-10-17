@@ -1,6 +1,8 @@
 package com.music.bitchord.playback
 
+import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.Service
 import android.content.Context
 import android.database.ContentObserver
 import android.content.Intent
@@ -797,6 +799,16 @@ class PlaybackService : MediaLibraryService() {
             publishWidgetState(playing = playWhenReady)
             QuickPlayTileState.setActive(this@PlaybackService, playWhenReady)
             if (playWhenReady) player?.let(castPlayback::onLocalStartedPlaying)
+            // A run ends without an auto-advance to hide behind: the single-song
+            // mode's `pauseAtEndOfMediaItems` stop, or a playlist running dry,
+            // both hand a `playWhenReady` back already false with the
+            // END_OF_MEDIA_ITEM reason. This pause IS the track ending now; do
+            // here what the transition path used to do in
+            // [onTrackBecameCurrent]'s `ended` block: rewind to the finished
+            // track and close the player.
+            if (!playWhenReady && reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
+                player?.let(::closeOutOneTrackPlayback)
+            }
         }
 
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
@@ -836,6 +848,18 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            // A queue pauses only in the single-song mode, which owns the
+            // stop: `pauseAtEndOfMediaItems` holds it inside the player and
+            // this pause is the belt to that brace. Everything else keeps
+            // going — a repeat-off queue advances through its middle AND
+            // onto its last track, whose own end stops by way of the
+            // playlist running dry (`END_OF_MEDIA_ITEM` on the way to
+            // STATE_ENDED, closed out in [onPlayWhenReadyChanged]), not by
+            // an arrival pause here, which stranded the listener on a
+            // track that had not even started playing yet.
+            val stopAtTrackEnd = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO &&
+                SingleSongPlaybackManager.enabled.value
+            if (stopAtTrackEnd) exoPlayer.pause()
             if (suppressRestoredTrackTransition != null) {
                 if (mediaItem?.mediaId == suppressRestoredTrackTransition) {
                     suppressRestoredTrackTransition = null
@@ -1021,6 +1045,7 @@ class PlaybackService : MediaLibraryService() {
                 repeatMode == Player.REPEAT_MODE_ALL -> stashAutoplayTracks()
                 previous == Player.REPEAT_MODE_ALL -> restoreAutoplayTracks()
             }
+            updatePauseAtEndOfMediaItems()
             // Turning repeat-all back off can leave the current item at the end
             // of the queue, which is the same trigger as a normal transition.
             loadAutoplayForCurrentTrack()
@@ -1239,6 +1264,14 @@ class PlaybackService : MediaLibraryService() {
                 } else {
                     player?.let(::updateExternalAudioPopup)
                 }
+            }
+        }
+        // Quiet mode takes effect the moment it is toggled, not at the next
+        // playback event: the toggle pokes the framework to re-read
+        // [onUpdateNotificationAsync], which hides everything it is showing.
+        scope.launch {
+            AppSettings.quietMode.collectLatest {
+                triggerNotificationUpdate()
             }
         }
 
@@ -1596,6 +1629,30 @@ class PlaybackService : MediaLibraryService() {
             castLocalServers.values.toList().also { castLocalServers.clear() }
         }
         servers.forEach { it.close() }
+    }
+
+    /**
+     * Quiet mode's half that lives here: with the mode on, the media
+     * notification is not posted at all — not in the shade, not as the
+     * status bar's icon — and the service steps out of the foreground it
+     * stood in while playback keeps running. The service stays bound for as
+     * long as the session is; that is the trade the mode asks for.
+     *
+     * With the mode off the framework's own flow is untouched, and the
+     * toggle in settings pokes it with [triggerNotificationUpdate] so the
+     * change is acted on immediately rather than at the next playback event.
+     */
+    override fun onUpdateNotificationAsync(
+        session: MediaSession,
+        startInForegroundRequired: Boolean,
+    ): ListenableFuture<Void?> {
+        if (!AppSettings.quietMode.value) {
+            return super.onUpdateNotificationAsync(session, startInForegroundRequired)
+        }
+        stopForeground(Service.STOP_FOREGROUND_REMOVE)
+        getSystemService(NotificationManager::class.java)
+            ?.cancel(DefaultMediaNotificationProvider.DEFAULT_NOTIFICATION_ID)
+        return Futures.immediateVoidFuture()
     }
 
     /**
@@ -2177,9 +2234,15 @@ class PlaybackService : MediaLibraryService() {
         // in between is Discord's own arithmetic.
         if (exoPlayer.isPlaying) pushDiscordPresence(exoPlayer)
 
-        // If Repeat is OFF (not toggled), play only this song, then stop and close the player.
-        // If Repeat All or Repeat One is toggled, continuous playback proceeds.
-        val shouldStopAndClose = exoPlayer.repeatMode == Player.REPEAT_MODE_OFF || SingleSongPlaybackManager.enabled.value
+        // Where a run ends the run, not where a queue advances: the
+        // single-song mode's stop, a queue that ran dry, or a sleep timer asked
+        // to end on this track. Middle-of-the-queue tracks on repeat-off used
+        // to land here too — the whole queue stopped on every track while the
+        // player docked itself away — so a repeat-off queue now keeps going
+        // and only the transition where Media3 hands over nothing at all
+        // (the last track's end) closes out here.
+        val queueRanDry = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && mediaItem == null
+        val shouldStopAndClose = SingleSongPlaybackManager.enabled.value || queueRanDry
         if (ended && (SleepTimer.afterTrack.value || shouldStopAndClose)) {
             exoPlayer.pause()
             if (shouldStopAndClose) {
@@ -4257,9 +4320,9 @@ class PlaybackService : MediaLibraryService() {
         player.skipSilenceEnabled = AppSettings.skipSilence.value && !bitPerfect
         chain.resampler.cutoffHz = if (bitPerfect) 0 else AppSettings.resamplerCutoffHz.value
         chain.spatial.enabled = !bitPerfect && AppSettings.spatialAudio.value
-        chain.parametricEq.setTuning(
-            enabled = AppSettings.parametricEqEnabled.value && !bitPerfect,
-            bands = AppSettings.parametricEqBands.value,
+        val peqConfig = AppSettings.parametricEqConfig.value
+        chain.parametricEq.setConfig(
+            peqConfig.copy(enabled = peqConfig.enabled && !bitPerfect),
         )
         player.playbackParameters = PlaybackParameters(
             if (bitPerfect) 1f else AppSettings.playbackSpeed.value,
@@ -4270,6 +4333,9 @@ class PlaybackService : MediaLibraryService() {
             QueueShuffle.setEnabled(true)
         }
         player.repeatMode = AppSettings.repeatMode.value
+        player.setPauseAtEndOfMediaItems(
+            AppSettings.repeatMode.value == Player.REPEAT_MODE_OFF || SingleSongPlaybackManager.enabled.value,
+        )
     }
 
     /**
@@ -4544,6 +4610,64 @@ class PlaybackService : MediaLibraryService() {
         spare?.takeIf { it !== player }?.let(body)
     }
 
+    /**
+     * `pauseAtEndOfMediaItems` is the single-song mode's own half: playback
+     * stops inside the player exactly when an item ends, so no second item is
+     * ever started. A repeat-off *queue* does not carry it — its middle has a
+     * next item to keep playing — and the end of its run stops the way a
+     * playlist does: a state of [Player.STATE_ENDED] hands `playWhenReady`
+     * back with [Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM], and
+     * [closeOutOneTrackPlayback] runs off that. Repeat-all and repeat-one
+     * neither pause here nor ever run dry, so the flag has nothing to do
+     * with them.
+     */
+    private fun updatePauseAtEndOfMediaItems() {
+        val pauseAtEnd = SingleSongPlaybackManager.enabled.value
+        eachPlayer { it.setPauseAtEndOfMediaItems(pauseAtEnd) }
+    }
+
+    /**
+     * The end of a run: the single-song mode's stop of its own track, or a
+     * queue that ran dry — where `pauseAtEndOfMediaItems` paused instead of
+     * advancing for the former, and the playlist's own [Player.STATE_ENDED]
+     * hands the latter over. Mirrors the close-out the auto-advance
+     * transition performed in [onTrackBecameCurrent]'s `ended` block, plus
+     * the bookkeeping [onPlaybackStateChanged] does when the whole queue
+     * runs dry: the finished track is closed out on the scrobbler, its
+     * resume bookmark dropped, the player rewound onto the track that just
+     * ended, and the player closed.
+     *
+     * Listener callbacks run on the main thread, where this stays.
+     */
+    private fun closeOutOneTrackPlayback(exoPlayer: ExoPlayer) {
+        if (isExternalPreviewPlaying(exoPlayer)) return
+        if (exoPlayer.repeatMode != Player.REPEAT_MODE_OFF && !SingleSongPlaybackManager.enabled.value) return
+        val song = exoPlayer.currentMediaItem?.toSong()
+        PlaybackTracker.onPlaybackFinished(lastPositionSeconds)
+        lastPositionSeconds = 0
+        val start = listenBrainzStartMs
+        val duration = listenBrainzDurationMs ?: exoPlayer.duration.takeIf { it > 0 }
+        val previousListen = listenBrainzSong
+        if (previousListen != null && start > 0L) {
+            submitListenBrainzFinished(previousListen, start, duration)
+        }
+        listenBrainzSong = null
+        listenBrainzStartMs = 0L
+        listenBrainzDurationMs = null
+        // A finished track has nothing to resume; a rewind lands at its start
+        // and the seek clears the rest.
+        song?.let { LongTrackResumeStore.clear(applicationContext, it) }
+        scrobbleManager?.onSongStop()
+        if (exoPlayer.hasPreviousMediaItem()) {
+            exoPlayer.seekToPreviousMediaItem()
+            exoPlayer.pause()
+        }
+        SingleSongPlaybackManager.triggerClosePlayer()
+        SleepTimer.cancel()
+        savePlaybackState(exoPlayer)
+        publishWidgetState()
+    }
+
     private fun observeSettings() {
         scope.launch {
             combine(
@@ -4574,6 +4698,9 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.pausePlaybackAtZeroVolume.collect { enabled ->
                 if (enabled) pauseLocalPlaybackIfVolumeIsZero()
             }
+        }
+        scope.launch {
+            SingleSongPlaybackManager.enabled.collect { updatePauseAtEndOfMediaItems() }
         }
         scope.launch {
             AppSettings.bitPerfectPlayback.drop(1).collect { enabled ->
@@ -4655,6 +4782,9 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.spatialAudio.collect { applySpatialAudioEnabled() }
         }
         scope.launch {
+            AppSettings.parametricEqConfig.collect { updateAdvancedAudioEffects() }
+        }
+        scope.launch {
             AppSettings.parametricEqEnabled.collect { updateAdvancedAudioEffects() }
         }
         scope.launch {
@@ -4722,10 +4852,12 @@ class PlaybackService : MediaLibraryService() {
     /** Keeps optional PCM and platform effects aligned on both crossfade players. */
     private fun updateAdvancedAudioEffects() {
         val bitPerfect = AppSettings.bitPerfectPlayback.value
-        val bands = AppSettings.parametricEqBands.value
-        val parametricEqEnabled = AppSettings.parametricEqEnabled.value && !bitPerfect
-        activeAudioChain.parametricEq.setTuning(parametricEqEnabled, bands)
-        spareAudioChain.parametricEq.setTuning(parametricEqEnabled, bands)
+        val peqConfig = AppSettings.parametricEqConfig.value
+        val effectivePeq = peqConfig.copy(
+            enabled = (peqConfig.enabled || AppSettings.parametricEqEnabled.value) && !bitPerfect,
+        )
+        activeAudioChain.parametricEq.setConfig(effectivePeq)
+        spareAudioChain.parametricEq.setConfig(effectivePeq)
 
         val reverbEnabled = AppSettings.reverbEnabled.value && !bitPerfect
         val reverbAmount = AppSettings.reverbAmount.value

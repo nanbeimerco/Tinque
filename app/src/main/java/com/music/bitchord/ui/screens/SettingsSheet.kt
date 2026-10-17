@@ -47,7 +47,10 @@ import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
+import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Clear
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.FolderSpecial
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.DeleteSweep
@@ -68,6 +71,7 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Language
 import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.LocalOffer
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.MoreVert
@@ -270,6 +274,7 @@ fun SettingsScreen(
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
     val classicNavBar by AppSettings.classicNavBar.collectAsStateWithLifecycle()
+    val lockBottomBarExpanded by AppSettings.lockBottomBarExpanded.collectAsStateWithLifecycle()
     val hideNavBarLabels by AppSettings.hideNavigationBarLabels.collectAsStateWithLifecycle()
     val visibleMainTabs by AppSettings.visibleMainNavigationTabs.collectAsStateWithLifecycle()
     val mainTabOrder by AppSettings.mainNavigationTabOrder.collectAsStateWithLifecycle()
@@ -295,6 +300,7 @@ fun SettingsScreen(
     val keepScreenOnDuringLyrics by AppSettings.keepScreenOnDuringLyrics.collectAsStateWithLifecycle()
     val showStatusBar by AppSettings.showStatusBar.collectAsStateWithLifecycle()
     val showNavigationBar by AppSettings.showNavigationBar.collectAsStateWithLifecycle()
+    val quietMode by AppSettings.quietMode.collectAsStateWithLifecycle()
     val orientationMode by AppSettings.screenOrientationMode.collectAsStateWithLifecycle()
     val favoriteUsesStar by AppSettings.favoriteUsesStar.collectAsStateWithLifecycle()
     val persistentLocalArtwork by AppSettings.persistentLocalArtwork.collectAsStateWithLifecycle()
@@ -467,6 +473,7 @@ fun SettingsScreen(
         ) { AppSettings.setShowTrackDurationInsteadOfRemaining(!showTrackDurationInsteadOfRemaining) },
         SettingsSearchEntry(stringResource(R.string.show_status_bar), stringResource(R.string.show_status_bar_search_help), listOf("status bar", "ステータスバー", "battery", "電池"), showStatusBar) { AppSettings.setShowStatusBar(!showStatusBar) },
         SettingsSearchEntry(stringResource(R.string.show_navigation_bar), stringResource(R.string.show_navigation_bar_search_help), listOf("navigation bar", "ナビゲーションバー", "戻る", "home"), showNavigationBar) { AppSettings.setShowNavigationBar(!showNavigationBar) },
+        SettingsSearchEntry(stringResource(R.string.quiet_mode), stringResource(R.string.quiet_mode_subtitle), listOf("quiet", "notification", "通知", "ステータスバー", "集中", "immersive"), quietMode) { AppSettings.setQuietMode(!quietMode) },
         SettingsSearchEntry(stringResource(R.string.hide_player_artist), stringResource(R.string.hide_player_artist_subtitle), listOf("artist", "アーティスト", "player"), hidePlayerArtist) { AppSettings.setHidePlayerArtist(!hidePlayerArtist) },
         SettingsSearchEntry(stringResource(R.string.player_lyrics_strip), stringResource(R.string.player_lyrics_strip_subtitle), listOf("lyrics", "歌詞", "strip", "player"), showPlayerLyricsStrip) { AppSettings.setShowPlayerLyricsStrip(!showPlayerLyricsStrip) },
         SettingsSearchEntry(
@@ -558,6 +565,7 @@ fun SettingsScreen(
         SettingsSearchEntry(stringResource(R.string.reduce_animation), stringResource(R.string.reduce_animation_subtitle), listOf("animation", "reduce", "アニメーション"), reduceAnimation) { AppSettings.setReduceAnimation(!reduceAnimation) },
         SettingsSearchEntry(stringResource(R.string.reduce_dynamic_blur), stringResource(R.string.reduce_dynamic_blur_subtitle), listOf("blur", "ぼかし", "performance", "動的"), reduceDynamicBlur) { AppSettings.setReduceDynamicBlur(!reduceDynamicBlur) },
         SettingsSearchEntry(stringResource(R.string.classic_nav_bar), stringResource(R.string.classic_nav_bar_subtitle), listOf("navigation", "nav bar", "ナビゲーション", "classic"), classicNavBar) { AppSettings.setClassicNavBar(!classicNavBar) },
+        SettingsSearchEntry(stringResource(R.string.lock_bottom_bar_expanded), stringResource(R.string.lock_bottom_bar_expanded_subtitle), listOf("bottom bar", "floating", "expanded", "固定", "ボトムバー", "展開"), lockBottomBarExpanded) { AppSettings.setLockBottomBarExpanded(!lockBottomBarExpanded) },
         SettingsSearchEntry(stringResource(R.string.hide_nav_bar_labels), stringResource(R.string.hide_nav_bar_labels_subtitle), listOf("navigation", "nav bar", "label", "ラベル", "ナビゲーション"), hideNavBarLabels) { AppSettings.setHideNavigationBarLabels(!hideNavBarLabels) },
         SettingsSearchEntry(stringResource(R.string.legacy_mesh_gradient), stringResource(R.string.legacy_mesh_gradient_subtitle), listOf("theme", "gradient", "テーマ", "グラデーション"), legacyMeshGradient) { AppSettings.setLegacyMeshGradient(!legacyMeshGradient) },
         SettingsSearchEntry(
@@ -820,6 +828,7 @@ fun SettingsScreen(
             MainNavigationTab.LIBRARY -> R.string.library
             MainNavigationTab.SEARCH -> R.string.search
             MainNavigationTab.ALBUM_ARTISTS -> R.string.album_artists
+            MainNavigationTab.FOLDERS -> R.string.folders
         })
         SettingsSearchEntry(
             title = stringResource(R.string.show_tab_setting, tabTitle),
@@ -915,6 +924,7 @@ fun SettingsScreen(
     val listenBrainzToken by AppSettings.listenBrainzToken.collectAsStateWithLifecycle()
 
     val localPlaylists by LocalPlaylistStore.playlists.collectAsStateWithLifecycle()
+    val localMusicFolderUri by AppSettings.localMusicFolderUri.collectAsStateWithLifecycle()
 
     // What the last export or import did, shown on the row that did it rather
     // than as a toast: a backup is the one action here whose outcome nobody can
@@ -1090,6 +1100,19 @@ fun SettingsScreen(
             }.onFailure {
                 Toast.makeText(context, R.string.cue_play_failed, Toast.LENGTH_LONG).show()
             }
+        }
+    }
+    val musicFolderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { treeUri ->
+        if (treeUri != null) {
+            val path = treeUri.path.orEmpty()
+            val cleanPath = when {
+                path.contains("primary:") -> "/storage/emulated/0/" + path.substringAfter("primary:")
+                path.contains("/document/primary:") -> "/storage/emulated/0/" + path.substringAfter("/document/primary:")
+                else -> path
+            }
+            AppSettings.setLocalMusicFolderPath(cleanPath)
         }
     }
     fun importMusicoletBackup(source: Uri) {
@@ -2213,6 +2236,16 @@ fun SettingsScreen(
             )
             RowDivider()
             SettingsRow(
+                icon = Icons.Rounded.NotificationsOff,
+                title = stringResource(R.string.quiet_mode),
+                subtitle = stringResource(R.string.quiet_mode_subtitle),
+                trailing = {
+                    Switch(checked = quietMode, onCheckedChange = AppSettings::setQuietMode)
+                },
+                onClick = { AppSettings.setQuietMode(!quietMode) },
+            )
+            RowDivider()
+            SettingsRow(
                 icon = Icons.Rounded.ScreenRotation,
                 title = stringResource(R.string.screen_orientation),
                 subtitle = stringResource(R.string.screen_orientation_subtitle),
@@ -2335,6 +2368,25 @@ fun SettingsScreen(
                 },
                 onClick = { AppSettings.setClassicNavBar(!classicNavBar) },
             )
+            if (!classicNavBar) {
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Lock,
+                    title = stringResource(R.string.lock_bottom_bar_expanded),
+                    subtitle = stringResource(R.string.lock_bottom_bar_expanded_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = lockBottomBarExpanded,
+                            onCheckedChange = AppSettings::setLockBottomBarExpanded,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setLockBottomBarExpanded(!lockBottomBarExpanded) },
+                )
+            }
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.LocalOffer,
@@ -2725,6 +2777,7 @@ fun SettingsScreen(
                 MainNavigationTab.LIBRARY -> R.string.library
                 MainNavigationTab.SEARCH -> R.string.search
                 MainNavigationTab.ALBUM_ARTISTS -> R.string.album_artists
+                MainNavigationTab.FOLDERS -> R.string.folders
             })
             SettingsRow(
                 icon = Icons.Rounded.MusicNote,
@@ -2743,6 +2796,7 @@ fun SettingsScreen(
                     MainNavigationTab.LIBRARY -> R.string.library
                     MainNavigationTab.SEARCH -> R.string.search
                     MainNavigationTab.ALBUM_ARTISTS -> R.string.album_artists
+                    MainNavigationTab.FOLDERS -> R.string.folders
                 }
                 val icon = when (tab) {
                     MainNavigationTab.SONGS -> Icons.Rounded.MusicNote
@@ -2751,6 +2805,7 @@ fun SettingsScreen(
                     MainNavigationTab.LIBRARY -> Icons.Rounded.LibraryMusic
                     MainNavigationTab.SEARCH -> BitChordIcons.Search
                     MainNavigationTab.ALBUM_ARTISTS -> Icons.Rounded.Person
+                    MainNavigationTab.FOLDERS -> Icons.Rounded.Folder
                 }
                 val checked = if (tab == MainNavigationTab.ALBUM_ARTISTS) {
                     com.music.bitchord.data.settings.LocalLibraryTab.ALBUM_ARTISTS in localTabs
@@ -2930,6 +2985,26 @@ fun SettingsScreen(
                     Switch(checked = localFolderHierarchy, onCheckedChange = AppSettings::setLocalFolderHierarchy)
                 },
                 onClick = { AppSettings.setLocalFolderHierarchy(!localFolderHierarchy) },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.FolderOpen,
+                title = stringResource(R.string.music_folder_root),
+                subtitle = if (localMusicFolderUri.isNotBlank()) localMusicFolderUri else stringResource(R.string.auto_detected),
+                trailing = {
+                    if (localMusicFolderUri.isNotBlank()) {
+                        IconButton(onClick = { AppSettings.setLocalMusicFolderPath("") }) {
+                            Icon(
+                                imageVector = Icons.Rounded.Clear,
+                                contentDescription = "Reset",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    } else {
+                        Chevron()
+                    }
+                },
+                onClick = { musicFolderPicker.launch(null) },
             )
             RowDivider()
             SettingsRow(
@@ -3399,6 +3474,7 @@ fun SettingsScreen(
                                 MainNavigationTab.LIBRARY -> stringResource(R.string.library)
                                 MainNavigationTab.SEARCH -> stringResource(R.string.search)
                                 MainNavigationTab.ALBUM_ARTISTS -> stringResource(R.string.album_artists)
+                                MainNavigationTab.FOLDERS -> stringResource(R.string.folders)
                             }
                             Row(
                                 modifier = Modifier
@@ -3432,7 +3508,7 @@ fun SettingsScreen(
 
         Text(
             text = buildAnnotatedString {
-                append("MusicBeatSP $version  ")
+                append("Tinque $version  ")
                 val linkStyles = TextLinkStyles(
                     style = SpanStyle(
                         color = MaterialTheme.colorScheme.primary,

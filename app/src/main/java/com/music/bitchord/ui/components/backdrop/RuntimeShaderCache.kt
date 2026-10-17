@@ -28,10 +28,40 @@ internal class RuntimeShaderCacheImpl : RuntimeShaderCache {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             throw UnsupportedOperationException("RuntimeShader requires Android 13 or later")
         }
-        return runtimeShaders.getOrPut(key) { RuntimeShader(string) }
+        return runtimeShaders.getOrPut(key) {
+            acquirePooledShader(key, string)
+        }
     }
 
     fun clear() {
+        if (runtimeShaders.isEmpty()) return
+        for ((key, shader) in runtimeShaders) {
+            releasePooledShader(key, shader)
+        }
         runtimeShaders.clear()
+    }
+
+    private companion object {
+        private const val MAX_POOLED_PER_KEY = 12
+        private val shaderPool = HashMap<String, ArrayDeque<RuntimeShader>>()
+
+        fun acquirePooledShader(key: String, string: String): RuntimeShader {
+            synchronized(shaderPool) {
+                val queue = shaderPool[key]
+                if (queue != null && queue.isNotEmpty()) {
+                    return queue.removeLast()
+                }
+            }
+            return RuntimeShader(string)
+        }
+
+        fun releasePooledShader(key: String, shader: RuntimeShader) {
+            synchronized(shaderPool) {
+                val queue = shaderPool.getOrPut(key) { ArrayDeque() }
+                if (queue.size < MAX_POOLED_PER_KEY) {
+                    queue.addLast(shader)
+                }
+            }
+        }
     }
 }

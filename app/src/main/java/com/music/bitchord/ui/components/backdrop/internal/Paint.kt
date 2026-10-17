@@ -10,13 +10,22 @@
 package com.music.bitchord.ui.components.backdrop.internal
 
 import android.graphics.BlurMaskFilter
+import android.util.LruCache
 import androidx.compose.ui.graphics.Paint
 import com.music.bitchord.ui.components.backdrop.RuntimeShader
 import com.music.bitchord.ui.components.backdrop.asAndroidRuntimeShader
+import kotlin.math.roundToInt
+
+private val blurMaskFilterCache = object : LruCache<Int, BlurMaskFilter>(32) {
+    override fun create(key: Int): BlurMaskFilter {
+        return BlurMaskFilter(key / 100f, BlurMaskFilter.Blur.NORMAL)
+    }
+}
 
 internal fun Paint.blur(radius: Float) {
+    val quantizedKey = (radius * 100f).roundToInt()
     this.asFrameworkPaint().maskFilter =
-        if (radius > 0f) BlurMaskFilter(radius, BlurMaskFilter.Blur.NORMAL)
+        if (quantizedKey > 0) blurMaskFilterCache.get(quantizedKey)
         else null
 }
 

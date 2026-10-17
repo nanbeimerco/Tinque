@@ -2,11 +2,25 @@ package com.music.bitchord.data.settings
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import com.music.bitchord.R
 import com.music.bitchord.playback.equalizer.EqualizerPreset
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.Serializable
 import org.json.JSONObject
+
+@Serializable
+data class KnownOutputDevice(
+    val key: String,
+    val label: String,
+)
 
 object EqualizerSettings {
     private const val PREF_FILE = "bitchord_equalizer_settings"
@@ -17,8 +31,17 @@ object EqualizerSettings {
     private const val KEY_BAND_PREFIX = "eq_band_"
     private const val KEY_ACTIVE_DEVICE = "eq_active_device"
     private const val PROFILE_PREFIX = "eq_device_profile_"
+    private const val KEY_KNOWN_DEVICES = "eq_known_devices"
+    private const val KEY_DEVICE_PRESET_ASSIGNMENTS = "eq_device_preset_assignments"
+
+    const val AUTO_PRESET_NONE = ""
+    const val AUTO_PRESET_OFF = "off"
+    const val AUTO_PRESET_GEQ_PREFIX = "geq:"
+    const val AUTO_PRESET_PEQ_PREFIX = "peq:"
 
     private lateinit var prefs: SharedPreferences
+    private var appContext: Context? = null
+    private var deviceCallbackRegistered = false
 
     private val _enabled = MutableStateFlow(false)
     val enabled = _enabled.asStateFlow()
@@ -37,11 +60,43 @@ object EqualizerSettings {
     private val _activeDeviceLabel = MutableStateFlow("This device")
     val activeDeviceLabel = _activeDeviceLabel.asStateFlow()
     private var activeDeviceKey = "default"
+    private val _activeDeviceKeyFlow = MutableStateFlow("default")
+    val activeDeviceKeyFlow = _activeDeviceKeyFlow.asStateFlow()
+
+    private val _knownDevices = MutableStateFlow<List<KnownOutputDevice>>(emptyList())
+    val knownDevices = _knownDevices.asStateFlow()
+
+    private val _devicePresetAssignments = MutableStateFlow<Map<String, String>>(emptyMap())
+    val devicePresetAssignments = _devicePresetAssignments.asStateFlow()
+
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+            appContext?.let(::refreshConnectedDevices)
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+            appContext?.let(::refreshConnectedDevices)
+        }
+    }
 
     fun init(context: Context) {
-        prefs = context.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)
+        val appCtx = context.applicationContext
+        appContext = appCtx
+        prefs = appCtx.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)
         activeDeviceKey = prefs.getString(KEY_ACTIVE_DEVICE, "default") ?: "default"
+        _activeDeviceKeyFlow.value = activeDeviceKey
         readAll()
+        registerDeviceCallbackIfNeeded(appCtx)
+        refreshConnectedDevices(appCtx)
+    }
+
+    private fun registerDeviceCallbackIfNeeded(context: Context) {
+        if (deviceCallbackRegistered) return
+        val manager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        runCatching {
+            manager.registerAudioDeviceCallback(audioDeviceCallback, Handler(Looper.getMainLooper()))
+            deviceCallbackRegistered = true
+        }
     }
 
     private fun readAll() {
@@ -59,7 +114,13 @@ object EqualizerSettings {
             levels[i] = saved
         }
         _bandLevels.value = levels
+        _knownDevices.value = readKnownDevices()
+        _devicePresetAssignments.value = readDevicePresetAssignments()
         if (activeDeviceKey != "default") loadProfile(activeDeviceKey)
+        val initialAssigned = _devicePresetAssignments.value[activeDeviceKey]
+        if (!initialAssigned.isNullOrBlank()) {
+            applyAssignedPreset(initialAssigned)
+        }
     }
 
     fun setEnabled(value: Boolean) {
@@ -109,16 +170,221 @@ object EqualizerSettings {
         setVirtualizerStrength(0)
     }
 
+    /** Assigns or clears an automatic EQ preset for a specific output device key. */
+    fun setDevicePresetAssignment(deviceKey: String, presetSpec: String?) {
+        if (!this::prefs.isInitialized) return
+        val key = deviceKey.takeIf(::isValidDeviceKey) ?: return
+        val current = _devicePresetAssignments.value.toMutableMap()
+        val normalized = presetSpec?.trim().orEmpty()
+        if (normalized.isEmpty()) {
+            current.remove(key)
+        } else {
+            current[key] = normalized
+        }
+        _devicePresetAssignments.value = current
+        persistDevicePresetAssignments(current)
+        if (key == activeDeviceKey && normalized.isNotEmpty()) {
+            applyAssignedPreset(normalized)
+        }
+    }
+
+    private fun applyAssignedPreset(presetSpec: String) {
+        when {
+            presetSpec == AUTO_PRESET_OFF -> {
+                setEnabled(false)
+                AppSettings.setParametricEqEnabled(false)
+            }
+            presetSpec.startsWith(AUTO_PRESET_GEQ_PREFIX) -> {
+                val id = presetSpec.removePrefix(AUTO_PRESET_GEQ_PREFIX).toIntOrNull() ?: return
+                if (EqualizerPreset.getPresetById(id) != null) {
+                    _enabled.value = true
+                    selectPreset(id)
+                }
+            }
+            presetSpec.startsWith(AUTO_PRESET_PEQ_PREFIX) -> {
+                val peqId = presetSpec.removePrefix(AUTO_PRESET_PEQ_PREFIX)
+                if (peqId.isNotBlank()) {
+                    AppSettings.selectParametricEqPreset(peqId)
+                }
+            }
+        }
+    }
+
+    /** Scans currently connected audio output devices and updates the active route & known devices list. */
+    fun refreshConnectedDevices(context: Context) {
+        if (!this::prefs.isInitialized) return
+        val manager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val outputs = manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        val mediaTypes = buildSet {
+            add(AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
+            add(AudioDeviceInfo.TYPE_WIRED_HEADPHONES)
+            add(AudioDeviceInfo.TYPE_WIRED_HEADSET)
+            add(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP)
+            add(AudioDeviceInfo.TYPE_USB_DEVICE)
+            add(AudioDeviceInfo.TYPE_USB_HEADSET)
+            add(AudioDeviceInfo.TYPE_USB_ACCESSORY)
+            add(AudioDeviceInfo.TYPE_LINE_ANALOG)
+            add(AudioDeviceInfo.TYPE_LINE_DIGITAL)
+            add(AudioDeviceInfo.TYPE_HDMI)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(AudioDeviceInfo.TYPE_BLE_HEADSET)
+                add(AudioDeviceInfo.TYPE_BLE_SPEAKER)
+            }
+        }
+        for (device in outputs) {
+            if (!device.isSink || device.type !in mediaTypes) continue
+            val key = deviceKeyFor(device)
+            val label = deviceLabelFor(context, device)
+            recordKnownDevice(key, label)
+        }
+        val routed = resolveActiveOutputDevice(manager, outputs)
+        val activeKey = routed?.let(::deviceKeyFor) ?: "default"
+        val activeLabel = routed?.let { deviceLabelFor(context, it) }
+            ?: context.getString(R.string.equalizer_this_device)
+        activateOutputProfile(activeKey, activeLabel)
+    }
+
+    fun deviceKeyFor(device: AudioDeviceInfo): String =
+        "out-${(device.type.toString() + ":" + device.productName.toString().lowercase()).hashCode().toUInt().toString(16)}"
+
+    fun deviceLabelFor(context: Context, device: AudioDeviceInfo): String {
+        val typeLabel = context.getString(outputTypeLabelRes(device.type))
+        val productName = device.productName?.toString()?.trim().orEmpty()
+        return if (productName.isNotBlank() && !productName.equals(Build.MODEL, ignoreCase = true) &&
+            device.type != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        ) {
+            productName
+        } else {
+            typeLabel
+        }
+    }
+
+    private fun outputTypeLabelRes(type: Int): Int {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            (type == AudioDeviceInfo.TYPE_BLE_HEADSET || type == AudioDeviceInfo.TYPE_BLE_SPEAKER)
+        ) return R.string.equalizer_bluetooth_output
+
+        return when (type) {
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> R.string.equalizer_bluetooth_output
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            AudioDeviceInfo.TYPE_WIRED_HEADSET -> R.string.equalizer_wired_output
+            AudioDeviceInfo.TYPE_USB_DEVICE,
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_USB_ACCESSORY -> R.string.equalizer_usb_output
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> R.string.equalizer_speaker_output
+            else -> R.string.equalizer_other_output
+        }
+    }
+
+    private fun resolveActiveOutputDevice(
+        manager: AudioManager,
+        outputs: Array<AudioDeviceInfo>,
+    ): AudioDeviceInfo? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val attributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+            runCatching { manager.getAudioDevicesForAttributes(attributes).firstOrNull() }
+                .getOrNull()?.let { return it }
+        }
+        val preferredTypes = buildSet {
+            add(AudioDeviceInfo.TYPE_BLUETOOTH_A2DP)
+            add(AudioDeviceInfo.TYPE_WIRED_HEADPHONES)
+            add(AudioDeviceInfo.TYPE_WIRED_HEADSET)
+            add(AudioDeviceInfo.TYPE_USB_DEVICE)
+            add(AudioDeviceInfo.TYPE_USB_HEADSET)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(AudioDeviceInfo.TYPE_BLE_HEADSET)
+                add(AudioDeviceInfo.TYPE_BLE_SPEAKER)
+            }
+        }
+        return outputs.firstOrNull { it.type in preferredTypes }
+            ?: outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+            ?: outputs.firstOrNull()
+    }
+
+    private fun recordKnownDevice(key: String, label: String) {
+        if (!isValidDeviceKey(key)) return
+        val cleanLabel = label.trim().ifBlank { "This device" }
+        val current = _knownDevices.value.toMutableList()
+        val existingIdx = current.indexOfFirst { it.key == key }
+        if (existingIdx >= 0) {
+            if (current[existingIdx].label == cleanLabel) return
+            current[existingIdx] = KnownOutputDevice(key, cleanLabel)
+        } else {
+            current.add(KnownOutputDevice(key, cleanLabel))
+        }
+        _knownDevices.value = current
+        persistKnownDevices(current)
+    }
+
     /** Persist and activate an EQ profile for the routed output device. */
     fun activateOutputProfile(deviceKey: String, label: String) {
         if (!this::prefs.isInitialized) return
-        val key = deviceKey.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,64}")) } ?: "default"
-        _activeDeviceLabel.value = label.ifBlank { "This device" }
-        if (activeDeviceKey == key) return
+        val key = deviceKey.takeIf(::isValidDeviceKey) ?: "default"
+        val cleanLabel = label.ifBlank { "This device" }
+        _activeDeviceLabel.value = cleanLabel
+        recordKnownDevice(key, cleanLabel)
+        if (activeDeviceKey == key) {
+            _activeDeviceKeyFlow.value = key
+            return
+        }
         persistCurrentProfile()
         activeDeviceKey = key
+        _activeDeviceKeyFlow.value = key
         prefs.edit().putString(KEY_ACTIVE_DEVICE, key).apply()
         if (!loadProfile(key)) persistCurrentProfile()
+        val assignedPreset = _devicePresetAssignments.value[key]
+        if (!assignedPreset.isNullOrBlank()) {
+            applyAssignedPreset(assignedPreset)
+        }
+    }
+
+    private fun readKnownDevices(): List<KnownOutputDevice> {
+        val raw = prefs.getString(KEY_KNOWN_DEVICES, null) ?: return emptyList()
+        val json = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyList()
+        val list = mutableListOf<KnownOutputDevice>()
+        val keys = json.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            if (!isValidDeviceKey(k)) continue
+            val v = json.optString(k, "").trim()
+            if (v.isNotEmpty()) {
+                list.add(KnownOutputDevice(k, v))
+            }
+        }
+        return list
+    }
+
+    private fun persistKnownDevices(devices: List<KnownOutputDevice>) {
+        if (!this::prefs.isInitialized) return
+        val json = JSONObject()
+        devices.forEach { json.put(it.key, it.label) }
+        prefs.edit().putString(KEY_KNOWN_DEVICES, json.toString()).apply()
+    }
+
+    private fun readDevicePresetAssignments(): Map<String, String> {
+        val raw = prefs.getString(KEY_DEVICE_PRESET_ASSIGNMENTS, null) ?: return emptyMap()
+        val json = runCatching { JSONObject(raw) }.getOrNull() ?: return emptyMap()
+        val map = mutableMapOf<String, String>()
+        val keys = json.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            if (!isValidDeviceKey(k)) continue
+            val v = json.optString(k, "").trim()
+            if (v.isNotEmpty()) {
+                map[k] = v
+            }
+        }
+        return map
+    }
+
+    private fun persistDevicePresetAssignments(assignments: Map<String, String>) {
+        if (!this::prefs.isInitialized) return
+        val json = JSONObject()
+        assignments.forEach { (k, v) -> if (isValidDeviceKey(k) && v.isNotBlank()) json.put(k, v) }
+        prefs.edit().putString(KEY_DEVICE_PRESET_ASSIGNMENTS, json.toString()).apply()
     }
 
     private fun loadProfile(key: String): Boolean {
@@ -167,6 +433,8 @@ object EqualizerSettings {
         virtualizerStrength = _virtualizerStrength.value,
         activeDeviceKey = activeDeviceKey,
         deviceProfiles = readProfilesForBackup() + (activeDeviceKey to currentProfileSnapshot()),
+        knownDevices = _knownDevices.value,
+        devicePresetAssignments = _devicePresetAssignments.value,
     )
 
     fun importBackup(backup: EqualizerBackup?) {
@@ -179,6 +447,7 @@ object EqualizerSettings {
             .mapValues { (_, profile) -> profile.sanitized() }
 
         activeDeviceKey = importedKey
+        _activeDeviceKeyFlow.value = importedKey
         _enabled.value = backup.enabled
         _presetId.value = backup.presetId
         _bassBoostStrength.value = backup.bassBoostStrength.coerceIn(0, 1000)
@@ -190,6 +459,18 @@ object EqualizerSettings {
                     EqualizerPreset.getPresetById(backup.presetId)?.bandLevels?.getOrNull(index) ?: 0.toShort()
                 }
             }
+        if (backup.knownDevices.isNotEmpty()) {
+            val mergedKnown = (_knownDevices.value + backup.knownDevices.filter { isValidDeviceKey(it.key) })
+                .distinctBy { it.key }
+            _knownDevices.value = mergedKnown
+            persistKnownDevices(mergedKnown)
+        }
+        if (backup.devicePresetAssignments.isNotEmpty()) {
+            val mergedAssignments = _devicePresetAssignments.value +
+                backup.devicePresetAssignments.filterKeys(::isValidDeviceKey)
+            _devicePresetAssignments.value = mergedAssignments
+            persistDevicePresetAssignments(mergedAssignments)
+        }
 
         prefs.edit().apply {
             putString(KEY_ACTIVE_DEVICE, importedKey)
@@ -269,6 +550,8 @@ data class EqualizerBackup(
     val virtualizerStrength: Int = 0,
     val activeDeviceKey: String = "default",
     val deviceProfiles: Map<String, EqualizerDeviceProfile> = emptyMap(),
+    val knownDevices: List<KnownOutputDevice> = emptyList(),
+    val devicePresetAssignments: Map<String, String> = emptyMap(),
 )
 
 @Serializable

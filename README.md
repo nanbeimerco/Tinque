@@ -1,179 +1,82 @@
-# MusicBeatSP
+# Tinque
 
-### A local-first music player for Android
-**Lossless audio · Synchronized lyrics · Customizable library and player · ReplayGain · Google Cast**
+[MusicBeatSP](https://github.com/Kdroidwin/MusicBeatSP) をベースにしたAndroid用ローカル音楽プレイヤーです。  
+左右独立・一括対応のイコライザーやチャンネルスワップ、フォルダビュー機能の搭載、およびプレイヤー開閉アニメーションの変更を行っています。
 
-<br/>
-
-[![Latest release](https://img.shields.io/github/v/release/Kdroidwin/MusicBeatSP?style=for-the-badge&color=6366f1&labelColor=0d1117)](https://github.com/Kdroidwin/MusicBeatSP/releases)
-[![Platform](https://img.shields.io/badge/Platform-Android%208.0%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white&labelColor=0d1117)](https://developer.android.com)
-[![Hardware audio](https://img.shields.io/badge/Dolby%20Atmos-OnePlus%20%2F%20OPPO-FF0055?style=for-the-badge&labelColor=0d1117)](#oneplus--oppo-hardware-audio)
-[![Forked from BitChord](https://img.shields.io/badge/Forked%20from-BitChord-007ACC?style=for-the-badge&logo=github&logoColor=white&labelColor=0d1117)](https://github.com/kushagrasinghx/BitChord)
-[![License](https://img.shields.io/github/license/Kdroidwin/MusicBeatSP?style=for-the-badge&color=22c55e&labelColor=0d1117)](LICENSE)
+[![対応OS](https://img.shields.io/badge/対応OS-Android%208.0%2B-3DDC84?style=flat-square)](https://developer.android.com)
+[![パッケージID](https://img.shields.io/badge/App%20ID-com.music.tinque-blue?style=flat-square)](#エディション一覧)
+[![Fork元](https://img.shields.io/badge/Forked%20from-MusicBeatSP-gray?style=flat-square)](https://github.com/Kdroidwin/MusicBeatSP)
+[![ライセンス](https://img.shields.io/badge/License-GPL%20v3-green?style=flat-square)](LICENSE)
 
 <br/>
 
-[**Features**](#features) · [**Download**](#download) · [**Build from source**](#build-from-source) · [**Credits**](#credits-and-attribution)
-
-</div>
+[**主な特徴・変更点**](#主な特徴変更点) · [**エディション一覧**](#エディション一覧) · [**ビルド手順**](#ビルド手順) · [**クレジット**](#クレジット)
 
 ---
 
-> **MusicBeatSP 2.3.0** is the MusicBeat fork under a new name and Android application ID. It builds on the open-source BitChord foundation and adds an extensive local music library, playlist, playback, lyrics, artwork, and customization feature set.
+## 主な特徴・変更点
 
-The standard Android package is `io.pockets.musicbestsp`. Because this differs from the previous MusicBeat package, Android installs MusicBeatSP as a separate app; app-private settings and data are not migrated automatically.
+- **パラメトリックイコライザー（一括・左右独立対応）**
+  - 左右両チャンネルへ一括して適用する標準設定に加え、左右それぞれに個別の周波数・ゲイン・Q値を適用できる左右独立設定（L/R個別PEQ）に対応。
+- **チャンネルスワップ機能**
+  - イヤホンや音源に合わせて、左右の音声出力をワンタップで反転可能。
+- **アニメーションの変更**
+  - ボトムバーと全画面プレイヤー間の開閉アニメーションの挙動を変更（全画面カバーアート表示時の遷移挙動を含む）。
+  - 再生バー上の歌詞および全画面歌詞画面における切り替えアニメーションの変更。
+- **ボトムバー展開固定オプション**
+  - 下部のミニプレイヤーを展開した状態で画面上に固定表示する設定を追加。
+- **フォルダビュー機能**
+  - 端末内のフォルダ階層をそのまま参照して楽曲を選択・再生可能。
+- **独立したパッケージID**
+  - パッケージIDを `com.music.tinque` に変更。MusicBeatSP や BitChord と同時に同一端末へインストール可能です。
 
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/eb91f149-c953-4822-8657-65c0e2f7cffb" width="180" alt="スクリーンショット 1">
-  <img src="https://github.com/user-attachments/assets/fdff22a9-5dfa-4959-a016-1b59c32a088f" width="180" alt="スクリーンショット 2">
-  <img src="https://github.com/user-attachments/assets/4efcc926-dcba-4c3f-b715-df88d307d97c" width="180" alt="スクリーンショット 3">
-  <img src="https://github.com/user-attachments/assets/900c3159-619c-49d6-a2fc-e10c3ebd447c" width="180" alt="スクリーンショット 4">
-</p>
+---
 
-</div>
+## エディション一覧
 
-## Features
-
-### Audio playback and controls
-
-- Play local high-resolution audio including FLAC, ALAC, WAV, AAC, MP3, OPUS, and OGG Vorbis.
-- Use gapless playback and configurable crossfade, playback speed, and pitch controls.
-- Adjust audio focus from level 0 to 4, control whether playback can start at zero volume, and apply ReplayGain metadata.
-- Optionally pause playback when the volume reaches zero.
-- Play CUE sheets as separate tracks when their referenced local audio is available.
-- Choose bit-perfect output on supported Android 14+ USB DAC paths. Optional parametric EQ and reverb default to off; equalizer profiles can be saved per output device.
-- Save and restore the position of tracks that are at least 15 minutes long, including when switching tracks or stopping playback.
-- Open the playback queue with both upcoming tracks and recently played tracks.
-- Save named queue snapshots, switch between them, replace or remove them, and load their saved current track and position after a restart.
-- Cast supported local tracks to Google Cast receivers on the local network.
-- View audio codec, sample rate, bit depth, bitrate, channels, and buffer information in Stats for Nerds.
-
-### Player customization
-
-- Choose System, Light, Dark, AMOLED Black, or Album Art theme. Album Art colors the app background, surfaces, controls, and accents from the playing cover.
-- Hide lyrics status messages, the saved-lyrics indicator, and audio-quality labels such as Lossless and Hi-Res.
-- Show, hide, and reorder available player actions, including Shuffle, Repeat, Like, Playlist/Library, Search, and Queue. Hiding a control does not change its playback state; the Playlist control can use a Library icon.
-- Choose and reorder player shortcuts beside the favorite button, including Lyrics, Add to Playlist, Speed and Pitch, Queue, Playlists, Search, Chromecast, and track details. The favorite button can also be reordered.
-- Adjust the player background blur independently of the app-wide theme, up to 128 dp.
-- Optionally use full-bleed artwork in the player and keep the cover at full size while playback is paused.
-- Use translucent frosted-glass surfaces for the queue manager, player details, and compact lyrics artwork area; each has its own setting.
-- Match player action accents and the mini-player surface to the current album art.
-- Replace only the artwork area with lyrics while keeping playback controls, progress, volume, and player shortcuts visible.
-- Choose whether the favorite button appears beside the More menu, keep artwork full-size while paused, and open lyrics by tapping the cover.
-- Switch the player favorite glyph between a heart and a star.
-- Show or hide the artist name, automatically hide “Unknown Artist,” and center the track information.
-- Keep the screen awake, independently show or hide the Android status and navigation bars, choose portrait, landscape, or system orientation, and select the tab opened at startup.
-- Select a pink, black, or green launcher icon.
-- Use Japanese translations for the Settings screen and player More menu; additional app languages fall back to English where translations are not available.
-
-### Library and playlists
-
-- Browse Songs, Albums, Artists, Genres, Playlists, Folders, and other available library sections. Reorder tabs and hide individual tabs from navigation.
-- Add an Album Artists tab alongside Artists, choose to browse an artist's albums before its tracks, and reorder or hide available library tabs.
-- Choose whether artist pages open to albums, use a folder hierarchy in search results, and hide the collection top bar on detail pages.
-- Long-press to select multiple tracks and add them to a playlist in one action. Search folder results can act on all tracks in that folder.
-- Sort folder search results by filename, including numbered names such as `1-01. example.flac`, while displaying the track title and artist from metadata.
-- Import `.m3u` and `.m3u8` playlists through Android's file picker. Import playlists from Musicolet backup ZIP files; unavailable tracks are skipped so the rest can still be imported.
-- Export playlists as M3U from the playlist menu.
-- Open audio files from file managers such as MiXplorer. Optionally show a floating player over other apps for files opened this way.
-- Choose a persistent app-private storage location for extracted local album artwork so it survives cache cleanup and app restarts, without requesting additional storage access.
-- Drag to reorder playlists and reorder tracks within a playlist independently.
-- Reorder tracks in a playlist by dragging, select tracks in bulk, and adapt selection action contrast to the current surface.
-- Choose a custom image for a playlist cover, and use list or grid layouts with optional small album artwork in list view.
-- Browse listening history and most-played tracks. Search settings by name and include settings, playlist data, and saved queue snapshots in app backup and restore.
-
-### Lyrics and artwork
-
-- Display the first lyric line for timed and plain lyrics while preserving synchronized scrolling and highlighting.
-- Create synchronized lyrics with the audio-guided editor, which records line timestamps during playback. Optionally render `漢字((かんじ))` readings above kanji.
-- Hide generated lyric status text, unavailable and saved-lyrics labels, or instrumental gap notes. Set lyric size and alignment, and choose which playback controls appear on the lyrics screen.
-- Configure double-tap seeking and optional skip buttons, including their intervals and whether seconds labels appear.
-- Cache and prefetch local album artwork to speed up track changes; optionally load the local artwork library at startup.
-- Use high-resolution local artwork in the player and customize playlist cover images.
-- Use the optional audio cutter from local track details to export a trimmed AAC copy; the original file remains unchanged.
-
-### Widgets and appearance
-
-- Keep the two existing playback widgets and add a third square album-art widget with track title and playback controls.
-- Expose playback state, track metadata, and artwork through Android's standard media session for external music widgets such as KWGT.
-- Use the album-art color theme throughout the app, in addition to the System, Light, Dark, and AMOLED Black themes.
-- Enable Offline Mode to block the app's network requests; local files and saved caches remain available. Online catalog, lyrics, casting, and connected services need their respective network or device connections.
-- YouTube Music search and playback are opt-in and disabled by default; the app does not make YouTube Music requests while the feature is disabled or Offline Mode is active.
-
-### Lyrics and metadata tools
-
-- Search multiple lyrics providers by title, artist, and album, with word-synchronized karaoke lyrics where available.
-- Embed downloaded lyrics into supported audio tags and edit common metadata fields, including title, artist, album, track number, disc number, year, and genre.
-- Use Android's storage framework and permission flows for local media access and metadata writes.
-
-## OnePlus / OPPO hardware audio
-
-OxygenOS and ColorOS devices can whitelist specific package IDs for system audio effects such as Dolby Atmos, Dirac Audio, and OReality Audio. The standard edition uses the MusicBeatSP package ID; the dedicated QQ Music and KuGou editions retain their vendor-whitelisted IDs for compatible devices.
-
-| Edition | Android application ID | Intended use |
+| エディション | パッケージID | 概要 |
 | :--- | :--- | :--- |
-| Standard | `io.pockets.musicbestsp` | General Android devices |
-| QQ Music compatibility | `com.tencent.qqmusic` | OnePlus, OPPO, and Realme system audio effects |
-| KuGou compatibility | `com.kugou.android` | Alternative OnePlus / OPPO whitelist |
+| **標準版** | `com.music.tinque` | 通常のAndroid端末向け（推奨） |
+| **QQ Music 互換版** | `com.tencent.qqmusic` | OnePlus / OPPO端末でシステムDolby Atmos等を有効化するためのパッケージ |
+| **KuGou 互換版** | `com.kugou.android` | OnePlus / OPPO向けの代替互換パッケージ |
+| **オフライン版** | `com.music.tinque.nointernet` | インターネット接続権限を含まない版 |
 
-## Download
+---
 
-Check the [GitHub Releases page](https://github.com/Kdroidwin/MusicBeatSP/releases) for published builds. For a local release build, see [Build from source](#build-from-source).
+## ビルド手順
 
-| APK | Recommended devices |
-| :--- | :--- |
-| `arm64-v8a` | Most modern Android phones |
-| `universal` | Devices when the CPU architecture is unknown |
-| `armeabi-v7a` | Legacy 32-bit devices |
-| `x86_64` | Emulators and x86 devices |
-
-## Build from source
-
-### Requirements
-
+### 動作環境
 - JDK 17
-- Android SDK Platform 37 and Android Build Tools 36.0.0
-- CMake 3.22.1 or newer for the native TagLib components
+- Android SDK Platform 37
+- CMake 3.22.1 以上
 
-### Commands
-
+### ビルドコマンド
 ```bash
-git clone https://github.com/Kdroidwin/MusicBeatSP.git
-cd MusicBeatSP
+git clone https://github.com/nanbeimerco/Tinque.git
+cd Tinque
 
-# Standard release APK
+# 標準デバッグAPKのビルド
+./gradlew assembleStandardDebug
+
+# 標準リリースAPKのビルド
 ./gradlew assembleStandardRelease
-
-# Offline release APK without the INTERNET permission
-./gradlew assembleNoInternetRelease
-
-# OnePlus / OPPO compatibility editions
-./gradlew assembleQqmusicRelease
-./gradlew assembleKugouRelease
-
-# Development build
-./gradlew assembleDevDebug
 ```
 
-APK files are written to `app/build/outputs/apk/<flavor>/<build-type>/`. Release signing is configured locally through `keystore.properties`; do not commit the keystore or its passwords.
+ビルド完了後、APKは `app/build/outputs/apk/standard/<debug|release>/` に出力されます。
 
-YouTube Music PoToken support requires `YOUTUBE_PO_TOKEN_API_KEY` in `local.properties` or the build environment. Keep the key out of source control. Android client keys are included in the resulting APK, so restrict them to the intended API and client where possible.
+---
 
-## Linux desktop
+## クレジット
 
-The Linux edition is a dedicated offline fork of BitChord's Compose Desktop app, included under [`linux-offline/`](linux-offline/README.md). It scans and plays local files, reads embedded and sidecar artwork, keeps a persistent queue and playlists, and keeps BitChord's desktop player UI. Network catalogs, accounts, online lyrics fallback, Canvas, and Listen Together are disabled in this build. The AppImage build and local source-tree details are documented in [`linux-offline/README.md`](linux-offline/README.md).
+- **[MusicBeatSP](https://github.com/Kdroidwin/MusicBeatSP)** (by Kdroidwin) — ベースとなったプロジェクト
+- **[BitChord](https://github.com/kushagrasinghx/BitChord)** (by Kushagra Singh) — UIおよび再生基盤
+- **[InnerTune](https://github.com/z-huang/InnerTune)** (by Zion Huang) — 先行プレイヤープロジェクト
+- **[TagLib](https://github.com/kyant0/taglib)** — メタデータ処理エンジン
+- **[Haze](https://github.com/chrisbanes/haze)** — すりガラス効果ライブラリ
 
-## Credits and attribution
+---
 
-- **[BitChord](https://github.com/kushagrasinghx/BitChord)** — Created by [Kushagra Singh](https://github.com/kushagrasinghx). MusicBeatSP retains and builds on the project's UI and playback foundation.
-- **[Booming Music](https://github.com/mardous/BoomingMusic)** — Reference for the fast-scroller design and tag-editor workflow.
-- **[TagLib](https://github.com/kyant0/taglib)** — Audio metadata parsing and writing.
-- **[Haze](https://github.com/chrisbanes/haze)** — Compose backdrop blur effects.
-- **[AndroidX Media3](https://github.com/androidx/media)** — Android playback and media-session APIs.
-- **Google Cast SDK** — Cast sender integration.
+## ライセンス
 
-<div align="center">
-
-**[MusicBeatSP](https://github.com/Kdroidwin/MusicBeatSP)** · Built for local music libraries and everyday listening.
-
-</div>
+本プロジェクトは GNU General Public License v3.0 (GPL-3.0) のもとで公開されています。
+詳細は [LICENSE](LICENSE) をご確認ください。

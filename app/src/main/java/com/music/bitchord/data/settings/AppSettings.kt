@@ -13,8 +13,10 @@ import com.music.bitchord.data.Http
 import com.music.bitchord.data.innertube.YoutubeStreamBootstrap
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.feature.artistimage.model.ArtistSort
+import com.music.bitchord.playback.equalizer.EelEqParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.Locale
+import java.util.UUID
 
 /** Maximum blur radius for the player-only artwork backdrop, in dp. */
 const val MAX_PLAYER_ARTWORK_BLUR_DP = 128f
@@ -230,6 +232,7 @@ enum class MainNavigationTab(val index: Int) {
     LIBRARY(3),
     SEARCH(4),
     ALBUM_ARTISTS(5),
+    FOLDERS(6);
 }
 
 enum class ScreenOrientationMode { SYSTEM, PORTRAIT, LANDSCAPE }
@@ -285,12 +288,15 @@ object MainNavigationTabs {
         return normalized
     }
 
+    val defaultVisible: Set<MainNavigationTab>
+        get() = MainNavigationTab.entries.filterNot { it == MainNavigationTab.FOLDERS }.toSet()
+
     fun setVisible(
         current: Set<MainNavigationTab>,
         tab: MainNavigationTab,
         visible: Boolean,
     ): Set<MainNavigationTab> {
-        val baseline = current.ifEmpty { MainNavigationTab.entries.toSet() }
+        val baseline = current.ifEmpty { defaultVisible }
         if (visible) return baseline + tab
         if (baseline.size <= 1) return baseline
         return baseline - tab
@@ -301,7 +307,7 @@ object MainNavigationTabs {
         visible: Set<MainNavigationTab>,
         order: List<MainNavigationTab> = MainNavigationTab.entries,
     ): MainNavigationTab {
-        val available = visible.ifEmpty { MainNavigationTab.entries.toSet() }
+        val available = visible.ifEmpty { defaultVisible }
         val ordered = normalizeOrder(order)
         val current = MainNavigationTab.entries.firstOrNull { it.index == selectedIndex }
         current?.takeIf { it in available }?.let { return it }
@@ -440,9 +446,11 @@ object AppSettings {
      * us a stereo stream, so there's no Atmos-style source to render.
      */
     val spatialAudio = MutableStateFlow(false)
-    /** Optional three-band PCM parametric EQ; disabled until the listener opts in. */
+    /** Optional in-app high-precision PCM parametric EQ & EEL DSP; disabled until the listener opts in. */
     val parametricEqEnabled = MutableStateFlow(false)
     val parametricEqBands = MutableStateFlow(ParametricEqBand.DEFAULTS)
+    val parametricEqConfig = MutableStateFlow(ParametricEqConfig())
+    val parametricEqPresets = MutableStateFlow<List<ParametricEqPreset>>(emptyList())
     /** Optional room reverb, attached to the active audio session when supported. */
     val reverbEnabled = MutableStateFlow(false)
     val reverbAmount = MutableStateFlow(35)
@@ -505,17 +513,26 @@ object AppSettings {
     /** When true, uses the classic stacked mini player + bottom bar instead of the collapsible floating bar. */
     val classicNavBar = MutableStateFlow(false)
 
+    /** When true, keeps the floating bottom bar expanded and prevents collapsing on scroll. */
+    val lockBottomBarExpanded = MutableStateFlow(false)
+
     /** When true, hides labels in the bottom navigation bar and displays only icons. */
     val hideNavigationBarLabels = MutableStateFlow(false)
 
     /** Main navigation destinations the user wants to keep in the bottom bar. */
-    val visibleMainNavigationTabs = MutableStateFlow(MainNavigationTab.entries.toSet())
+    val visibleMainNavigationTabs = MutableStateFlow(MainNavigationTab.entries.filterNot { it == MainNavigationTab.FOLDERS }.toSet())
     val mainNavigationTabOrder = MutableStateFlow<List<MainNavigationTab>>(MainNavigationTab.entries)
     val startupTab = MutableStateFlow(MainNavigationTab.SONGS)
 
     /** System UI preferences; bars remain transiently revealable by swipe when hidden. */
     val showStatusBar = MutableStateFlow(true)
     val showNavigationBar = MutableStateFlow(true)
+    /**
+     * Quiet mode: the status bar is folded away and the media notification is
+     * not posted at all. Playback keeps running from the service; the status
+     * bar stays swipe-revealable, as for [showStatusBar].
+     */
+    val quietMode = MutableStateFlow(false)
     val keepScreenOn = MutableStateFlow(false)
     /** Keeps the display awake while the full lyrics panel is open. */
     val keepScreenOnDuringLyrics = MutableStateFlow(true)
@@ -958,8 +975,29 @@ object AppSettings {
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
         dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
-        parametricEqEnabled.value = prefs.getBoolean(KEY_PARAMETRIC_EQ_ENABLED, false)
-        parametricEqBands.value = ParametricEqBand.decode(prefs.getString(KEY_PARAMETRIC_EQ_BANDS, null))
+        val legacyPeqEnabled = prefs.getBoolean(KEY_PARAMETRIC_EQ_ENABLED, false)
+        val legacyPeqBands = ParametricEqBand.decode(prefs.getString(KEY_PARAMETRIC_EQ_BANDS, null))
+        val savedPeqConfig = ParametricEqConfig.fromJsonString(prefs.getString(KEY_PARAMETRIC_EQ_CONFIG_JSON, null))
+            ?: ParametricEqConfig(enabled = legacyPeqEnabled, globalBands = legacyPeqBands)
+        parametricEqConfig.value = savedPeqConfig
+        parametricEqEnabled.value = savedPeqConfig.enabled
+        parametricEqBands.value = savedPeqConfig.globalBands
+
+        var loadedPresets = ParametricEqPreset.decodeList(prefs.getString(KEY_PARAMETRIC_EQ_PRESETS_JSON, null))
+        if (!prefs.getBoolean(KEY_PARAMETRIC_EQ_SEEDED_SAMPLE, false) && this::appContext.isInitialized) {
+            runCatching {
+                val sampleText = appContext.assets.open(BUNDLED_EEL_ASSET_PATH).bufferedReader().use { it.readText() }
+                val parsed = EelEqParser.parse(sampleText, "upper 6kHz no touch ig955 eq_swap.eel").preset
+                if (loadedPresets.none { it.name == parsed.name }) {
+                    loadedPresets = listOf(parsed) + loadedPresets
+                }
+                prefs.edit()
+                    .putString(KEY_PARAMETRIC_EQ_PRESETS_JSON, ParametricEqPreset.encodeList(loadedPresets))
+                    .putBoolean(KEY_PARAMETRIC_EQ_SEEDED_SAMPLE, true)
+                    .apply()
+            }
+        }
+        parametricEqPresets.value = loadedPresets
         reverbEnabled.value = prefs.getBoolean(KEY_REVERB_ENABLED, false)
         reverbAmount.value = prefs.getInt(KEY_REVERB_AMOUNT, 35).coerceIn(0, 100)
         playbackSpeed.value = prefs.getFloat(KEY_SPEED, 1.0f).coerceIn(0.1f, 10.0f)
@@ -998,6 +1036,7 @@ object AppSettings {
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
         classicNavBar.value = prefs.getBoolean(KEY_CLASSIC_NAV_BAR, false)
+        lockBottomBarExpanded.value = prefs.getBoolean(KEY_LOCK_BOTTOM_BAR_EXPANDED, false)
         hideNavigationBarLabels.value = prefs.getBoolean(KEY_HIDE_NAVIGATION_BAR_LABELS, false)
         visibleLocalLibraryTabs.value = readVisibleLocalLibraryTabs()
         localLibraryTabOrder.value = readLocalLibraryTabOrder()
@@ -1006,6 +1045,7 @@ object AppSettings {
         startupTab.value = readStartupTab()
         showStatusBar.value = prefs.getBoolean(KEY_SHOW_STATUS_BAR, true)
         showNavigationBar.value = prefs.getBoolean(KEY_SHOW_NAVIGATION_BAR, true)
+        quietMode.value = prefs.getBoolean(KEY_QUIET_MODE, false)
         keepScreenOn.value = prefs.getBoolean(KEY_KEEP_SCREEN_ON, false)
         keepScreenOnDuringLyrics.value = prefs.getBoolean(KEY_KEEP_SCREEN_ON_DURING_LYRICS, true)
         screenOrientationMode.value = runCatching {
@@ -1126,6 +1166,7 @@ object AppSettings {
         localAlbumsViewType.value = readLibraryViewType(KEY_LOCAL_ALBUMS_VIEW_TYPE, LibraryViewType.GRID)
         localArtistsViewType.value = readLibraryViewType(KEY_LOCAL_ARTISTS_VIEW_TYPE, LibraryViewType.GRID)
         localFolderHierarchy.value = prefs.getBoolean(KEY_LOCAL_FOLDER_HIERARCHY, false)
+        localMusicFolderUri.value = prefs.getString(KEY_LOCAL_MUSIC_FOLDER_PATH, "").orEmpty()
         fullScreenCollectionArtwork.value = prefs.getBoolean(KEY_FULL_SCREEN_COLLECTION_ARTWORK, false)
         hideCollectionTopBar.value = prefs.getBoolean(KEY_HIDE_COLLECTION_TOP_BAR, true)
         hideFloatingCollectionControls.value = prefs.getBoolean(KEY_HIDE_FLOATING_COLLECTION_CONTROLS, true)
@@ -1366,16 +1407,174 @@ object AppSettings {
     }
 
     fun setParametricEqEnabled(value: Boolean) {
-        parametricEqEnabled.value = value
-        prefs.edit().putBoolean(KEY_PARAMETRIC_EQ_ENABLED, value).apply()
+        setParametricEqConfig(parametricEqConfig.value.copy(enabled = value))
     }
 
     fun setParametricEqBand(index: Int, band: ParametricEqBand) {
-        if (index !in ParametricEqBand.DEFAULTS.indices) return
-        val safeBand = band.sanitized(ParametricEqBand.DEFAULTS[index])
-        val updated = parametricEqBands.value.toMutableList().apply { this[index] = safeBand }
-        parametricEqBands.value = updated
-        prefs.edit().putString(KEY_PARAMETRIC_EQ_BANDS, ParametricEqBand.encode(updated)).apply()
+        val currentBands = parametricEqConfig.value.globalBands.toMutableList()
+        if (index !in currentBands.indices) return
+        currentBands[index] = band.sanitized(currentBands[index])
+        setParametricEqConfig(
+            parametricEqConfig.value.copy(
+                globalBands = currentBands,
+                activePresetId = null,
+            ),
+        )
+    }
+
+    fun setParametricEqConfig(newConfig: ParametricEqConfig) {
+        val safe = newConfig.sanitized()
+        parametricEqConfig.value = safe
+        parametricEqEnabled.value = safe.enabled
+        parametricEqBands.value = safe.globalBands
+        if (this::prefs.isInitialized) {
+            prefs.edit()
+                .putBoolean(KEY_PARAMETRIC_EQ_ENABLED, safe.enabled)
+                .putString(KEY_PARAMETRIC_EQ_BANDS, ParametricEqBand.encode(safe.globalBands))
+                .putString(KEY_PARAMETRIC_EQ_CONFIG_JSON, safe.toJsonString())
+                .apply()
+        }
+    }
+
+    fun setParametricEqSwapChannels(swap: Boolean, swapBeforeEq: Boolean = parametricEqConfig.value.swapBeforeEq) {
+        val current = parametricEqConfig.value
+        val nextEnabled = if (swap && !current.enabled) true else current.enabled
+        setParametricEqConfig(
+            current.copy(
+                enabled = nextEnabled,
+                swapChannels = swap,
+                swapBeforeEq = swapBeforeEq,
+                activePresetId = null,
+            ),
+        )
+    }
+
+    fun setParametricEqPreamps(
+        globalDb: Float = parametricEqConfig.value.globalPreampDb,
+        lrDb: Float = parametricEqConfig.value.lrPreampDb,
+        leftDb: Float = parametricEqConfig.value.leftGainDb,
+        rightDb: Float = parametricEqConfig.value.rightGainDb,
+    ) {
+        setParametricEqConfig(
+            parametricEqConfig.value.copy(
+                globalPreampDb = globalDb,
+                lrPreampDb = lrDb,
+                leftGainDb = leftDb,
+                rightGainDb = rightDb,
+                activePresetId = null,
+            ),
+        )
+    }
+
+    fun setParametricEqChannelBands(target: ParametricEqChannelTarget, bands: List<ParametricEqBand>) {
+        val current = parametricEqConfig.value
+        val updated = when (target) {
+            ParametricEqChannelTarget.GLOBAL -> current.copy(globalBands = bands, activePresetId = null)
+            ParametricEqChannelTarget.LEFT -> current.copy(leftBands = bands, activePresetId = null)
+            ParametricEqChannelTarget.RIGHT -> current.copy(rightBands = bands, activePresetId = null)
+        }
+        setParametricEqConfig(updated)
+    }
+
+    fun importEelPreset(content: String, fileName: String? = null): EelEqParser.ParseResult {
+        val result = EelEqParser.parse(content, fileName)
+        val preset = result.preset
+        val existing = parametricEqPresets.value.toMutableList()
+        val matchIdx = existing.indexOfFirst { it.id == preset.id || it.name.equals(preset.name, ignoreCase = true) }
+        val savedPreset = if (matchIdx >= 0) {
+            val merged = preset.copy(id = existing[matchIdx].id, createdAt = System.currentTimeMillis())
+            existing[matchIdx] = merged
+            merged
+        } else {
+            existing.add(0, preset)
+            preset
+        }
+        saveParametricEqPresets(existing)
+        setParametricEqConfig(savedPreset.toConfig(enabled = true))
+        return result.copy(preset = savedPreset)
+    }
+
+    fun loadBundledSampleEel(): EelEqParser.ParseResult? {
+        if (!this::appContext.isInitialized) return null
+        return runCatching {
+            val sampleText = appContext.assets.open(BUNDLED_EEL_ASSET_PATH).bufferedReader().use { it.readText() }
+            importEelPreset(sampleText, "upper 6kHz no touch ig955 eq_swap.eel")
+        }.getOrNull()
+    }
+
+    fun saveCurrentAsParametricEqPreset(name: String): ParametricEqPreset {
+        val cleanName = name.trim().ifEmpty { "Custom PEQ" }
+        val current = parametricEqConfig.value
+        val existing = parametricEqPresets.value.toMutableList()
+        val matchIdx = existing.indexOfFirst { it.name.equals(cleanName, ignoreCase = true) }
+        val presetId = if (matchIdx >= 0) existing[matchIdx].id else UUID.randomUUID().toString()
+        val preset = ParametricEqPreset(
+            id = presetId,
+            name = cleanName,
+            fileName = current.sourceFileName,
+            sourceFileName = current.sourceFileName,
+            notes = current.notes,
+            createdAt = System.currentTimeMillis(),
+            swapChannels = current.swapChannels,
+            swapBeforeEq = current.swapBeforeEq,
+            globalPreampDb = current.globalPreampDb,
+            lrPreampDb = current.lrPreampDb,
+            leftGainDb = current.leftGainDb,
+            rightGainDb = current.rightGainDb,
+            globalBands = current.globalBands,
+            leftBands = current.leftBands,
+            rightBands = current.rightBands,
+        )
+        if (matchIdx >= 0) {
+            existing[matchIdx] = preset
+        } else {
+            existing.add(0, preset)
+        }
+        saveParametricEqPresets(existing)
+        setParametricEqConfig(current.copy(activePresetId = preset.id, activePresetName = preset.name))
+        return preset
+    }
+
+    fun selectParametricEqPreset(presetId: String) {
+        val preset = parametricEqPresets.value.firstOrNull { it.id == presetId } ?: return
+        setParametricEqConfig(preset.toConfig(enabled = true))
+    }
+
+    fun deleteParametricEqPreset(presetId: String) {
+        val updated = parametricEqPresets.value.filterNot { it.id == presetId }
+        saveParametricEqPresets(updated)
+        val current = parametricEqConfig.value
+        if (current.activePresetId == presetId) {
+            setParametricEqConfig(current.copy(activePresetId = null))
+        }
+    }
+
+    fun resetParametricEqConfig() {
+        setParametricEqConfig(
+            ParametricEqConfig(
+                enabled = parametricEqConfig.value.enabled,
+                swapChannels = false,
+                swapBeforeEq = true,
+                globalPreampDb = 0f,
+                lrPreampDb = 0f,
+                leftGainDb = 0f,
+                rightGainDb = 0f,
+                globalBands = ParametricEqBand.DEFAULTS,
+                leftBands = emptyList(),
+                rightBands = emptyList(),
+                activePresetId = null,
+                activePresetName = null,
+                sourceFileName = null,
+                notes = null,
+            ),
+        )
+    }
+
+    private fun saveParametricEqPresets(presets: List<ParametricEqPreset>) {
+        parametricEqPresets.value = presets
+        if (this::prefs.isInitialized) {
+            prefs.edit().putString(KEY_PARAMETRIC_EQ_PRESETS_JSON, ParametricEqPreset.encodeList(presets)).apply()
+        }
     }
 
     fun setReverbEnabled(value: Boolean) {
@@ -1451,6 +1650,11 @@ object AppSettings {
     fun setClassicNavBar(value: Boolean) {
         classicNavBar.value = value
         prefs.edit().putBoolean(KEY_CLASSIC_NAV_BAR, value).apply()
+    }
+
+    fun setLockBottomBarExpanded(value: Boolean) {
+        lockBottomBarExpanded.value = value
+        prefs.edit().putBoolean(KEY_LOCK_BOTTOM_BAR_EXPANDED, value).apply()
     }
 
     fun setHideNavigationBarLabels(value: Boolean) {
@@ -1545,6 +1749,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_SHOW_NAVIGATION_BAR, value).apply()
     }
 
+    fun setQuietMode(value: Boolean) {
+        quietMode.value = value
+        prefs.edit().putBoolean(KEY_QUIET_MODE, value).apply()
+    }
+
     fun setKeepScreenOn(value: Boolean) {
         keepScreenOn.value = value
         prefs.edit().putBoolean(KEY_KEEP_SCREEN_ON, value).apply()
@@ -1634,11 +1843,12 @@ object AppSettings {
     }
 
     private fun readVisibleMainNavigationTabs(): Set<MainNavigationTab> {
+        val defaultTabs = MainNavigationTab.entries.filterNot { it == MainNavigationTab.FOLDERS }.toSet()
         val saved = prefs.getStringSet(KEY_VISIBLE_MAIN_NAVIGATION_TABS, null)
-            ?: return MainNavigationTab.entries.toSet()
+            ?: return defaultTabs
         return saved.mapNotNull { name -> MainNavigationTab.entries.firstOrNull { it.name == name } }
             .toSet()
-            .ifEmpty { MainNavigationTab.entries.toSet() }
+            .ifEmpty { defaultTabs }
     }
 
     fun setHighPerformanceMode(value: Boolean) {
@@ -2310,6 +2520,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_LOCAL_FOLDER_HIERARCHY, value).apply()
     }
 
+    fun setLocalMusicFolderPath(path: String) {
+        localMusicFolderUri.value = path
+        prefs.edit().putString(KEY_LOCAL_MUSIC_FOLDER_PATH, path).apply()
+    }
+
     fun setFullScreenCollectionArtwork(value: Boolean) {
         fullScreenCollectionArtwork.value = value
         prefs.edit().putBoolean(KEY_FULL_SCREEN_COLLECTION_ARTWORK, value).apply()
@@ -2615,6 +2830,10 @@ object AppSettings {
     private const val KEY_MINI_PLAYER_PREVIOUS_BUTTON = "mini_player_previous_button"
     private const val KEY_PARAMETRIC_EQ_ENABLED = "parametric_eq_enabled"
     private const val KEY_PARAMETRIC_EQ_BANDS = "parametric_eq_bands"
+    private const val KEY_PARAMETRIC_EQ_CONFIG_JSON = "parametric_eq_config_json"
+    private const val KEY_PARAMETRIC_EQ_PRESETS_JSON = "parametric_eq_presets_json"
+    private const val KEY_PARAMETRIC_EQ_SEEDED_SAMPLE = "parametric_eq_seeded_sample"
+    private const val BUNDLED_EEL_ASSET_PATH = "eq/upper 6kHz no touch ig955 eq_swap.eel"
     private const val KEY_REVERB_ENABLED = "reverb_enabled"
     private const val KEY_REVERB_AMOUNT = "reverb_amount"
     private const val KEY_LAUNCHER_ICON = "launcher_icon"
@@ -2637,12 +2856,14 @@ object AppSettings {
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
     private const val KEY_CLASSIC_NAV_BAR = "classic_nav_bar"
+    private const val KEY_LOCK_BOTTOM_BAR_EXPANDED = "lock_bottom_bar_expanded"
     private const val KEY_HIDE_NAVIGATION_BAR_LABELS = "hide_navigation_bar_labels"
     private const val KEY_VISIBLE_MAIN_NAVIGATION_TABS = "visible_main_navigation_tabs"
     private const val KEY_MAIN_NAVIGATION_TAB_ORDER = "main_navigation_tab_order"
     private const val KEY_STARTUP_TAB = "startup_tab"
     private const val KEY_SHOW_STATUS_BAR = "show_status_bar"
     private const val KEY_SHOW_NAVIGATION_BAR = "show_navigation_bar"
+    private const val KEY_QUIET_MODE = "quiet_mode"
     private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
     private const val KEY_KEEP_SCREEN_ON_DURING_LYRICS = "keep_screen_on_during_lyrics"
     private const val KEY_SCREEN_ORIENTATION = "screen_orientation_mode"
@@ -2721,6 +2942,7 @@ object AppSettings {
     private const val KEY_ALBUM_ARTISTS_TAB_MIGRATED = "album_artists_tab_migrated"
     private const val KEY_LOCAL_LIBRARY_TAB_ORDER = "local_library_tab_order"
     private const val KEY_LOCAL_FOLDER_HIERARCHY = "local_folder_hierarchy"
+    private const val KEY_LOCAL_MUSIC_FOLDER_PATH = "local_music_folder_path"
     private const val KEY_FULL_SCREEN_COLLECTION_ARTWORK = "full_screen_collection_artwork"
     private const val KEY_HIDE_COLLECTION_TOP_BAR = "hide_collection_top_bar"
     private const val KEY_HIDE_FLOATING_COLLECTION_CONTROLS = "hide_floating_collection_controls"

@@ -211,18 +211,6 @@ fun FrostedTopBar(
                         colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
                         modifier = Modifier.height(18.dp),
                     )
-                    // The dev flavor gets its own applicationId so it can sit
-                    // installed next to the prod build; this badge is the
-                    // in-app equivalent, so the two are never mixed up at a
-                    // glance once both are running.
-                    if (BuildConfig.FLAVOR == "dev") {
-                        Text(
-                            text = "Dev",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 6.dp),
-                        )
-                    }
                 }
             }
             Row(

@@ -46,13 +46,13 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "io.pockets.musicbestsp"
+        applicationId = "com.music.tinque"
         // 26 keeps reach wide; real-time blur (RenderEffect) kicks in on API 31+,
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
         targetSdk = 36
-        versionCode = 40
-        versionName = "2.3.2"
+        versionCode = 41
+        versionName = "2.3.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -77,30 +77,30 @@ android {
     productFlavors {
         create("standard") {
             dimension = "distribution"
-            applicationId = "io.pockets.musicbestsp"
-            resValue("string", "app_name", "MusicBeatSP")
+            applicationId = "com.music.tinque"
+            resValue("string", "app_name", "Tinque")
         }
         // OnePlus / OPPO whitelisted package flavor 1: unlocks native Dolby Atmos / Dirac / OReality hardware audio enhancements
         create("qqmusic") {
             dimension = "distribution"
             applicationId = "com.tencent.qqmusic"
-            resValue("string", "app_name", "MusicBeatSP")
+            resValue("string", "app_name", "Tinque")
         }
         // OnePlus / OPPO whitelisted package flavor 2: unlocks native hardware audio enhancements
         create("kugou") {
             dimension = "distribution"
             applicationId = "com.kugou.android"
-            resValue("string", "app_name", "MusicBeatSP")
+            resValue("string", "app_name", "Tinque")
         }
         create("dev") {
             dimension = "distribution"
-            applicationId = "com.dev.musicbeat"
-            resValue("string", "app_name", "MusicBeatSP Dev")
+            applicationId = "com.music.tinque.dev"
+            resValue("string", "app_name", "Tinque Dev")
         }
         create("noInternet") {
             dimension = "distribution"
-            applicationId = "io.pockets.musicbestsp.nointernet"
-            resValue("string", "app_name", "MusicBeatSP Offline")
+            applicationId = "com.music.tinque.nointernet"
+            resValue("string", "app_name", "Tinque Offline")
         }
     }
 

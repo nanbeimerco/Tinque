@@ -56,6 +56,9 @@ import com.music.bitchord.ui.haptics.rememberHaptics
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
+import com.music.bitchord.ui.player.LocalPlayerDock
+import com.music.bitchord.ui.player.PlayerDock
+import com.music.bitchord.ui.player.playerDockArt
 import kotlinx.coroutines.launch
 
 /**
@@ -133,6 +136,8 @@ fun MiniPlayer(
     onNext: () -> Unit,
     onExpand: () -> Unit,
     onDismiss: () -> Unit = {},
+    dock: PlayerDock? = null,
+    pull: MiniPlayerPull? = null,
     modifier: Modifier = Modifier,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -156,9 +161,15 @@ fun MiniPlayer(
     // a pill instead of a rounded rectangle. Same idiom as [FloatingBottomBar]
     // directly below it, so the two shapes are the same family.
     val shape = RoundedCornerShape(percent = 50)
-    Box(
-        modifier = modifier
-            .padding(horizontal = PAGE_GUTTER)
+    val effectiveDock = dock ?: LocalPlayerDock.current
+    val gestureModifier = if (pull != null) {
+        Modifier.miniPlayerGestures(
+            pull = pull,
+            onNext = onNext,
+            onPrevious = onPrevious,
+        )
+    } else {
+        Modifier
             .graphicsLayer {
                 translationY = offsetY.value
                 alpha = (1f - (offsetY.value / (dismissThresholdPx * 1.5f))).coerceIn(0f, 1f)
@@ -191,6 +202,12 @@ fun MiniPlayer(
                     },
                 )
             }
+    }
+
+    Box(
+        modifier = modifier
+            .padding(horizontal = PAGE_GUTTER)
+            .then(gestureModifier)
             .clip(shape)
             .then(
                 if (reduceDynamicBlur) {
@@ -226,6 +243,7 @@ fun MiniPlayer(
                 contentDescription = null,
                 modifier = Modifier
                     .size(40.dp)
+                    .playerDockArt(dock = effectiveDock, corner = ART_CORNER)
                     .clip(RoundedCornerShape(ART_CORNER))
                     .thumbnailBorder(RoundedCornerShape(ART_CORNER))
                     .background(MaterialTheme.colorScheme.surfaceVariant),

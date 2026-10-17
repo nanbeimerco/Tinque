@@ -87,11 +87,19 @@
           Portrait only. Every screen is laid out for a tall single column —
           the player's artwork square, the frosted bars, the floating tab bar —
           and none of it has a landscape design to fall back on.
+
+          configChanges covers the fold/unfold and split-screen cases: without
+          it the system destroys and recreates the activity for every hinge
+          angle change, and folder depth (a composable-local back stack) reset
+          to the root each time. Compose re-reads the new configuration in
+          place — BoxWithConstraints and the docked-player layout adapt as
+          normal — so the activity stays alive while the layout responds.
         -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboard|keyboardHidden|navigation"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.BitChord">
             <intent-filter>

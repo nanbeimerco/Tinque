@@ -103,7 +103,7 @@ object LyricsRepository {
                 videoId = videoId,
             )
             if (!raw.isNullOrBlank()) {
-                found = ProviderLyrics.parse(raw)
+                found = ProviderLyrics.parse(raw)?.withBackgroundVocals()
             }
         }
 

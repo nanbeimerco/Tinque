@@ -49,7 +49,7 @@ object TtmlLyrics {
             isExpandEntityReferences = false
             // Lyrics come from remote providers. Never allow external entity,
             // schema, or DTD resolution while parsing a document.
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
             runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
             runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
             runCatching { setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "") }
@@ -60,13 +60,32 @@ object TtmlLyrics {
             if (namespaced.length > 0) namespaced else document.getElementsByTagName("p")
         }
 
-        val lines = ArrayList<LyricLine>(paragraphs.length)
+        val sung = ArrayList<Pair<LyricLine, String?>>(paragraphs.length)
         for (i in 0 until paragraphs.length) {
             val paragraph = paragraphs.item(i) as? Element ?: continue
-            lineFrom(paragraph)?.let(lines::add)
+            val line = lineFrom(paragraph) ?: continue
+            sung += line to attribute(paragraph, "agent").takeIf { it.isNotEmpty() }
         }
-        lines.sortedBy { it.timeMs }.withInstrumentalGaps()
+        sung.sortBy { it.first.timeMs }
+
+        val sides = lineAlignments(sung.map { it.second }, agentTypes(document))
+        sung.mapIndexed { index, (line, _) -> line.copy(alignment = sides[index]) }
+            .withInstrumentalGaps()
     }.getOrDefault(emptyList())
+
+    private fun agentTypes(document: org.w3c.dom.Document): Map<String, String> {
+        val agents = document.getElementsByTagNameNS("*", "agent").takeIf { it.length > 0 }
+            ?: document.getElementsByTagName("ttm:agent").takeIf { it.length > 0 }
+            ?: document.getElementsByTagName("agent")
+        val types = HashMap<String, String>(agents.length)
+        for (i in 0 until agents.length) {
+            val agent = agents.item(i) as? Element ?: continue
+            val id = attribute(agent, "id")
+            val type = agent.getAttribute("type").ifEmpty { attribute(agent, "type") }
+            if (id.isNotEmpty() && type.isNotEmpty()) types[id] = type
+        }
+        return types
+    }
 
     private fun lineFrom(paragraph: Element): LyricLine? {
         val pieces = mutableListOf<Piece>()
@@ -170,11 +189,13 @@ object TtmlLyrics {
      * Glues syllables back into words. A word ends at the first whitespace
      * after it — whether that whitespace is a text node between two spans or
      * part of a span's own text — and its span runs from the first syllable's
-     * start to the last one's end.
+     * start to the last one's end. Each span's own timing is kept on the word
+     * as a [LyricSyllable], which is what the sweep follows.
      */
     private fun mergeIntoWords(pieces: List<Piece>): List<LyricWord> {
         val words = mutableListOf<LyricWord>()
         val current = StringBuilder()
+        val syllables = mutableListOf<LyricSyllable>()
         var start = 0L
         var end = 0L
         // Untimed text is punctuation hanging off a span, or a line that was
@@ -185,7 +206,10 @@ object TtmlLyrics {
         fun flush() {
             val text = current.toString().trim()
             current.setLength(0)
-            if (text.isNotEmpty() && timed) words += LyricWord(start, end, text)
+            if (text.isNotEmpty() && timed) {
+                words += LyricWord(start, end, text, LyricSyllable.normalized(syllables, text.length))
+            }
+            syllables.clear()
             timed = false
         }
 
@@ -203,7 +227,9 @@ object TtmlLyrics {
                     // Leading whitespace closes off whatever came before it.
                     if (piece.text.first().isWhitespace()) flush()
                     if (current.isEmpty()) start = piece.start
+                    val from = current.length
                     current.append(piece.text.trim())
+                    syllables += LyricSyllable(piece.start, piece.end, from, current.length)
                     end = piece.end
                     timed = true
                     if (piece.text.last().isWhitespace()) flush()
