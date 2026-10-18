@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -76,10 +77,12 @@ import androidx.compose.material.icons.rounded.MusicOff
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.MotionPhotosOff
+import androidx.compose.material.icons.rounded.Opacity
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ScreenRotation
@@ -183,6 +186,7 @@ import com.music.bitchord.data.settings.LyricsTextAlignment
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.R
 import com.music.bitchord.data.settings.ThemeMode
+import com.music.bitchord.data.settings.PillMotionStyle
 import com.music.bitchord.data.stats.Backup
 import com.music.bitchord.feature.localmusic.data.LocalPlaylistStore
 import com.music.bitchord.feature.localmusic.data.M3uImportException
@@ -273,8 +277,12 @@ fun SettingsScreen(
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
+    val liquidGlassBlurDp by AppSettings.liquidGlassBlurDp.collectAsStateWithLifecycle()
+    val liquidGlassOpacity by AppSettings.liquidGlassOpacity.collectAsStateWithLifecycle()
+    val pillMotionStyle by AppSettings.pillMotionStyle.collectAsStateWithLifecycle()
     val classicNavBar by AppSettings.classicNavBar.collectAsStateWithLifecycle()
     val lockBottomBarExpanded by AppSettings.lockBottomBarExpanded.collectAsStateWithLifecycle()
+    val integrateStandaloneTab by AppSettings.integrateStandaloneTab.collectAsStateWithLifecycle()
     val hideNavBarLabels by AppSettings.hideNavigationBarLabels.collectAsStateWithLifecycle()
     val visibleMainTabs by AppSettings.visibleMainNavigationTabs.collectAsStateWithLifecycle()
     val mainTabOrder by AppSettings.mainNavigationTabOrder.collectAsStateWithLifecycle()
@@ -566,6 +574,7 @@ fun SettingsScreen(
         SettingsSearchEntry(stringResource(R.string.reduce_dynamic_blur), stringResource(R.string.reduce_dynamic_blur_subtitle), listOf("blur", "ぼかし", "performance", "動的"), reduceDynamicBlur) { AppSettings.setReduceDynamicBlur(!reduceDynamicBlur) },
         SettingsSearchEntry(stringResource(R.string.classic_nav_bar), stringResource(R.string.classic_nav_bar_subtitle), listOf("navigation", "nav bar", "ナビゲーション", "classic"), classicNavBar) { AppSettings.setClassicNavBar(!classicNavBar) },
         SettingsSearchEntry(stringResource(R.string.lock_bottom_bar_expanded), stringResource(R.string.lock_bottom_bar_expanded_subtitle), listOf("bottom bar", "floating", "expanded", "固定", "ボトムバー", "展開"), lockBottomBarExpanded) { AppSettings.setLockBottomBarExpanded(!lockBottomBarExpanded) },
+        SettingsSearchEntry(stringResource(R.string.integrate_standalone_tab), stringResource(R.string.integrate_standalone_tab_subtitle), listOf("bottom bar", "floating", "tab", "integrate", "一体化", "統合", "タブ"), integrateStandaloneTab) { AppSettings.setIntegrateStandaloneTab(!integrateStandaloneTab) },
         SettingsSearchEntry(stringResource(R.string.hide_nav_bar_labels), stringResource(R.string.hide_nav_bar_labels_subtitle), listOf("navigation", "nav bar", "label", "ラベル", "ナビゲーション"), hideNavBarLabels) { AppSettings.setHideNavigationBarLabels(!hideNavBarLabels) },
         SettingsSearchEntry(stringResource(R.string.legacy_mesh_gradient), stringResource(R.string.legacy_mesh_gradient_subtitle), listOf("theme", "gradient", "テーマ", "グラデーション"), legacyMeshGradient) { AppSettings.setLegacyMeshGradient(!legacyMeshGradient) },
         SettingsSearchEntry(
@@ -602,6 +611,40 @@ fun SettingsScreen(
             liquidGlass,
             enabled = liquidGlassSupported,
         ) { if (liquidGlassSupported) AppSettings.setLiquidGlass(!liquidGlass) },
+        SettingsSearchEntry(
+            title = stringResource(R.string.liquid_glass_blur),
+            subtitle = stringResource(R.string.liquid_glass_blur_subtitle),
+            keywords = listOf("liquid glass", "blur", "frosted", "ぼかし", "すりガラス", "リキッドグラス"),
+            valueLabel = stringResource(R.string.liquid_glass_blur_value, liquidGlassBlurDp.roundToInt()),
+            sliderValue = liquidGlassBlurDp,
+            sliderValueRange = AppSettings.MIN_LIQUID_GLASS_BLUR_DP..AppSettings.MAX_LIQUID_GLASS_BLUR_DP,
+            sliderSteps = 21,
+            onSliderValueChange = AppSettings::setLiquidGlassBlurDp,
+            enabled = liquidGlass && liquidGlassSupported,
+            activate = {},
+        ),
+        SettingsSearchEntry(
+            title = stringResource(R.string.liquid_glass_opacity),
+            subtitle = stringResource(R.string.liquid_glass_opacity_subtitle),
+            keywords = listOf("liquid glass", "opacity", "transparent", "不透明度", "透明度", "白濁", "リキッドグラス"),
+            valueLabel = stringResource(R.string.liquid_glass_opacity_value, (liquidGlassOpacity * 100).roundToInt()),
+            sliderValue = liquidGlassOpacity,
+            sliderValueRange = AppSettings.MIN_LIQUID_GLASS_OPACITY..AppSettings.MAX_LIQUID_GLASS_OPACITY,
+            sliderSteps = 11,
+            onSliderValueChange = AppSettings::setLiquidGlassOpacity,
+            enabled = liquidGlass && liquidGlassSupported,
+            activate = {},
+        ),
+        SettingsSearchEntry(
+            title = stringResource(R.string.pill_motion_style),
+            subtitle = stringResource(R.string.pill_motion_style_subtitle),
+            keywords = listOf("liquid glass", "pill", "motion", "speed", "animation", "リキッドグラス", "ピル", "モーション", "速度"),
+            valueLabel = pillMotionStyle.localizedLabel(),
+            enabled = liquidGlass && liquidGlassSupported,
+        ) {
+            val next = (PillMotionStyle.entries.indexOf(pillMotionStyle) + 1) % PillMotionStyle.entries.size
+            AppSettings.setPillMotionStyle(PillMotionStyle.entries[next])
+        },
         SettingsSearchEntry(
             stringResource(R.string.player_details_vertical_menu),
             stringResource(R.string.player_details_vertical_menu_subtitle),
@@ -2351,6 +2394,106 @@ fun SettingsScreen(
                 },
                 onClick = { AppSettings.setLiquidGlass(!liquidGlass) },
             )
+            if (liquidGlass && liquidGlassSupported) {
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.BlurOn,
+                    title = stringResource(R.string.liquid_glass_blur),
+                    subtitle = stringResource(R.string.liquid_glass_blur_subtitle),
+                    trailing = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = stringResource(R.string.liquid_glass_blur_value, liquidGlassBlurDp.roundToInt()),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (liquidGlassBlurDp != AppSettings.DEFAULT_LIQUID_GLASS_BLUR_DP) {
+                                Spacer(Modifier.width(4.dp))
+                                IconButton(
+                                    onClick = { AppSettings.setLiquidGlassBlurDp(AppSettings.DEFAULT_LIQUID_GLASS_BLUR_DP) },
+                                    modifier = Modifier.size(32.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.RestartAlt,
+                                        contentDescription = stringResource(R.string.reset_to_default),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
+                        }
+                    },
+                )
+                Slider(
+                    value = liquidGlassBlurDp,
+                    onValueChange = AppSettings::setLiquidGlassBlurDp,
+                    valueRange = AppSettings.MIN_LIQUID_GLASS_BLUR_DP..AppSettings.MAX_LIQUID_GLASS_BLUR_DP,
+                    steps = 21,
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Opacity,
+                    title = stringResource(R.string.liquid_glass_opacity),
+                    subtitle = stringResource(R.string.liquid_glass_opacity_subtitle),
+                    trailing = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = stringResource(R.string.liquid_glass_opacity_value, (liquidGlassOpacity * 100).roundToInt()),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (liquidGlassOpacity != AppSettings.DEFAULT_LIQUID_GLASS_OPACITY) {
+                                Spacer(Modifier.width(4.dp))
+                                IconButton(
+                                    onClick = { AppSettings.setLiquidGlassOpacity(AppSettings.DEFAULT_LIQUID_GLASS_OPACITY) },
+                                    modifier = Modifier.size(32.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.RestartAlt,
+                                        contentDescription = stringResource(R.string.reset_to_default),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
+                        }
+                    },
+                )
+                Slider(
+                    value = liquidGlassOpacity,
+                    onValueChange = AppSettings::setLiquidGlassOpacity,
+                    valueRange = AppSettings.MIN_LIQUID_GLASS_OPACITY..AppSettings.MAX_LIQUID_GLASS_OPACITY,
+                    steps = 11,
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                )
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Speed,
+                    title = stringResource(R.string.pill_motion_style),
+                    subtitle = stringResource(R.string.pill_motion_style_subtitle),
+                )
+                SegmentedControl(
+                    options = PillMotionStyle.entries.map { it.localizedLabel() },
+                    selectedIndex = PillMotionStyle.entries.indexOf(pillMotionStyle),
+                    onSelect = { AppSettings.setPillMotionStyle(PillMotionStyle.entries[it]) },
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                )
+                val hasCustomLiquidGlassParams = liquidGlassBlurDp != AppSettings.DEFAULT_LIQUID_GLASS_BLUR_DP ||
+                    liquidGlassOpacity != AppSettings.DEFAULT_LIQUID_GLASS_OPACITY ||
+                    pillMotionStyle != PillMotionStyle.DEFAULT
+                AnimatedVisibility(visible = hasCustomLiquidGlassParams) {
+                    Column {
+                        RowDivider()
+                        SettingsRow(
+                            icon = Icons.Rounded.RestartAlt,
+                            title = stringResource(R.string.liquid_glass_reset),
+                            subtitle = stringResource(R.string.liquid_glass_reset_subtitle),
+                            onClick = { AppSettings.resetLiquidGlassParams() },
+                        )
+                    }
+                }
+            }
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.ViewStream,
@@ -2386,6 +2529,25 @@ fun SettingsScreen(
                     },
                     onClick = { AppSettings.setLockBottomBarExpanded(!lockBottomBarExpanded) },
                 )
+                if (lockBottomBarExpanded) {
+                    RowDivider()
+                    SettingsRow(
+                        icon = Icons.Rounded.ViewStream,
+                        title = stringResource(R.string.integrate_standalone_tab),
+                        subtitle = stringResource(R.string.integrate_standalone_tab_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = integrateStandaloneTab,
+                                onCheckedChange = AppSettings::setIntegrateStandaloneTab,
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setIntegrateStandaloneTab(!integrateStandaloneTab) },
+                    )
+                }
             }
             RowDivider()
             SettingsRow(
@@ -3999,6 +4161,15 @@ private fun ThemeMode.localizedLabel(): String = stringResource(
         ThemeMode.DARK -> R.string.dark
         ThemeMode.AMOLED -> R.string.theme_amoled
         ThemeMode.ARTWORK -> R.string.theme_match_artwork
+    },
+)
+
+@Composable
+private fun PillMotionStyle.localizedLabel(): String = stringResource(
+    when (this) {
+        PillMotionStyle.FAST -> R.string.pill_motion_fast
+        PillMotionStyle.FLUID -> R.string.pill_motion_fluid
+        PillMotionStyle.RELAXED -> R.string.pill_motion_relaxed
     },
 )
 

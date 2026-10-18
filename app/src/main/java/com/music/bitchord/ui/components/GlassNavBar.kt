@@ -112,11 +112,35 @@ fun GlassNavBar(
     val isDark = isSystemInDarkTheme()
     val borderColor = if (isDark) GLASS_EDGE_COLOR else Color.Black.copy(alpha = 0.08f)
     val hideNavigationBarLabels by AppSettings.hideNavigationBarLabels.collectAsStateWithLifecycle()
+    val lockBottomBarExpanded by AppSettings.lockBottomBarExpanded.collectAsStateWithLifecycle()
+    val integrateStandaloneTab by AppSettings.integrateStandaloneTab.collectAsStateWithLifecycle()
+    val shouldIntegrate = lockBottomBarExpanded && integrateStandaloneTab
+    val themeMode by AppSettings.themeMode.collectAsStateWithLifecycle()
+    val isArtworkTheme = themeMode == com.music.bitchord.data.settings.ThemeMode.ARTWORK
+    val liquidGlassOpacity by AppSettings.liquidGlassOpacity.collectAsStateWithLifecycle()
 
-    val contentColor = if (useGlass) glassContentColor() else MaterialTheme.colorScheme.onSurface
-    val selectedColor = if (useGlass) contentColor else MaterialTheme.colorScheme.primary
-    val unselectedColor = if (useGlass) contentColor.copy(alpha = 0.65f) else MaterialTheme.colorScheme.onSurfaceVariant
-    val indicatorColor = if (useGlass) glassIndicatorColor().copy(alpha = 0.5f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+    val contentColor = if (useGlass) {
+        if (isDark || isArtworkTheme) Color.White else glassContentColor()
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val artworkColor = MaterialTheme.colorScheme.primary
+    val selectedColor = if (useGlass) {
+        if (isArtworkTheme) artworkColor else contentColor
+    } else {
+        artworkColor
+    }
+    val unselectedColor = if (useGlass) {
+        Color.White.copy(alpha = 0.70f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val milkyPillAlpha = (0.14f + liquidGlassOpacity * 0.25f).coerceIn(0.15f, 0.40f)
+    val indicatorColor = when {
+        !useGlass -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+        isArtworkTheme || isDark -> Color.White.copy(alpha = milkyPillAlpha)
+        else -> Color.Black.copy(alpha = 0.12f)
+    }
     val haptics = rememberHaptics()
 
     val currentOnTabSelected by rememberUpdatedState(onTabSelected)
@@ -190,6 +214,10 @@ fun GlassNavBar(
             backgroundColor = Color.Transparent,
             accessoryBackgroundColor = Color.Transparent,
             indicatorColor = indicatorColor,
+            selectedContentColor = selectedColor,
+            artworkColor = artworkColor,
+            unselectedContentColor = unselectedColor,
+            isArtworkTheme = isArtworkTheme && useGlass,
         ),
         // Flat, because the surface is not. Every surface here already draws its
         // own edge border and shadow pass.
@@ -205,34 +233,37 @@ fun GlassNavBar(
             tabBarContentPadding = PaddingValues(PILL_INSET),
             tabExpandedContentPadding = PaddingValues(vertical = TAB_VERTICAL_PADDING),
         ),
-        contentKey = remember(selectedIndex, tabs, contentColor, hideNavigationBarLabels) {
-            listOf(selectedIndex, tabs, contentColor, hideNavigationBarLabels)
+        contentKey = remember(selectedIndex, tabs, contentColor, artworkColor, isArtworkTheme, hideNavigationBarLabels, shouldIntegrate) {
+            listOf(selectedIndex, tabs, contentColor, artworkColor, isArtworkTheme, hideNavigationBarLabels, shouldIntegrate)
         },
     ) {
         tabs.forEachIndexed { index, tab ->
             val isSelected = index == selectedIndex
-            val tint = if (isSelected) selectedColor else unselectedColor
+            val defaultTint = if (isSelected) selectedColor else unselectedColor
             val onClick = {
                 if (!isSelected) haptics.play(Haptic.Select)
                 currentOnTabSelected(index)
             }
-            if (index == standaloneIndex) {
+            if (index == standaloneIndex && !shouldIntegrate) {
                 standaloneTab(
                     key = index,
                     icon = {
                         Icon(
                             imageVector = tab.icon,
                             contentDescription = tab.label,
-                            tint = tint,
+                            tint = defaultTint,
                             modifier = Modifier.size(25.dp),
                         )
                     },
                     onClick = onClick,
+                    indication = null,
                 )
             } else {
                 tab(
                     key = index,
                     icon = {
+                        val currentTint = androidx.compose.material3.LocalContentColor.current
+                        val tint = if (currentTint.alpha > 0f) currentTint else defaultTint
                         Icon(
                             imageVector = tab.icon,
                             contentDescription = tab.label,
@@ -242,6 +273,8 @@ fun GlassNavBar(
                     },
                     title = {
                         if (!hideNavigationBarLabels) {
+                            val currentTint = androidx.compose.material3.LocalContentColor.current
+                            val tint = if (currentTint.alpha > 0f) currentTint else defaultTint
                             Text(
                                 text = tab.label,
                                 style = MaterialTheme.typography.labelSmall,
@@ -253,6 +286,7 @@ fun GlassNavBar(
                         }
                     },
                     onClick = onClick,
+                    indication = null,
                 )
             }
         }

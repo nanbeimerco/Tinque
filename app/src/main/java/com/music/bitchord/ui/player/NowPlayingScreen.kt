@@ -939,7 +939,11 @@ fun NowPlayingScreen(
     val dockMoving by remember { derivedStateOf { docking() } }
     // The rest of the player gets out of the way a little ahead of the artwork,
     // so the cover lands on the bar rather than on a ghost of the player.
-    val dockFade: () -> Float = { ((dockT() - DOCK_FADE_LEAD) / (1f - DOCK_FADE_LEAD)).coerceIn(0f, 1f) }
+    // Quadratic easing keeps the start natural and melts the background away smoothly.
+    val dockFade: () -> Float = {
+        val raw = ((dockT() - DOCK_FADE_LEAD) / (1f - DOCK_FADE_LEAD)).coerceIn(0f, 1f)
+        raw * raw
+    }
     // The sleeve, drawn over the faded player while it docks — see the sleeve.
     val sleeveLayer = rememberGraphicsLayer()
 
@@ -1602,18 +1606,28 @@ fun NowPlayingScreen(
             }
             .then(dockHost),
     ) {
+        val backdropModifier = Modifier.graphicsLayer {
+            if (docking()) {
+                val raw = ((dockT() - 0.20f) / 0.80f).coerceIn(0f, 1f)
+                alpha = raw * raw
+            }
+        }
         if (legacyMesh) {
-            MeshGradientBackground(
-                palette = rememberArtworkColors(backdropArtworkUrl, canvasFrame),
-                trackKey = song.videoId,
-                blurRadius = artworkBackdropBlurDp.dp,
-            )
+            Box(backdropModifier) {
+                MeshGradientBackground(
+                    palette = rememberArtworkColors(backdropArtworkUrl, canvasFrame),
+                    trackKey = song.videoId,
+                    blurRadius = artworkBackdropBlurDp.dp,
+                )
+            }
         } else {
-            ArtworkMeshBackdrop(
-                mesh = artMesh,
-                seam = if (heroMode) heroHeight else 0.dp,
-                blurRadius = artworkBackdropBlurDp.dp,
-            )
+            Box(backdropModifier) {
+                ArtworkMeshBackdrop(
+                    mesh = artMesh,
+                    seam = if (heroMode) heroHeight else 0.dp,
+                    blurRadius = artworkBackdropBlurDp.dp,
+                )
+            }
         }
 
         if (heroHeight > 0.dp) {

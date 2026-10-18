@@ -2834,7 +2834,7 @@ private fun BitChordApp(
                             if (open > 0f && !(open >= 1f && playerDock.attached)) {
                                 val top = playerSheetMotion.position().takeUnless { it.isNaN() } ?: 0f
                                 drawRect(
-                                    color = Color.Black.copy(alpha = PLAYER_SCRIM_ALPHA * open),
+                                    color = Color.Black.copy(alpha = PLAYER_SCRIM_ALPHA * (open * open)),
                                     topLeft = Offset(0f, -top.toInt().toFloat()),
                                     size = Size(size.width, size.height),
                                 )

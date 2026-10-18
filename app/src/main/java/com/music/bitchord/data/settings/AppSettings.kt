@@ -21,6 +21,16 @@ import java.util.UUID
 /** Maximum blur radius for the player-only artwork backdrop, in dp. */
 const val MAX_PLAYER_ARTWORK_BLUR_DP = 128f
 
+/** Liquid Glass frosted glass default, minimum, and maximum blur radius in dp. */
+const val DEFAULT_LIQUID_GLASS_BLUR_DP = 8f
+const val MIN_LIQUID_GLASS_BLUR_DP = 2f
+const val MAX_LIQUID_GLASS_BLUR_DP = 24f
+
+/** Liquid Glass surface opacity default, minimum, and maximum (0.0 .. 1.0). */
+const val DEFAULT_LIQUID_GLASS_OPACITY = 0.40f
+const val MIN_LIQUID_GLASS_OPACITY = 0.10f
+const val MAX_LIQUID_GLASS_OPACITY = 0.70f
+
 /**
  * Stream bitrate ceiling on the YouTube fallback path — MEDIUM, HIGH and
  * LOSSLESS all mean "whatever the best available Opus format is" there; what
@@ -145,6 +155,16 @@ enum class DownloadQuality(
 
 enum class ThemeMode(val label: String) {
     SYSTEM("System"), LIGHT("Light"), DARK("Dark"), AMOLED("AMOLED black"), ARTWORK("Album art")
+}
+
+enum class PillMotionStyle {
+    FAST,
+    FLUID,
+    RELAXED;
+
+    companion object {
+        val DEFAULT = FLUID
+    }
 }
 
 
@@ -510,11 +530,23 @@ object AppSettings {
     /** Real backdrop-sampled glass (blur, lens refraction) on the floating nav bar, Android 12+ only. */
     val liquidGlass = MutableStateFlow(false)
 
+    /** Frosted glass blur radius in dp for the Liquid Glass navigation bar. */
+    val liquidGlassBlurDp = MutableStateFlow(DEFAULT_LIQUID_GLASS_BLUR_DP)
+
+    /** Surface tint opacity (0.10f .. 0.70f) for the Liquid Glass navigation bar. */
+    val liquidGlassOpacity = MutableStateFlow(DEFAULT_LIQUID_GLASS_OPACITY)
+
+    /** Pill motion animation speed and fluid styling preset. */
+    val pillMotionStyle = MutableStateFlow(PillMotionStyle.DEFAULT)
+
     /** When true, uses the classic stacked mini player + bottom bar instead of the collapsible floating bar. */
     val classicNavBar = MutableStateFlow(false)
 
     /** When true, keeps the floating bottom bar expanded and prevents collapsing on scroll. */
     val lockBottomBarExpanded = MutableStateFlow(false)
+
+    /** When true and lockBottomBarExpanded is true, integrates the standalone tab (search) into the main tab group as a single bar. */
+    val integrateStandaloneTab = MutableStateFlow(false)
 
     /** When true, hides labels in the bottom navigation bar and displays only icons. */
     val hideNavigationBarLabels = MutableStateFlow(false)
@@ -1035,8 +1067,20 @@ object AppSettings {
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
         liquidGlass.value = prefs.getBoolean(KEY_LIQUID_GLASS, false)
+        liquidGlassBlurDp.value = prefs.getFloat(KEY_LIQUID_GLASS_BLUR_DP, DEFAULT_LIQUID_GLASS_BLUR_DP)
+            .coerceIn(MIN_LIQUID_GLASS_BLUR_DP, MAX_LIQUID_GLASS_BLUR_DP)
+        liquidGlassOpacity.value = prefs.getFloat(KEY_LIQUID_GLASS_OPACITY, DEFAULT_LIQUID_GLASS_OPACITY)
+            .coerceIn(MIN_LIQUID_GLASS_OPACITY, MAX_LIQUID_GLASS_OPACITY)
+        pillMotionStyle.value = prefs.getString(KEY_PILL_MOTION_STYLE, null)?.let { name ->
+            try {
+                PillMotionStyle.valueOf(name)
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+        } ?: PillMotionStyle.DEFAULT
         classicNavBar.value = prefs.getBoolean(KEY_CLASSIC_NAV_BAR, false)
         lockBottomBarExpanded.value = prefs.getBoolean(KEY_LOCK_BOTTOM_BAR_EXPANDED, false)
+        integrateStandaloneTab.value = prefs.getBoolean(KEY_INTEGRATE_STANDALONE_TAB, false)
         hideNavigationBarLabels.value = prefs.getBoolean(KEY_HIDE_NAVIGATION_BAR_LABELS, false)
         visibleLocalLibraryTabs.value = readVisibleLocalLibraryTabs()
         localLibraryTabOrder.value = readLocalLibraryTabOrder()
@@ -1647,6 +1691,29 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_LIQUID_GLASS, value).apply()
     }
 
+    fun setLiquidGlassBlurDp(value: Float) {
+        val normalized = value.coerceIn(MIN_LIQUID_GLASS_BLUR_DP, MAX_LIQUID_GLASS_BLUR_DP)
+        liquidGlassBlurDp.value = normalized
+        prefs.edit().putFloat(KEY_LIQUID_GLASS_BLUR_DP, normalized).apply()
+    }
+
+    fun setLiquidGlassOpacity(value: Float) {
+        val normalized = value.coerceIn(MIN_LIQUID_GLASS_OPACITY, MAX_LIQUID_GLASS_OPACITY)
+        liquidGlassOpacity.value = normalized
+        prefs.edit().putFloat(KEY_LIQUID_GLASS_OPACITY, normalized).apply()
+    }
+
+    fun setPillMotionStyle(value: PillMotionStyle) {
+        pillMotionStyle.value = value
+        prefs.edit().putString(KEY_PILL_MOTION_STYLE, value.name).apply()
+    }
+
+    fun resetLiquidGlassParams() {
+        setLiquidGlassBlurDp(DEFAULT_LIQUID_GLASS_BLUR_DP)
+        setLiquidGlassOpacity(DEFAULT_LIQUID_GLASS_OPACITY)
+        setPillMotionStyle(PillMotionStyle.DEFAULT)
+    }
+
     fun setClassicNavBar(value: Boolean) {
         classicNavBar.value = value
         prefs.edit().putBoolean(KEY_CLASSIC_NAV_BAR, value).apply()
@@ -1655,6 +1722,11 @@ object AppSettings {
     fun setLockBottomBarExpanded(value: Boolean) {
         lockBottomBarExpanded.value = value
         prefs.edit().putBoolean(KEY_LOCK_BOTTOM_BAR_EXPANDED, value).apply()
+    }
+
+    fun setIntegrateStandaloneTab(value: Boolean) {
+        integrateStandaloneTab.value = value
+        prefs.edit().putBoolean(KEY_INTEGRATE_STANDALONE_TAB, value).apply()
     }
 
     fun setHideNavigationBarLabels(value: Boolean) {
@@ -2794,6 +2866,14 @@ object AppSettings {
     const val DEFAULT_CACHE_LIMIT_BYTES = 512L * 1024 * 1024
     const val MAX_CACHE_LIMIT_BYTES = 10L * 1024 * 1024 * 1024
 
+    const val DEFAULT_LIQUID_GLASS_BLUR_DP = 8f
+    const val MIN_LIQUID_GLASS_BLUR_DP = 2f
+    const val MAX_LIQUID_GLASS_BLUR_DP = 24f
+
+    const val DEFAULT_LIQUID_GLASS_OPACITY = 0.40f
+    const val MIN_LIQUID_GLASS_OPACITY = 0.10f
+    const val MAX_LIQUID_GLASS_OPACITY = 0.70f
+
     private const val DEFAULT_PERFORMANCE_REFRESH_RATE = 120
     private const val MAX_LYRICS_TRANSPORT_CONTROL_SIZE = 64f
     const val MAX_CROSSFADE_SECONDS = 12
@@ -2855,8 +2935,12 @@ object AppSettings {
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"
     private const val KEY_LIQUID_GLASS = "liquid_glass"
+    private const val KEY_LIQUID_GLASS_BLUR_DP = "liquid_glass_blur_dp"
+    private const val KEY_LIQUID_GLASS_OPACITY = "liquid_glass_opacity"
+    private const val KEY_PILL_MOTION_STYLE = "pill_motion_style"
     private const val KEY_CLASSIC_NAV_BAR = "classic_nav_bar"
     private const val KEY_LOCK_BOTTOM_BAR_EXPANDED = "lock_bottom_bar_expanded"
+    private const val KEY_INTEGRATE_STANDALONE_TAB = "integrate_standalone_tab_when_locked"
     private const val KEY_HIDE_NAVIGATION_BAR_LABELS = "hide_navigation_bar_labels"
     private const val KEY_VISIBLE_MAIN_NAVIGATION_TABS = "visible_main_navigation_tabs"
     private const val KEY_MAIN_NAVIGATION_TAB_ORDER = "main_navigation_tab_order"

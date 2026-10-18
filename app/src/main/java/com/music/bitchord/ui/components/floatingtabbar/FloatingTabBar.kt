@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalSharedTransitionApi::class)
+@file:OptIn(ExperimentalSharedTransitionApi::class, ExperimentalFoundationApi::class)
 
 /*
  * FloatingTabBar v1.0.1 by Elyes Mansour
@@ -55,10 +55,14 @@ import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Indication
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -93,6 +97,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -100,6 +105,7 @@ import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
@@ -120,6 +126,8 @@ import com.music.bitchord.ui.components.backdrop.backdrops.rememberLayerBackdrop
 import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Hoisted so the default is one stable lambda rather than a new one per call. */
@@ -506,31 +514,41 @@ private fun SharedTransitionScope.InlineTab(
             )
             .clip(shapes.tabBarShape)
             .then(tabBarContentModifier())
-            .clickable(
+            .combinedClickable(
                 onClick = {
                     onInlineTabClick()
                     inlineTab.onClick()
                 },
-                indication = inlineTab.indication?.invoke(),
+                onLongClick = onInlineTabClick,
+                indication = null,
                 interactionSource = remember { MutableInteractionSource() }
             )
             .padding(sizes.tabInlineContentPadding)
     ) {
-        Tab(
-            icon = {
-                Box(
-                    Modifier.sharedElement(
-                        sharedContentState = rememberSharedContentState("tab#${inlineTab.key}-icon"),
-                        animatedVisibilityScope = animatedVisibilityScope,
-                        zIndexInOverlay = 1f
-                    )
-                ) {
-                    inlineTab.icon()
-                }
-            },
-            title = { inlineTab.title() },
-            isInline = true
-        )
+        val inlineColor = if (colors.selectedContentColor != Color.Unspecified) {
+            colors.selectedContentColor
+        } else if (colors.isArtworkTheme && colors.artworkColor != Color.Unspecified) {
+            colors.artworkColor
+        } else {
+            colors.unselectedContentColor
+        }
+        CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides inlineColor) {
+            Tab(
+                icon = {
+                    Box(
+                        Modifier.sharedElement(
+                            sharedContentState = rememberSharedContentState("tab#${inlineTab.key}-icon"),
+                            animatedVisibilityScope = animatedVisibilityScope,
+                            zIndexInOverlay = 1f
+                        )
+                    ) {
+                        inlineTab.icon()
+                    }
+                },
+                title = { inlineTab.title() },
+                isInline = true
+            )
+        }
     }
 }
 
@@ -567,7 +585,7 @@ private fun SharedTransitionScope.InlineStandaloneTab(
             .then(tabBarContentModifier())
             .clickable(
                 onClick = standaloneTab.onClick,
-                indication = standaloneTab.indication?.invoke(),
+                indication = null,
                 interactionSource = remember { MutableInteractionSource() }
             )
     )
@@ -755,11 +773,12 @@ private fun SharedTransitionScope.ExpandedTabs(
     }
     val haptics = rememberHaptics()
 
+    val pillMotionStyle by AppSettings.pillMotionStyle.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
     val pill = remember { GlassPillMotion(coroutineScope, selectedTabIndex.coerceAtLeast(0)) }
     pill.reduceMotion = reduceAnimation
-    // The lens samples the recorded page, and "reduce dynamic blur" stops that
-    // recording. There the flat pill carries the whole motion on its own.
+    pill.motionStyle = pillMotionStyle
+    // The lens samples the recorded page, and "reduce dynamic blur" stops that recording.
     val glassPill = isGlassSupported() && !reduceDynamicBlur
     val barGlass = rememberLayerBackdrop()
     val tabRow = rememberLayerBackdrop()
@@ -811,7 +830,7 @@ private fun SharedTransitionScope.ExpandedTabs(
             // Back from the standalone tab there is no tab to travel from.
             if (lastSelectedTabIndex < 0) {
                 pill.snapTo(selectedTabIndex)
-            } else {
+            } else if (!pill.isDragging) {
                 pill.animateTo(selectedTabIndex)
             }
         }
@@ -848,14 +867,15 @@ private fun SharedTransitionScope.ExpandedTabs(
                     .padding(contentPadding)
                     .animateContentSize()
             ) {
-                if (showPill && (!glassPill || pill.isFlat)) {
+                if (showPill && (pill.isFlat || !glassPill)) {
                     FlatSelectionPill(
                         color = colors.indicatorColor,
+                        isLifted = !pill.isFlat,
                         modifier = Modifier
                             .matchParentSize()
                             .pillPlacement(
                                 center = { pillCenterInRow(pill.position) },
-                                size = { pill.liveSize(restSize, liftedSize) },
+                                size = { restSize },
                             ),
                     )
                 }
@@ -866,56 +886,97 @@ private fun SharedTransitionScope.ExpandedTabs(
                         .fillMaxWidth()
                         .onSizeChanged { rowSize = it }
                         .layerBackdrop(tabRow)
-                        .pointerInput(tabCount, tabStepPx, currentSelectedTabIndex, isRtl) {
-                            if (currentSelectedTabIndex < 0 || tabStepPx <= 0f) return@pointerInput
+                        .pointerInput(tabCount, tabStepPx, isRtl) {
+                            if (tabCount <= 0 || tabStepPx <= 0f) return@pointerInput
 
-                            // In tab order, whichever way the row runs.
-                            val direction = if (isRtl) -1f else 1f
-                            var totalDrag = 0f
-                            detectHorizontalDragGestures(
-                                onDragStart = {
-                                    totalDrag = 0f
-                                    pill.startDrag()
-                                },
-                                onDragCancel = { pill.release(currentSelectedTabIndex) },
-                                onDragEnd = {
-                                    val ratio = totalDrag / tabStepPx
-                                    val shift = when {
-                                        ratio > 0.35f -> maxOf(1, ratio.roundToInt())
-                                        ratio < -0.35f -> minOf(-1, ratio.roundToInt())
-                                        else -> 0
-                                    }
-                                    val newIndex = (currentSelectedTabIndex + shift)
-                                        .coerceIn(0, scope.tabs.lastIndex)
-                                    pill.release(newIndex)
-                                    if (newIndex != currentSelectedTabIndex) {
-                                        scope.tabs[newIndex].onClick()
-                                    }
-                                },
-                                onHorizontalDrag = { _, delta ->
-                                    totalDrag += delta * direction
-                                    val dragOffset = when {
-                                        totalDrag > 0 && currentSelectedTabIndex == scope.tabs.lastIndex ->
-                                            totalDrag * 0.25f
-                                        totalDrag < 0 && currentSelectedTabIndex == 0 ->
-                                            totalDrag * 0.25f
-                                        else -> totalDrag
-                                    }
-                                    pill.dragTo(currentSelectedTabIndex + dragOffset / tabStepPx)
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val downX = down.position.x
+                                val touchedTab = if (isRtl) {
+                                    ((rowSize.width - downX - tabWidthPx / 2f) / tabStepPx).roundToInt()
+                                } else {
+                                    ((downX - tabWidthPx / 2f) / tabStepPx).roundToInt()
+                                }.coerceIn(0, scope.tabs.lastIndex)
 
-                                    val approximateTab =
-                                        (currentSelectedTabIndex + dragOffset / tabStepPx)
-                                            .coerceIn(0f, scope.tabs.lastIndex.toFloat())
-                                            .roundToInt()
-                                    if (approximateTab != lastHapticTab) {
-                                        haptics.play(Haptic.Tick)
-                                        lastHapticTab = approximateTab
+                                var activeTab = touchedTab
+                                val tabChanged = activeTab != currentSelectedTabIndex
+                                if (tabChanged) {
+                                    haptics.play(Haptic.Select)
+                                    scope.tabs[activeTab].onClick()
+                                } else {
+                                    haptics.play(Haptic.Tick)
+                                }
+
+                                if (currentSelectedTabIndex < 0) {
+                                    pill.snapTo(activeTab)
+                                } else {
+                                    pill.animateTo(activeTab)
+                                }
+
+                                val pointerId = down.id
+                                val touchSlop = viewConfiguration.touchSlop
+                                var isHolding = false
+
+                                while (true) {
+                                    val event = withTimeoutOrNull(180L) {
+                                        awaitPointerEvent()
+                                    }
+
+                                    if (event == null) {
+                                        if (!isHolding) {
+                                            isHolding = true
+                                            pill.startDrag()
+                                            val currentDragPos = if (isRtl) {
+                                                ((rowSize.width - downX - tabWidthPx / 2f) / tabStepPx)
+                                            } else {
+                                                ((downX - tabWidthPx / 2f) / tabStepPx)
+                                            }.coerceIn(0f, scope.tabs.lastIndex.toFloat())
+                                            pill.dragTo(currentDragPos)
+                                        }
+                                        continue
+                                    }
+
+                                    val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+
+                                    if (!change.pressed) {
+                                        if (isHolding) {
+                                            pill.release(activeTab)
+                                            if (activeTab != currentSelectedTabIndex) {
+                                                scope.tabs[activeTab].onClick()
+                                            }
+                                        }
+                                        break
+                                    }
+
+                                    val currentX = change.position.x
+                                    val deltaX = currentX - downX
+
+                                    if (!isHolding && abs(deltaX) > touchSlop) {
+                                        isHolding = true
+                                        pill.startDrag()
+                                    }
+
+                                    if (isHolding) {
+                                        val currentDragPos = if (isRtl) {
+                                            ((rowSize.width - currentX - tabWidthPx / 2f) / tabStepPx)
+                                        } else {
+                                            ((currentX - tabWidthPx / 2f) / tabStepPx)
+                                        }.coerceIn(0f, scope.tabs.lastIndex.toFloat())
+
+                                        pill.dragTo(currentDragPos)
+
+                                        val approximateTab = currentDragPos.roundToInt().coerceIn(0, scope.tabs.lastIndex)
+                                        if (approximateTab != activeTab) {
+                                            activeTab = approximateTab
+                                            haptics.play(Haptic.Tick)
+                                        }
+                                        change.consume()
                                     }
                                 }
-                            )
+                            }
                         }
                 ) {
-                    scope.tabs.forEach { tab ->
+                    scope.tabs.forEachIndexed { tabIndex, tab ->
                         val isSelected = tab.key == selectedTabKey
                         val iconScale by animateFloatAsState(
                             targetValue = if (isSelected) 1.08f else 1f,
@@ -941,7 +1002,84 @@ private fun SharedTransitionScope.ExpandedTabs(
                                         scaleY = iconScale
                                     }
                                 ) {
-                                    tab.icon()
+                                    val hasArtwork = showPill && colors.isArtworkTheme && colors.artworkColor != Color.Unspecified
+
+                                    Box(
+                                        modifier = Modifier.drawWithContent {
+                                            if (hasArtwork) {
+                                                val pillPos = pill.position
+                                                val pillW = if (!pill.isFlat) pill.liveSize(restSize, liftedSize).width else restSize.width
+                                                val pillCenterX = pillCenterInRow(pillPos).x
+                                                val pillLeft = pillCenterX - pillW / 2f
+                                                val pillRight = pillCenterX + pillW / 2f
+
+                                                val tabCenterX = if (isRtl) {
+                                                    rowSize.width - (tabIndex * tabStepPx + tabWidthPx / 2f)
+                                                } else {
+                                                    tabIndex * tabStepPx + tabWidthPx / 2f
+                                                }
+
+                                                val iconLeft = tabCenterX - size.width / 2f
+                                                val clipStart = (pillLeft - iconLeft).coerceAtLeast(0f)
+                                                val clipEnd = (pillRight - iconLeft).coerceAtMost(size.width)
+
+                                                if (clipEnd > clipStart) {
+                                                    if (clipStart > 0f) {
+                                                        clipRect(left = 0f, top = 0f, right = clipStart, bottom = size.height) {
+                                                            this@drawWithContent.drawContent()
+                                                        }
+                                                    }
+                                                    if (clipEnd < size.width) {
+                                                        clipRect(left = clipEnd, top = 0f, right = size.width, bottom = size.height) {
+                                                            this@drawWithContent.drawContent()
+                                                        }
+                                                    }
+                                                } else {
+                                                    this@drawWithContent.drawContent()
+                                                }
+                                            } else {
+                                                this@drawWithContent.drawContent()
+                                            }
+                                        }
+                                    ) {
+                                        CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.unselectedContentColor) {
+                                            tab.icon()
+                                        }
+                                    }
+
+                                    if (hasArtwork) {
+                                        Box(
+                                            modifier = Modifier
+                                                .matchParentSize()
+                                                .drawWithContent {
+                                                    val pillPos = pill.position
+                                                    val pillW = if (!pill.isFlat) pill.liveSize(restSize, liftedSize).width else restSize.width
+                                                    val pillCenterX = pillCenterInRow(pillPos).x
+                                                    val pillLeft = pillCenterX - pillW / 2f
+                                                    val pillRight = pillCenterX + pillW / 2f
+
+                                                    val tabCenterX = if (isRtl) {
+                                                        rowSize.width - (tabIndex * tabStepPx + tabWidthPx / 2f)
+                                                    } else {
+                                                        tabIndex * tabStepPx + tabWidthPx / 2f
+                                                    }
+
+                                                    val iconLeft = tabCenterX - size.width / 2f
+                                                    val clipStart = (pillLeft - iconLeft).coerceAtLeast(0f)
+                                                    val clipEnd = (pillRight - iconLeft).coerceAtMost(size.width)
+
+                                                    if (clipEnd > clipStart) {
+                                                        clipRect(left = clipStart, top = 0f, right = clipEnd, bottom = size.height) {
+                                                            this@drawWithContent.drawContent()
+                                                        }
+                                                    }
+                                                }
+                                        ) {
+                                            CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.artworkColor) {
+                                                tab.icon()
+                                            }
+                                        }
+                                    }
                                 }
                             },
                             title = {
@@ -951,22 +1089,91 @@ private fun SharedTransitionScope.ExpandedTabs(
                                         animatedVisibilityScope = animatedVisibilityScope
                                     )
                                 ) {
-                                    tab.title()
+                                    val hasArtwork = showPill && colors.isArtworkTheme && colors.artworkColor != Color.Unspecified
+
+                                    Box(
+                                        modifier = Modifier.drawWithContent {
+                                            if (hasArtwork) {
+                                                val pillPos = pill.position
+                                                val pillW = if (!pill.isFlat) pill.liveSize(restSize, liftedSize).width else restSize.width
+                                                val pillCenterX = pillCenterInRow(pillPos).x
+                                                val pillLeft = pillCenterX - pillW / 2f
+                                                val pillRight = pillCenterX + pillW / 2f
+
+                                                val tabCenterX = if (isRtl) {
+                                                    rowSize.width - (tabIndex * tabStepPx + tabWidthPx / 2f)
+                                                } else {
+                                                    tabIndex * tabStepPx + tabWidthPx / 2f
+                                                }
+
+                                                val textLeft = tabCenterX - size.width / 2f
+                                                val clipStart = (pillLeft - textLeft).coerceAtLeast(0f)
+                                                val clipEnd = (pillRight - textLeft).coerceAtMost(size.width)
+
+                                                if (clipEnd > clipStart) {
+                                                    if (clipStart > 0f) {
+                                                        clipRect(left = 0f, top = 0f, right = clipStart, bottom = size.height) {
+                                                            this@drawWithContent.drawContent()
+                                                        }
+                                                    }
+                                                    if (clipEnd < size.width) {
+                                                        clipRect(left = clipEnd, top = 0f, right = size.width, bottom = size.height) {
+                                                            this@drawWithContent.drawContent()
+                                                        }
+                                                    }
+                                                } else {
+                                                    this@drawWithContent.drawContent()
+                                                }
+                                            } else {
+                                                this@drawWithContent.drawContent()
+                                            }
+                                        }
+                                    ) {
+                                        CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.unselectedContentColor) {
+                                            tab.title()
+                                        }
+                                    }
+
+                                    if (hasArtwork) {
+                                        Box(
+                                            modifier = Modifier
+                                                .matchParentSize()
+                                                .drawWithContent {
+                                                    val pillPos = pill.position
+                                                    val pillW = if (!pill.isFlat) pill.liveSize(restSize, liftedSize).width else restSize.width
+                                                    val pillCenterX = pillCenterInRow(pillPos).x
+                                                    val pillLeft = pillCenterX - pillW / 2f
+                                                    val pillRight = pillCenterX + pillW / 2f
+
+                                                    val tabCenterX = if (isRtl) {
+                                                        rowSize.width - (tabIndex * tabStepPx + tabWidthPx / 2f)
+                                                    } else {
+                                                        tabIndex * tabStepPx + tabWidthPx / 2f
+                                                    }
+
+                                                    val textLeft = tabCenterX - size.width / 2f
+                                                    val clipStart = (pillLeft - textLeft).coerceAtLeast(0f)
+                                                    val clipEnd = (pillRight - textLeft).coerceAtMost(size.width)
+
+                                                    if (clipEnd > clipStart) {
+                                                        clipRect(left = clipStart, top = 0f, right = clipEnd, bottom = size.height) {
+                                                            this@drawWithContent.drawContent()
+                                                        }
+                                                    }
+                                                }
+                                        ) {
+                                            CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.artworkColor) {
+                                                tab.title()
+                                            }
+                                        }
+                                    }
                                 }
                             },
                             isInline = false,
-                            // An equal share of the pill each, the way the plain nav bar
-                            // divides its own width, rather than each tab being as wide as
-                            // its label happens to be.
                             modifier = Modifier
                                 .weight(1f)
                                 .skipToLookaheadSize()
                                 .clip(shapes.tabShape)
-                                .clickable(
-                                    onClick = tab.onClick,
-                                    indication = tab.indication?.invoke(),
-                                    interactionSource = remember { MutableInteractionSource() }
-                                )
                                 .padding(sizes.tabExpandedContentPadding)
                         )
                     }
@@ -1024,7 +1231,7 @@ private fun SharedTransitionScope.ExpandedStandaloneTab(
             .then(tabBarContentModifier())
             .clickable(
                 onClick = standaloneTab.onClick,
-                indication = standaloneTab.indication?.invoke(),
+                indication = null,
                 interactionSource = remember { MutableInteractionSource() }
             )
     )
@@ -1214,6 +1421,10 @@ data class FloatingTabBarColors(
     val backgroundColor: Color,
     val accessoryBackgroundColor: Color,
     val indicatorColor: Color,
+    val selectedContentColor: Color = Color.Unspecified,
+    val artworkColor: Color = Color.Unspecified,
+    val unselectedContentColor: Color = Color.Unspecified,
+    val isArtworkTheme: Boolean = false,
 )
 
 /**
@@ -1264,10 +1475,18 @@ object FloatingTabBarDefaults {
         backgroundColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
         accessoryBackgroundColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
         indicatorColor: Color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+        selectedContentColor: Color = Color.Unspecified,
+        artworkColor: Color = Color.Unspecified,
+        unselectedContentColor: Color = Color.Unspecified,
+        isArtworkTheme: Boolean = false,
     ): FloatingTabBarColors = FloatingTabBarColors(
         backgroundColor = backgroundColor,
         accessoryBackgroundColor = accessoryBackgroundColor,
         indicatorColor = indicatorColor,
+        selectedContentColor = selectedContentColor,
+        artworkColor = artworkColor,
+        unselectedContentColor = unselectedContentColor,
+        isArtworkTheme = isArtworkTheme,
     )
 
     /**

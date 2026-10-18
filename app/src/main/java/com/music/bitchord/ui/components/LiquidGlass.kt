@@ -65,13 +65,11 @@ internal val LocalGlassExport = compositionLocalOf<LayerBackdrop?> { null }
  */
 fun isGlassSupported(sdkInt: Int = Build.VERSION.SDK_INT): Boolean = sdkInt >= Build.VERSION_CODES.S
 
-/** Apple-matched defaults (Echo's GlassEffectConfig()), fixed rather than user sliders. */
+/** Apple-matched defaults (Echo's GlassEffectConfig()). Blur and opacity are user sliders via AppSettings. */
 private const val VIBRANCY = 1f
-private const val BLUR_RADIUS_DP = 8f
 private const val LENS_HEIGHT = 0.5f
 private const val LENS_AMOUNT = 0.5f
 private const val LENS_MAX_DP = 48f
-private const val SURFACE_OPACITY = 0.4f
 
 /**
  * Resolution fraction the glass surface records and processes its backdrop at.
@@ -133,6 +131,7 @@ fun Modifier.lightweightLiquidGlass(
     fallbackColor: Color,
 ): Modifier {
     val useGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
+    val surfaceOpacity by AppSettings.liquidGlassOpacity.collectAsStateWithLifecycle()
     val glassTint = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
         Color(0xFFFAFAFA)
     } else {
@@ -142,7 +141,7 @@ fun Modifier.lightweightLiquidGlass(
 
     return clip(shape)
         .background(
-            color = if (useGlass) glassTint.copy(alpha = SURFACE_OPACITY) else fallbackColor,
+            color = if (useGlass) glassTint.copy(alpha = surfaceOpacity) else fallbackColor,
             shape = shape,
         )
         .then(
@@ -184,8 +183,10 @@ fun Modifier.liquidGlass(shape: CornerBasedShape): Modifier {
     }
     val backdrop = LocalAppBackdrop.current
     val exportedBackdrop = LocalGlassExport.current
+    val blurRadiusDp by AppSettings.liquidGlassBlurDp.collectAsStateWithLifecycle()
+    val surfaceOpacity by AppSettings.liquidGlassOpacity.collectAsStateWithLifecycle()
     val density = LocalDensity.current
-    val blurPx = with(density) { BLUR_RADIUS_DP.dp.toPx() } * GLASS_RESOLUTION_SCALE
+    val blurPx = with(density) { blurRadiusDp.dp.toPx() } * GLASS_RESOLUTION_SCALE
     val lensHeightPx = with(density) { (LENS_HEIGHT * LENS_MAX_DP).dp.toPx() } * GLASS_RESOLUTION_SCALE
     val lensAmountPx = with(density) { (LENS_AMOUNT * LENS_MAX_DP).dp.toPx() } * GLASS_RESOLUTION_SCALE
     val surfaceTintColor = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
@@ -208,7 +209,7 @@ fun Modifier.liquidGlass(shape: CornerBasedShape): Modifier {
             }
         }
     }
-    val tintedSurfaceColor = surfaceTintColor.copy(alpha = SURFACE_OPACITY)
+    val tintedSurfaceColor = surfaceTintColor.copy(alpha = surfaceOpacity)
     val onDrawSurfaceLambda = remember<DrawScope.() -> Unit>(tintedSurfaceColor) {
         {
             drawRect(color = tintedSurfaceColor, size = size)

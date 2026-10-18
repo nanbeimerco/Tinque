@@ -23,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
+import com.music.bitchord.data.settings.PillMotionStyle
 import com.music.bitchord.ui.components.LocalAppBackdrop
 import com.music.bitchord.ui.components.backdrop.Backdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.LayerBackdrop
@@ -123,6 +125,13 @@ internal class GlassPillMotion(
 
     /** "Reduce animation": every move lands at once, with no lift. */
     var reduceMotion: Boolean = false
+
+    /** Pill motion animation speed and fluid styling preset. */
+    var motionStyle: PillMotionStyle = PillMotionStyle.DEFAULT
+
+    /** Whether the pill is currently being held or dragged by a touch gesture. */
+    val isDragging: Boolean
+        get() = dragging
 
     private var travelPos = initialIndex.toDouble()
     private var travelVel = 0.0
@@ -254,7 +263,10 @@ internal class GlassPillMotion(
         // 1) Travel.
         var travelSettled = true
         if (travelActive) {
-            val r = springStep(travelPos, travelVel, travelTarget, dt, TRAVEL_STIFFNESS, TRAVEL_DAMPING)
+            val r = springStep(
+                travelPos, travelVel, travelTarget, dt,
+                travelStiffness(motionStyle), travelDamping(motionStyle)
+            )
             travelPos = r.first
             travelVel = r.second
             travelSettled = abs(travelPos - travelTarget) < 0.003 && abs(travelVel) < 0.05
@@ -278,10 +290,10 @@ internal class GlassPillMotion(
             lifted = false
         }
         val liftTarget = if (lifted) 1.0 else 0.0
-        stepLift(liftXPos, liftXVel, liftTarget, dt, LIFT_STIFFNESS, LIFT_DAMPING_X).let {
+        stepLift(liftXPos, liftXVel, liftTarget, dt, liftStiffness(motionStyle), liftDampingX(motionStyle)).let {
             liftXPos = it.first; liftXVel = it.second
         }
-        stepLift(liftYPos, liftYVel, liftTarget, dt, LIFT_STIFFNESS, LIFT_DAMPING_Y).let {
+        stepLift(liftYPos, liftYVel, liftTarget, dt, liftStiffness(motionStyle), liftDampingY(motionStyle)).let {
             liftYPos = it.first; liftYVel = it.second
         }
         stepLift(liftPos, liftVel, liftTarget, dt, MATERIAL_STIFFNESS, MATERIAL_DAMPING).let {
@@ -298,7 +310,7 @@ internal class GlassPillMotion(
         val frac = if (dragging) dragFollow else travelPos
         if (stepDp > 0f) {
             if (!squashModel.isTracking) squashModel.start()
-            squash = squashModel.track(frac * stepDp, now, dt)
+            squash = squashModel.track(frac * stepDp, now, dt, maxDeformation(motionStyle))
             if (travelSignEased == 0.0) {
                 travelSignEased = travelSign
             } else if (travelSignEased != travelSign) {
@@ -355,13 +367,41 @@ internal class GlassPillMotion(
     }
 
     private companion object {
-        const val TRAVEL_STIFFNESS = 280.0
-        const val TRAVEL_DAMPING = 31.4
+        fun travelStiffness(style: PillMotionStyle): Double = when (style) {
+            PillMotionStyle.FAST -> 280.0
+            PillMotionStyle.FLUID -> 160.0
+            PillMotionStyle.RELAXED -> 110.0
+        }
 
-        /** Damping ratio 0.6 across, 0.7 down, so width overshoots a shade further. */
-        const val LIFT_STIFFNESS = 250.0
-        const val LIFT_DAMPING_X = 19.0
-        const val LIFT_DAMPING_Y = 22.1
+        fun travelDamping(style: PillMotionStyle): Double = when (style) {
+            PillMotionStyle.FAST -> 31.4
+            PillMotionStyle.FLUID -> 20.0
+            PillMotionStyle.RELAXED -> 15.5
+        }
+
+        fun liftStiffness(style: PillMotionStyle): Double = when (style) {
+            PillMotionStyle.FAST -> 250.0
+            PillMotionStyle.FLUID -> 160.0
+            PillMotionStyle.RELAXED -> 110.0
+        }
+
+        fun liftDampingX(style: PillMotionStyle): Double = when (style) {
+            PillMotionStyle.FAST -> 19.0
+            PillMotionStyle.FLUID -> 15.0
+            PillMotionStyle.RELAXED -> 12.0
+        }
+
+        fun liftDampingY(style: PillMotionStyle): Double = when (style) {
+            PillMotionStyle.FAST -> 22.1
+            PillMotionStyle.FLUID -> 17.5
+            PillMotionStyle.RELAXED -> 14.0
+        }
+
+        fun maxDeformation(style: PillMotionStyle): Double = when (style) {
+            PillMotionStyle.FAST -> 0.12
+            PillMotionStyle.FLUID -> 0.16
+            PillMotionStyle.RELAXED -> 0.20
+        }
 
         /** Critically damped and four times as stiff: the glass is on long before the size settles. */
         const val MATERIAL_STIFFNESS = 1000.0
@@ -433,12 +473,12 @@ private class PillSquashModel {
         value = 0.0
     }
 
-    fun track(x: Double, now: Double, dt: Double): Double {
+    fun track(x: Double, now: Double, dt: Double, maxDeformation: Double = MAX_DEFORMATION): Double {
         if (!isTracking) return value
         history.add(x to now)
         val cutoff = now - SAMPLE_WINDOW
         history.removeAll { it.second < cutoff }
-        val raw = (averageAcceleration() * SENSITIVITY).coerceIn(-MAX_DEFORMATION, MAX_DEFORMATION)
+        val raw = (averageAcceleration() * SENSITIVITY).coerceIn(-maxDeformation, maxDeformation)
         val ease = (dt / RESPONSE_TIME).coerceIn(0.0, 1.0)
         value += (raw - value) * ease
         return value
@@ -495,14 +535,30 @@ internal fun Modifier.pillPlacement(center: () -> Offset, size: () -> Size): Mod
         }
     }
 
-/** The flat pill: a fill and nothing else. */
+/** The flat pill: a fill and optionally soft elevation shadow when lifted. */
 @Composable
 internal fun FlatSelectionPill(
     color: Color,
     modifier: Modifier,
+    isLifted: Boolean = false,
 ) {
     val shape = remember { RoundedCornerShape(percent = 50) }
-    Box(modifier.background(color, shape))
+    Box(
+        modifier
+            .then(
+                if (isLifted) {
+                    Modifier.shadow(
+                        elevation = 6.dp,
+                        shape = shape,
+                        ambientColor = Color.Black.copy(alpha = 0.25f),
+                        spotColor = Color.Black.copy(alpha = 0.25f),
+                    )
+                } else {
+                    Modifier
+                }
+            )
+            .background(color, shape)
+    )
 }
 
 /**
