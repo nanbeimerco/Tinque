@@ -379,6 +379,7 @@ fun LocalMusicScreen(
 
     // When non-null, we are showing a drill-down list for that artist or album.
     var drillDownLabel by remember { mutableStateOf<String?>(null) }
+    var drillDownPlaylistId by remember { mutableStateOf<String?>(null) }
     var drillDownSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
     // The release's own cover, for the drill-down header. Only a downloaded
     // album or playlist has one worth showing — a tag-derived grouping's
@@ -399,6 +400,7 @@ fun LocalMusicScreen(
     }
     val leaveDrillDown: () -> Unit = {
         drillDownLabel = null
+        drillDownPlaylistId = null
         drillDownSongs = emptyList()
         drillDownArt = null
         drillDownIsArtist = false
@@ -465,7 +467,7 @@ fun LocalMusicScreen(
 
     val songDropdownMenu: @Composable (Song) -> Unit = { song ->
         LocalSongDropdownMenu(
-            expanded = (activeMenuSong?.videoId == song.videoId),
+            expanded = (activeMenuSong?.let { it.localUri ?: it.videoId } == (song.localUri ?: song.videoId)),
             onDismissRequest = { activeMenuSong = null },
             song = song,
             onQueueNext = {
@@ -482,6 +484,16 @@ fun LocalMusicScreen(
                 activeMenuSong = null
                 addToPlaylistSongs = listOf(song)
             },
+            onRemoveFromPlaylist = if (drillDownPlaylistId != null) {
+                {
+                    activeMenuSong = null
+                    val playlistId = drillDownPlaylistId ?: return@LocalSongDropdownMenu
+                    val songId = song.localUri ?: song.videoId
+                    LocalPlaylistStore.removeSongFromPlaylist(playlistId, songId)
+                    drillDownSongs = drillDownSongs.filterNot { (it.localUri ?: it.videoId) == songId }
+                    Toast.makeText(context, R.string.remove_from_playlist, Toast.LENGTH_SHORT).show()
+                }
+            } else null,
             onGoToAlbum = if (!song.albumName.isNullOrBlank()) {
                 { targetAlbum ->
                     activeMenuSong = null
@@ -559,7 +571,7 @@ fun LocalMusicScreen(
             DownloadSelectionBar(
                 count = selectedSongIds.size,
                 allSelected = selectableSongs.isNotEmpty() && selectedSongIds.containsAll(selectableSongs.map { it.videoId }),
-                showDelete = isDownloads,
+                showDelete = isDownloads || drillDownPlaylistId != null,
                 onAddToPlaylist = {
                     addToPlaylistSongs = songs.filter { it.videoId in selectedSongIds }
                     selectedSongIds = emptySet()
@@ -567,10 +579,19 @@ fun LocalMusicScreen(
                 },
                 onSelectAll = { selectedSongIds = selectedSongIds + selectableSongs.map { it.videoId } },
                 onDelete = {
-                    val chosen = songs.filter { it.videoId in selectedSongIds }
-                    selectedSongIds = emptySet()
-                    selectedAlbumKeys = emptySet()
-                    onDeleteDownloads?.invoke(chosen)
+                    val playlistId = drillDownPlaylistId
+                    if (playlistId != null) {
+                        LocalPlaylistStore.removeSongsFromPlaylist(playlistId, selectedSongIds)
+                        drillDownSongs = drillDownSongs.filterNot { (it.localUri ?: it.videoId) in selectedSongIds || it.videoId in selectedSongIds }
+                        selectedSongIds = emptySet()
+                        selectedAlbumKeys = emptySet()
+                        Toast.makeText(context, R.string.remove_from_playlist, Toast.LENGTH_SHORT).show()
+                    } else {
+                        val chosen = songs.filter { it.videoId in selectedSongIds }
+                        selectedSongIds = emptySet()
+                        selectedAlbumKeys = emptySet()
+                        onDeleteDownloads?.invoke(chosen)
+                    }
                 },
                 onCancel = {
                     selectedSongIds = emptySet()
@@ -954,6 +975,7 @@ fun LocalMusicScreen(
                         playlists = localPlaylists,
                         onPlaylistClick = { playlist ->
                             drillDownLabel = playlist.name
+                            drillDownPlaylistId = playlist.id
                             drillDownSongs = resolvePlaylistSongs(playlist, songs)
                             drillDownArt = playlist.customCoverUrl ?: playlist.coverUrl
                             // The art-led layout is scoped to album details and

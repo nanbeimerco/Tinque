@@ -15,6 +15,7 @@ import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.PlaylistPlay
+import androidx.compose.material.icons.rounded.PlaylistRemove
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -53,6 +54,7 @@ fun LocalSongDropdownMenu(
     onShare: () -> Unit,
     onDeleteFromDevice: () -> Unit,
     onDetails: () -> Unit,
+    onRemoveFromPlaylist: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     offset: DpOffset = DpOffset(0.dp, 0.dp),
 ) {
@@ -114,6 +116,24 @@ fun LocalSongDropdownMenu(
                     onAddToPlaylist()
                 },
             )
+
+            if (onRemoveFromPlaylist != null) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.remove_from_playlist)) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Rounded.PlaylistRemove,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    },
+                    onClick = {
+                        onDismissRequest()
+                        onRemoveFromPlaylist()
+                    },
+                )
+            }
 
             val hasGoTo = onGoToAlbum != null || onGoToArtist != null || onGoToFolder != null
             if (hasGoTo) {

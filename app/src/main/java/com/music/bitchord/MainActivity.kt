@@ -924,11 +924,12 @@ private fun BitChordApp(
                     } else if (!s.localPath.isNullOrBlank() && java.io.File(s.localPath).isFile) {
                         s.copy(localUri = android.net.Uri.fromFile(java.io.File(s.localPath)).toString())
                     } else {
-                        localSongs.firstOrNull { local ->
-                            local.videoId == s.videoId ||
-                            (local.title.equals(s.title, ignoreCase = true) &&
-                             (s.artist.isBlank() || local.artist.equals(s.artist, ignoreCase = true)))
-                        } ?: s
+                        localSongs.firstOrNull { it.videoId == s.videoId }
+                            ?: localSongs.firstOrNull { local ->
+                                local.title.equals(s.title, ignoreCase = true) &&
+                                (s.artist.isBlank() || local.artist.equals(s.artist, ignoreCase = true))
+                            }
+                            ?: s
                     }
                 }
 
@@ -2041,11 +2042,12 @@ private fun BitChordApp(
                             onPeriodChange = setReplayPeriod,
                             onOpenStory = { replayStory = it },
                             onPlaySong = { replaySong ->
-                                val matched = localSongs.firstOrNull { local ->
-                                    local.videoId == replaySong.videoId ||
-                                    (local.title.equals(replaySong.title, ignoreCase = true) &&
-                                     (replaySong.artist.isBlank() || local.artist.equals(replaySong.artist, ignoreCase = true)))
-                                } ?: replaySong.takeIf { it.localUri != null || !it.localPath.isNullOrBlank() }
+                                val matched = localSongs.firstOrNull { it.videoId == replaySong.videoId }
+                                    ?: localSongs.firstOrNull { local ->
+                                        local.title.equals(replaySong.title, ignoreCase = true) &&
+                                        (replaySong.artist.isBlank() || local.artist.equals(replaySong.artist, ignoreCase = true))
+                                    }
+                                    ?: replaySong.takeIf { it.localUri != null || !it.localPath.isNullOrBlank() }
                                 if (matched != null) {
                                     play(listOf(matched), 0)
                                 } else {
@@ -2897,11 +2899,19 @@ private fun BitChordApp(
         // ---- Album / playlist detail ----
         // ---- Long-press track actions ----
         songActions?.let { originalSong ->
-            val resolvedSong = localSongs.firstOrNull { local ->
-                local.videoId == originalSong.videoId ||
-                (local.title.equals(originalSong.title, ignoreCase = true) &&
-                 (originalSong.artist.isBlank() || local.artist.equals(originalSong.artist, ignoreCase = true)))
-            } ?: originalSong
+            val resolvedSong = if (originalSong.localUri != null || !originalSong.localPath.isNullOrBlank()) {
+                localSongs.firstOrNull { local ->
+                    (originalSong.localUri != null && local.localUri == originalSong.localUri) ||
+                    local.videoId == originalSong.videoId
+                } ?: originalSong
+            } else {
+                localSongs.firstOrNull { it.videoId == originalSong.videoId }
+                    ?: localSongs.firstOrNull { local ->
+                        local.title.equals(originalSong.title, ignoreCase = true) &&
+                        (originalSong.artist.isBlank() || local.artist.equals(originalSong.artist, ignoreCase = true))
+                    }
+                    ?: originalSong
+            }
             val song = resolvedSong
             var showTagEditor by remember(song.videoId, pendingPlayerQuickAction) {
                 mutableStateOf(pendingPlayerQuickAction == PlayerQuickAction.TAG_EDITOR)

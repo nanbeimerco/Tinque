@@ -46,6 +46,7 @@ import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.PlaylistRemove
 import androidx.compose.material.icons.rounded.Reorder
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.runtime.Composable
@@ -82,6 +83,7 @@ import com.music.bitchord.feature.localsongactions.data.LocalPlayStatsStore
 import com.music.bitchord.feature.localmusic.domain.model.LocalPlaylist
 import com.music.bitchord.feature.localmusic.ui.components.CreatePlaylistDialog
 import com.music.bitchord.feature.localsongactions.ui.components.LocalAddToPlaylistSheet
+import com.music.bitchord.feature.localsongactions.ui.components.LocalSongDropdownMenu
 import com.music.bitchord.feature.localsongactions.ui.LocalSongActionsHelper
 import com.music.bitchord.feature.tageditor.data.TagLibWriter
 import kotlinx.coroutines.launch
@@ -97,6 +99,7 @@ private fun PlaylistSelectionToolbar(
     count: Int,
     contentColor: Color,
     onAddToPlaylist: () -> Unit,
+    onRemoveSelected: (() -> Unit)? = null,
     onEditTags: () -> Unit,
     onShare: () -> Unit,
     onMoveUp: () -> Unit,
@@ -124,6 +127,15 @@ private fun PlaylistSelectionToolbar(
         )
         IconButton(onClick = onAddToPlaylist) {
             Icon(Icons.Rounded.PlaylistAdd, contentDescription = stringResource(R.string.add_to_playlist), tint = contentColor)
+        }
+        if (onRemoveSelected != null) {
+            IconButton(onClick = onRemoveSelected) {
+                Icon(
+                    Icons.Rounded.PlaylistRemove,
+                    contentDescription = stringResource(R.string.remove_from_playlist),
+                    tint = contentColor,
+                )
+            }
         }
         IconButton(onClick = onEditTags) {
             Icon(Icons.Rounded.Edit, contentDescription = stringResource(R.string.selection_edit_tags), tint = contentColor)
@@ -225,6 +237,8 @@ fun LibraryScreen(
     var playlistReorderEnabled by rememberSaveable { mutableStateOf(false) }
     var playlistSelectionMode by rememberSaveable { mutableStateOf(false) }
     var selectedPlaylistSongIds by rememberSaveable { mutableStateOf(emptySet<String>()) }
+    var showDeleteFromPlaylistDialog by remember { mutableStateOf(false) }
+    var activeMenuSong by remember { mutableStateOf<Song?>(null) }
     var showAddSelectedToPlaylist by remember { mutableStateOf(false) }
     var showBulkTagEditor by remember { mutableStateOf(false) }
     var bulkArtist by remember { mutableStateOf("") }
@@ -476,6 +490,7 @@ fun LibraryScreen(
                                 count = selectedPlaylistSongIds.size,
                                 contentColor = contentColor,
                                 onAddToPlaylist = { showAddSelectedToPlaylist = true },
+                                onRemoveSelected = { showDeleteFromPlaylistDialog = true },
                                 onEditTags = { showBulkTagEditor = true },
                                 onShare = { LocalSongActionsHelper.shareSongs(context, selectedPlaylistSongs) },
                                 onMoveUp = { moveSelectedSongsByOne(-1) },
@@ -520,7 +535,9 @@ fun LibraryScreen(
                     },
                     // Selection changes the row tap and long-press behavior,
                     // but the trailing details/actions button stays available.
-                    onSongMore = onSongLongPress,
+                    onSongMore = if (drillDownPlaylistId != null) {
+                        { song -> activeMenuSong = song }
+                    } else onSongLongPress,
                     onSongSwipe = onSongSwipe,
                     onShuffle = onShuffle,
                     onMore = null,
@@ -546,7 +563,56 @@ fun LibraryScreen(
                     },
                     onBack = leaveDrillDown,
                     contentPadding = contentPadding,
-                    songDropdownMenu = songDropdownMenu,
+                    songDropdownMenu = if (drillDownPlaylistId != null) {
+                        { song ->
+                            val playlistId = drillDownPlaylistId
+                            LocalSongDropdownMenu(
+                                expanded = (activeMenuSong?.let { it.localUri ?: it.videoId } == (song.localUri ?: song.videoId)),
+                                onDismissRequest = { activeMenuSong = null },
+                                song = song,
+                                onQueueNext = {
+                                    activeMenuSong = null
+                                    onPlayNext?.invoke(song) ?: onSongSwipe(song)
+                                    Toast.makeText(context, "Queued next", Toast.LENGTH_SHORT).show()
+                                },
+                                onAddToQueue = {
+                                    activeMenuSong = null
+                                    onAddToQueue?.invoke(song) ?: onSongSwipe(song)
+                                    Toast.makeText(context, "Added to playing queue", Toast.LENGTH_SHORT).show()
+                                },
+                                onAddToPlaylist = {
+                                    activeMenuSong = null
+                                    selectedPlaylistSongIds = setOf(song.localUri ?: song.videoId)
+                                    showAddSelectedToPlaylist = true
+                                },
+                                onRemoveFromPlaylist = if (playlistId != null) {
+                                    {
+                                        activeMenuSong = null
+                                        val songId = song.localUri ?: song.videoId
+                                        LocalPlaylistStore.removeSongFromPlaylist(playlistId, songId)
+                                        drillDownSongs = drillDownSongs.filterNot { (it.localUri ?: it.videoId) == songId }
+                                        Toast.makeText(context, R.string.remove_from_playlist, Toast.LENGTH_SHORT).show()
+                                    }
+                                } else null,
+                                onTagEditor = {
+                                    activeMenuSong = null
+                                    onSongLongPress(song)
+                                },
+                                onShare = {
+                                    activeMenuSong = null
+                                    LocalSongActionsHelper.shareSong(context, song)
+                                },
+                                onDeleteFromDevice = {
+                                    activeMenuSong = null
+                                    onDeleteSong?.invoke(song)
+                                },
+                                onDetails = {
+                                    activeMenuSong = null
+                                    onSongLongPress(song)
+                                },
+                            )
+                        }
+                    } else songDropdownMenu,
                     onArtworkPaletteChanged = onArtworkPaletteChanged,
                 )
             } else if (key.startsWith("history:")) {
@@ -814,6 +880,43 @@ fun LibraryScreen(
                     Text(stringResource(R.string.cancel))
                 }
             },
+        )
+    }
+
+    if (showDeleteFromPlaylistDialog && drillDownPlaylistId != null) {
+        val targetPlaylistId = drillDownPlaylistId!!
+        val count = selectedPlaylistSongIds.size
+        AlertDialog(
+            onDismissRequest = { showDeleteFromPlaylistDialog = false },
+            title = { Text(stringResource(R.string.remove_from_playlist)) },
+            text = {
+                Text(
+                    text = if (count == 1) {
+                        "${stringResource(R.string.remove_from_playlist)}?"
+                    } else {
+                        "$count ${stringResource(R.string.selected)}\n${stringResource(R.string.remove_from_playlist)}?"
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        LocalPlaylistStore.removeSongsFromPlaylist(targetPlaylistId, selectedPlaylistSongIds)
+                        drillDownSongs = drillDownSongs.filterNot(::isPlaylistSongSelected)
+                        selectedPlaylistSongIds = emptySet()
+                        playlistSelectionMode = false
+                        showDeleteFromPlaylistDialog = false
+                        Toast.makeText(context, R.string.remove_from_playlist, Toast.LENGTH_SHORT).show()
+                    }
+                ) {
+                    Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteFromPlaylistDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
         )
     }
 }
