@@ -155,7 +155,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.structuralEqualityPolicy
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -997,10 +999,22 @@ fun NowPlayingScreen(
         // look at and keeps the subtree drawing.
         .graphicsLayer { alpha = if (docking()) dockFade().coerceAtLeast(DOCK_FADE_FLOOR) else 1f }
 
+    val quietMode by AppSettings.quietMode.collectAsStateWithLifecycle()
+    val showStatusBar by AppSettings.showStatusBar.collectAsStateWithLifecycle()
+    val showNavigationBar by AppSettings.showNavigationBar.collectAsStateWithLifecycle()
+
     if (!docked) {
         val artLuminance = rememberArtworkLuminance(backdropArtworkUrl)
         val isLightArtwork = artLuminance?.let { it > LIGHT_ARTWORK_LUMINANCE_THRESHOLD } ?: false
         SystemBarIcons(dark = isLightArtwork)
+
+        val playerView = LocalView.current
+        LaunchedEffect(playerView, quietMode, showStatusBar, showNavigationBar) {
+            val window = com.music.bitchord.ui.theme.findWindow(playerView)
+            window?.let { win ->
+                com.music.bitchord.applySystemBarPreferences(win)
+            }
+        }
     }
 
     // Kept local to the player: a modal player is not in the page's Haze
@@ -1145,8 +1159,16 @@ fun NowPlayingScreen(
     var lyricsLogsOpen by remember { mutableStateOf(false) }
     val showLyricsLogsEnabled by AppSettings.showLyricsLogs.collectAsStateWithLifecycle()
     LaunchedEffect(song.videoId) {
-        lyricsOpen = false
         lyricsLogsOpen = false
+    }
+    LaunchedEffect(song.videoId, lyricsUnavailable) {
+        if (lyricsUnavailable) {
+            delay(150L)
+            if (lyricsUnavailable && lyricsOpen) {
+                lyricsOpen = false
+                lyricsLogsOpen = false
+            }
+        }
     }
     // A brief, non-modal confirmation that the three-dot menu now contains a
     // way back to the original YouTube rendition. The control keeps its usual
@@ -1413,6 +1435,18 @@ fun NowPlayingScreen(
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "sleeveCollapse",
     )
+    val collapseDone by remember { derivedStateOf { p >= 1f } }
+    val panelFade = remember {
+        Animatable(if (Snapshot.withoutReadObservation { collapseDone }) 1f else 0f)
+    }
+    LaunchedEffect(Unit) {
+        snapshotFlow { collapseDone }.collectLatest { settled ->
+            panelFade.animateTo(
+                if (settled) 1f else 0f,
+                tween(durationMillis = 200, easing = FastOutSlowInEasing),
+            )
+        }
+    }
     val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val keepOriginalArtworkAspectRatio by AppSettings.keepOriginalArtworkAspectRatio.collectAsStateWithLifecycle()
     var loadedArtworkAspectRatio by remember(song.videoId, artUrl) { mutableFloatStateOf(1f) }
@@ -1584,7 +1618,7 @@ fun NowPlayingScreen(
     // mounted on the very first frame of a sheet open without a Frame-2 jump.
     var heroHeight by remember { mutableStateOf(lastHeroHeight) }
     var playerBounds by remember { mutableStateOf(lastPlayerBounds) }
-    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val statusBarTop = if (showStatusBar && !quietMode) WindowInsets.statusBars.asPaddingValues().calculateTopPadding() else 0.dp
     // What sits between the status bar and the artwork: the drag strip in a
     // sheet, plain padding in a pane. Read in three places — the strip itself,
     // the scrim drawn over it and the banner's own height — which all have to
@@ -1684,7 +1718,7 @@ fun NowPlayingScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
+                .then(if (showStatusBar && !quietMode) Modifier.statusBarsPadding() else Modifier)
                 .navigationBarsPadding()
                 .pointerInput(Unit) {
                     var total = 0f
@@ -1926,7 +1960,7 @@ fun NowPlayingScreen(
                 // of settling — a full-amplitude standing oscillation, not the
                 // single-pixel shiver this rounding alone was built to absorb.
                 // See [granted] below for the fix.
-                if (!lyricsOpen || compactLyrics) {
+                if ((!lyricsOpen || compactLyrics) && p <= 0.001f) {
                     val target = with(density) {
                         val half = slack
                             .coerceAtMost(CONTROL_GAP_SPREAD_MAX * 2)
@@ -1973,14 +2007,33 @@ fun NowPlayingScreen(
                 val expandedArtHeight = fullArt * minOf(1f, 1f / sleeveAspectRatio)
                 val groupTop = (maxHeight - expandedArtHeight - ART_TITLE_GAP - HEADER_HEIGHT)
                     .coerceAtLeast(0.dp) / 2
-                val artWidth = lerp(expandedArtWidth, THUMB_SIZE, p)
-                val artHeight = lerp(expandedArtHeight, THUMB_SIZE, p)
-                val artTop = lerp(groupTop, 0.dp, p)
+
+                var settledArtWidth by remember { mutableStateOf(expandedArtWidth) }
+                var settledArtHeight by remember { mutableStateOf(expandedArtHeight) }
+                var settledGroupTop by remember { mutableStateOf(groupTop) }
+                var settledArtStart by remember { mutableStateOf((maxWidth - expandedArtWidth) / 2) }
+
+                if (p <= 0.001f && (!lyricsOpen || compactLyrics)) {
+                    settledArtWidth = expandedArtWidth
+                    settledArtHeight = expandedArtHeight
+                    settledGroupTop = groupTop
+                    settledArtStart = (maxWidth - expandedArtWidth) / 2
+                }
+
+                val inTransition = p > 0.001f || (lyricsOpen && !compactLyrics)
+                val targetArtWidth = settledArtWidth
+                val targetArtHeight = settledArtHeight
+                val targetGroupTop = settledGroupTop
+                val targetArtStart = settledArtStart
+
+                val artWidth = lerp(targetArtWidth, THUMB_SIZE, p)
+                val artHeight = lerp(targetArtHeight, THUMB_SIZE, p)
+                val artTop = lerp(targetGroupTop, 0.dp, p)
                 // Expanded and height-bound, the sleeve is narrower than the
                 // player and has to be centred in it; collapsed, it belongs
                 // hard against the left edge with the credits beside it.
-                val artStart = lerp((maxWidth - expandedArtWidth) / 2, 0.dp, p)
-                val titleTop = lerp(groupTop + expandedArtHeight + ART_TITLE_GAP, 0.dp, p)
+                val artStart = lerp(targetArtStart, 0.dp, p)
+                val titleTop = lerp(targetGroupTop + targetArtHeight + ART_TITLE_GAP, 0.dp, p)
                 val titleStart = lerp(0.dp, THUMB_SIZE + 12.dp, p)
 
                 // How far down the *screen* the sleeve's bottom edge sits, which
@@ -1989,7 +2042,7 @@ fun NowPlayingScreen(
                 // screen's top and this box's own top is fixed padding, so it
                 // can simply be added back up rather than measured.
                 val bannerBottom = statusBarTop + topStrip + ART_BOX_TOP_PAD +
-                    groupTop + expandedArtHeight + ART_TITLE_GAP / 2
+                    targetGroupTop + targetArtHeight + ART_TITLE_GAP / 2
                 // Held where it was while the lyrics are up.
                 //
                 // [groupTop] centres the block in this box's *real* height, and
@@ -2457,13 +2510,20 @@ fun NowPlayingScreen(
                         .onGloballyPositioned { dismissBandBottom = it.boundsInRoot().bottom },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    val textScale = lerp(1f, 16f / 20f, p)
                     Column(
-                        Modifier.weight(1f),
+                        Modifier
+                            .weight(1f)
+                            .graphicsLayer {
+                                scaleX = textScale
+                                scaleY = textScale
+                                transformOrigin = TransformOrigin(
+                                    pivotFractionX = if (centerPlayerTrackInfo) 0.5f else 0f,
+                                    pivotFractionY = 0.5f,
+                                )
+                            },
                         horizontalAlignment = if (centerPlayerTrackInfo) Alignment.CenterHorizontally else Alignment.Start,
                     ) {
-                        // Shrinks as the header collapses, so the queue's
-                        // heading doesn't have to compete with it.
-                        val titleSize = lerp(20.sp, 16.sp, p)
                         // Only the title's own overflow gates the artist's stagger
                         // below — an artist line that's long on its own has no
                         // reason to wait on a title that already fits.
@@ -2475,9 +2535,7 @@ fun NowPlayingScreen(
                         val scrolls = p < 0.01f
                         MarqueeText(
                             text = song.title,
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontSize = titleSize,
-                            ),
+                            style = MaterialTheme.typography.titleLarge,
                             color = Color.White,
                             enabled = scrolls,
                             leading = if (song.isExplicit == true) {
@@ -2495,7 +2553,6 @@ fun NowPlayingScreen(
                                 text = song.artist,
                                 style = MaterialTheme.typography.titleLarge.copy(
                                     fontWeight = FontWeight.W500,
-                                    fontSize = titleSize,
                                 ),
                                 color = Color.White.copy(alpha = 0.55f),
                                 enabled = scrolls,
@@ -2640,6 +2697,7 @@ fun NowPlayingScreen(
                                     positionMs = positionMs,
                                     isPlaying = isPlaying,
                                     onSeekToLine = onSeek,
+                                    lyricsUnavailable = lyricsUnavailable,
                                     modifier = Modifier.fillMaxSize().padding(top = 44.dp),
                                 )
                             }
@@ -2663,39 +2721,38 @@ fun NowPlayingScreen(
                                 )
                             }
                         }
-                    } else if (lyricsLogsOpen) {
-                        // Full-screen log console — replaces the lyrics list while
-                        // the debug panel is open. Same fade-in timing as the lyrics
-                        // panel so the transition is identical from the user's side.
-                        LyricsLogConsole(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = HEADER_HEIGHT)
-                                .graphicsLayer {
-                                    alpha = ((p - 0.45f) / 0.55f).coerceIn(0f, 1f)
-                                    translationY = (1f - p) * 26.dp.toPx()
-                                },
-                        )
                     } else {
-                        LyricsPanel(
-                            lines = lyrics.orEmpty(),
-                            trackKey = song.videoId,
-                            positionMs = positionMs,
-                            isPlaying = isPlaying,
-                            onSeekToLine = onSeek,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(top = HEADER_HEIGHT)
-                                // Arrives once the sleeve has finished collapsing
-                                // into the header, the same beat the queue below
-                                // already waits for — fading lyrics in over a
-                                // sleeve still mid-collapse doubled the same
-                                // movement in two places on screen at once.
-                                .graphicsLayer {
-                                    alpha = ((p - 0.45f) / 0.55f).coerceIn(0f, 1f)
-                                    translationY = (1f - p) * 26.dp.toPx()
-                                },
-                        )
+                        val lyricsPanelVisible = collapseDone
+                        if (lyricsPanelVisible) {
+                            if (lyricsLogsOpen) {
+                                // Full-screen log console — replaces the lyrics list while
+                                // the debug panel is open. Same fade-in timing as the lyrics
+                                // panel so the transition is identical from the user's side.
+                                LyricsLogConsole(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(top = HEADER_HEIGHT)
+                                        .graphicsLayer { alpha = panelFade.value },
+                                )
+                            } else {
+                                LyricsPanel(
+                                    lines = lyrics.orEmpty(),
+                                    trackKey = song.videoId,
+                                    positionMs = positionMs,
+                                    isPlaying = isPlaying,
+                                    onSeekToLine = onSeek,
+                                    lyricsUnavailable = lyricsUnavailable,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(top = HEADER_HEIGHT)
+                                        // Arrives once the sleeve has finished collapsing
+                                        // into the header — fading lyrics in over a
+                                        // sleeve still mid-collapse doubled movement in
+                                        // two places on screen at once and caused stutter.
+                                        .graphicsLayer { alpha = panelFade.value },
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -2744,15 +2801,24 @@ fun NowPlayingScreen(
             // fading it away behind the queue left this the one place in the
             // player where the current line simply vanished.
             //
-            // Switched off in Settings it goes entirely, rather than sitting
-            // there saying no lyrics were found: none were looked for. It is
-            // also the only way into the full lyrics panel, so with it gone
-            // the feature is properly gone.
-            if (showPlayerLyricsStrip && !lyricsOpen && (syncedLyricsEnabled || !lyrics.isNullOrEmpty())) {
+            val lyricsMode = lyricsOpen && !lyricsReplaceArtworkOnly
+            val miniLyricsVisible = showPlayerLyricsStrip && (syncedLyricsEnabled || !lyrics.isNullOrEmpty())
+            if (miniLyricsVisible && (!lyricsMode || p < 1f)) {
                 Box(
                     contentAlignment = Alignment.CenterStart,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clipToBounds()
+                        .graphicsLayer {
+                            alpha = ((0.30f - p) / 0.30f).coerceIn(0f, 1f)
+                        }
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints.copy(minHeight = 0))
+                            val height = (placeable.height * (1f - p)).roundToInt()
+                            layout(placeable.width, height) {
+                                placeable.placeRelative(0, 0)
+                            }
+                        }
                         .height(36.dp)
                         // The slider's touch target reaches ~13dp above the
                         // drawn bar, so the strip reads as further off it than
@@ -2870,8 +2936,26 @@ fun NowPlayingScreen(
                 )
             }
 
-            if (lyricsOpen && !lyricsReplaceArtworkOnly) {
-                Spacer(Modifier.height(16.dp))
+            if (lyricsMode || p > 0.001f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clipToBounds()
+                        .graphicsLayer {
+                            val alphaVal = if (lyricsMode && collapseDone) panelFade.value else 0f
+                            alpha = alphaVal
+                            translationY = (1f - alphaVal) * 10.dp.toPx()
+                        }
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints.copy(minHeight = 0))
+                            val height = (placeable.height * p).roundToInt()
+                            layout(placeable.width, height) {
+                                placeable.placeRelative(0, 0)
+                            }
+                        },
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Spacer(Modifier.height(16.dp))
                 // Full-width header row: optional logs icon on the far left,
                 // source credit pill in the middle, close circle on the right.
                 // The row stretches edge-to-edge so there is no dangling gap
@@ -3011,15 +3095,34 @@ fun NowPlayingScreen(
                         }
                     }
                 }
-                Spacer(Modifier.height(20.dp))
-            } else {
+                        Spacer(Modifier.height(20.dp))
+                    }
+                }
+            }
 
-            // The transport rides midway between the two blocks it separates:
-            // the scrubber above it, and the volume bar and toggle row below,
-            // which sit close enough together to read as one. Both of its own
-            // gaps take half the spread, so on a tall screen it holds the
-            // centre rather than drifting up under the seek bar.
-            Spacer(Modifier.height(14.dp + controlSpread / 2))
+            if (!lyricsMode || p < 1f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clipToBounds()
+                        .graphicsLayer {
+                            alpha = ((0.30f - p) / 0.30f).coerceIn(0f, 1f)
+                        }
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints.copy(minHeight = 0))
+                            val height = (placeable.height * (1f - p)).roundToInt()
+                            layout(placeable.width, height) {
+                                placeable.placeRelative(0, 0)
+                            }
+                        },
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // The transport rides midway between the two blocks it separates:
+                        // the scrubber above it, and the volume bar and toggle row below,
+                        // which sit close enough together to read as one. Both of its own
+                        // gaps take half the spread, so on a tall screen it holds the
+                        // centre rather than drifting up under the seek bar.
+                        Spacer(Modifier.height(14.dp + controlSpread / 2))
 
             // ---- Transport ----
             Row(
@@ -3234,6 +3337,8 @@ fun NowPlayingScreen(
             }
 
             if (visiblePlayerControls.isNotEmpty()) Spacer(Modifier.height(18.dp))
+                    }
+                }
             }
             }
             }
@@ -3870,6 +3975,7 @@ private fun LyricsPanel(
     positionMs: Long,
     isPlaying: Boolean,
     onSeekToLine: (Long) -> Unit,
+    lyricsUnavailable: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val clock = rememberLyricClock(positionMs, isPlaying)
@@ -3974,7 +4080,7 @@ private fun LyricsPanel(
 
     if (lines.isEmpty()) {
         Box(modifier, contentAlignment = Alignment.Center) {
-            if (!hideLyricsUnavailableLabel) {
+            if (lyricsUnavailable && !hideLyricsUnavailableLabel) {
                 Text(
                     text = stringResource(R.string.no_lyrics_for_track),
                     style = MaterialTheme.typography.titleMedium,
@@ -5110,17 +5216,6 @@ private fun MarqueeText(
             leading()
             Spacer(Modifier.width(6.dp))
         }
-        if (!enabled) {
-            Text(
-                text = text,
-                style = style,
-                color = color,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            return@Row
-        }
         BoxWithConstraints(Modifier.weight(1f, fill = false).clipToBounds()) {
             val maxWidthPx = constraints.maxWidth
             val layout = remember(text, style, maxWidthPx) {
@@ -5138,9 +5233,9 @@ private fun MarqueeText(
             }
 
             val offsetX = remember { Animatable(0f) }
-            LaunchedEffect(text, travelPx, startDelayMillis) {
+            LaunchedEffect(enabled, text, travelPx, startDelayMillis) {
                 offsetX.snapTo(0f)
-                if (travelPx <= 0) return@LaunchedEffect
+                if (!enabled || travelPx <= 0) return@LaunchedEffect
                 val pxPerMs = with(density) { MARQUEE_DP_PER_SEC.dp.toPx() } / 1000f
                 val scrollMs = (travelPx / pxPerMs).roundToInt().coerceAtLeast(400)
                 delay(startDelayMillis)

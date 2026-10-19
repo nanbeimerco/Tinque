@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.database.ContentObserver
+import android.content.ComponentName
 import android.content.Intent
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
@@ -73,6 +74,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.guava.future
 import com.music.bitchord.MainActivity
 import com.music.bitchord.R
+import com.music.bitchord.data.settings.LauncherIcon
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.lyrics.EmbeddedLyrics
@@ -1235,13 +1237,60 @@ class PlaybackService : MediaLibraryService() {
         NerdStats.forgetLastSession()
         QualityUpgrade.forgetLastSession()
 
-        setMediaNotificationProvider(
-            DefaultMediaNotificationProvider.Builder(this)
+        val notificationProvider = object : androidx.media3.session.MediaNotification.Provider {
+            private val defaultProvider = DefaultMediaNotificationProvider.Builder(this@PlaybackService)
                 .setChannelId(CHANNEL_ID)
                 .setChannelName(R.string.playback_channel_name)
                 .build()
-                .apply { setSmallIcon(R.drawable.ic_notification_logo) },
-        )
+
+            override fun createNotification(
+                mediaSession: MediaSession,
+                customLayout: ImmutableList<CommandButton>,
+                actionFactory: androidx.media3.session.MediaNotification.ActionFactory,
+                onNotificationChangedCallback: androidx.media3.session.MediaNotification.Provider.Callback,
+            ): androidx.media3.session.MediaNotification {
+                val icon = AppSettings.launcherIcon.value
+                val smallIconRes = when (icon) {
+                    LauncherIcon.GREEN -> R.drawable.ic_notification_logo_green
+                    LauncherIcon.BLACK -> R.drawable.ic_notification_logo_black
+                    LauncherIcon.PINK -> R.drawable.ic_notification_logo_pink
+                }
+                defaultProvider.setSmallIcon(smallIconRes)
+                val mediaNotification = defaultProvider.createNotification(
+                    mediaSession,
+                    customLayout,
+                    actionFactory,
+                    onNotificationChangedCallback,
+                )
+                val accentColor = when (icon) {
+                    LauncherIcon.GREEN -> 0xFF148447.toInt()
+                    LauncherIcon.BLACK -> 0xFF212121.toInt()
+                    LauncherIcon.PINK -> 0xFFFA233B.toInt()
+                }
+                mediaNotification.notification.color = accentColor
+                return mediaNotification
+            }
+
+            override fun handleCustomCommand(
+                mediaSession: MediaSession,
+                action: String,
+                extras: Bundle,
+            ): Boolean {
+                return defaultProvider.handleCustomCommand(mediaSession, action, extras)
+            }
+
+            override fun getNotificationChannelInfo(): androidx.media3.session.MediaNotification.Provider.NotificationChannelInfo {
+                return defaultProvider.getNotificationChannelInfo()
+            }
+        }
+        setMediaNotificationProvider(notificationProvider)
+
+        scope.launch {
+            AppSettings.launcherIcon.collectLatest {
+                mediaSession?.setSessionActivity(sessionActivity())
+                triggerNotificationUpdate()
+            }
+        }
 
         // The player screen toggles QueueShuffle directly on its MediaController.
         // Observe the shared state here so the notification's Shuffle icon and
@@ -1264,14 +1313,6 @@ class PlaybackService : MediaLibraryService() {
                 } else {
                     player?.let(::updateExternalAudioPopup)
                 }
-            }
-        }
-        // Quiet mode takes effect the moment it is toggled, not at the next
-        // playback event: the toggle pokes the framework to re-read
-        // [onUpdateNotificationAsync], which hides everything it is showing.
-        scope.launch {
-            AppSettings.quietMode.collectLatest {
-                triggerNotificationUpdate()
             }
         }
 
@@ -1646,13 +1687,7 @@ class PlaybackService : MediaLibraryService() {
         session: MediaSession,
         startInForegroundRequired: Boolean,
     ): ListenableFuture<Void?> {
-        if (!AppSettings.quietMode.value) {
-            return super.onUpdateNotificationAsync(session, startInForegroundRequired)
-        }
-        stopForeground(Service.STOP_FOREGROUND_REMOVE)
-        getSystemService(NotificationManager::class.java)
-            ?.cancel(DefaultMediaNotificationProvider.DEFAULT_NOTIFICATION_ID)
-        return Futures.immediateVoidFuture()
+        return super.onUpdateNotificationAsync(session, startInForegroundRequired)
     }
 
     /**
@@ -1976,17 +2011,25 @@ class PlaybackService : MediaLibraryService() {
      * to go is skipped and only the plain shade notification survives. Same
      * reason the notification itself was previously un-tappable.
      */
-    private fun sessionActivity(): PendingIntent = PendingIntent.getActivity(
-        this,
-        0,
-        Intent(this, MainActivity::class.java)
-            .setAction(Intent.ACTION_MAIN)
-            .addCategory(Intent.CATEGORY_LAUNCHER)
-            // MainActivity is singleTask, so this resumes the existing task
-            // rather than stacking a second copy of the UI.
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-    )
+    private fun sessionActivity(): PendingIntent {
+        val icon = AppSettings.launcherIcon.value
+        val aliasClassName = when (icon) {
+            LauncherIcon.PINK -> "com.music.bitchord.LauncherPink"
+            LauncherIcon.BLACK -> "com.music.bitchord.LauncherBlack"
+            LauncherIcon.GREEN -> "com.music.bitchord.LauncherGreen"
+        }
+        val launchIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            component = ComponentName(packageName, aliasClassName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        }
+        return PendingIntent.getActivity(
+            this,
+            icon.ordinal,
+            launchIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+    }
 
     private fun registerCurrentPlay() {
         val song = player?.currentMediaItem?.toSong() ?: return

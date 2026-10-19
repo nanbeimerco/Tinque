@@ -411,18 +411,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applySystemBarPreferences() {
-        val bars = WindowInsetsControllerCompat(window, window.decorView)
-        bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        // Quiet mode folds the status bar away in addition to whatever the
-        // user asked of it on its own: hiding it is the point of the mode,
-        // and the bar stays transiently revealable by swipe either way.
-        if (AppSettings.showStatusBar.value && !AppSettings.quietMode.value) {
-            bars.show(WindowInsetsCompat.Type.statusBars())
-        } else {
-            bars.hide(WindowInsetsCompat.Type.statusBars())
-        }
-        if (AppSettings.showNavigationBar.value) bars.show(WindowInsetsCompat.Type.navigationBars())
-        else bars.hide(WindowInsetsCompat.Type.navigationBars())
+        applySystemBarPreferences(window)
     }
 
     /**
@@ -459,6 +448,21 @@ class MainActivity : AppCompatActivity() {
         MusicLink.retainPersistableAudioPermission(this, intent)
         MusicLink.consume(intent)
     }
+}
+
+internal fun applySystemBarPreferences(targetWindow: android.view.Window) {
+    val bars = WindowInsetsControllerCompat(targetWindow, targetWindow.decorView)
+    bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    // Quiet mode folds the status bar away in addition to whatever the
+    // user asked of it on its own: hiding it is the point of the mode,
+    // and the bar stays transiently revealable by swipe either way.
+    if (AppSettings.showStatusBar.value && !AppSettings.quietMode.value) {
+        bars.show(WindowInsetsCompat.Type.statusBars())
+    } else {
+        bars.hide(WindowInsetsCompat.Type.statusBars())
+    }
+    if (AppSettings.showNavigationBar.value) bars.show(WindowInsetsCompat.Type.navigationBars())
+    else bars.hide(WindowInsetsCompat.Type.navigationBars())
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -2804,8 +2808,17 @@ private fun BitChordApp(
                 BackHandler { playerSheetMotion.close() }
                 val sheetView = LocalView.current
                 val sheetWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+                val quietMode by AppSettings.quietMode.collectAsStateWithLifecycle()
+                val showStatusBar by AppSettings.showStatusBar.collectAsStateWithLifecycle()
+                val showNavigationBar by AppSettings.showNavigationBar.collectAsStateWithLifecycle()
+                LaunchedEffect(sheetWindow, showStatusBar, showNavigationBar, quietMode) {
+                    sheetWindow?.let { applySystemBarPreferences(it) }
+                }
                 DisposableEffect(sheetWindow) {
                     playerSheetMotion.attachWindow(sheetWindow)
+                    if (sheetWindow != null) {
+                        applySystemBarPreferences(sheetWindow)
+                    }
                     // The sheet paints from its own window, whose surface saw
                     // nothing of the activity's preferred refresh rate: the
                     // same slide that runs at 0.45 a second by design was

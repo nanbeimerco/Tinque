@@ -212,7 +212,7 @@ fun SystemBarIcons(dark: Boolean) {
 }
 
 // Walks up the Compose view hierarchy to find a DialogWindowProvider (e.g. modal player) before falling back to Activity context.
-private fun findWindow(view: android.view.View): android.view.Window? {
+internal fun findWindow(view: android.view.View): android.view.Window? {
     var parent = view.parent
     while (parent != null) {
         if (parent is androidx.compose.ui.window.DialogWindowProvider) {

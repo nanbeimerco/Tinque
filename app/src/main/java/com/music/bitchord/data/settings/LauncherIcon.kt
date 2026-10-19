@@ -26,10 +26,7 @@ internal object LauncherIconManager {
         // namespace (com.music.bitchord), while context.packageName is the
         // flavor applicationId (io.pockets.musicbestsp). ComponentName needs
         // both values separately.
-        val componentNamespace = context.applicationInfo.className
-            ?.substringBeforeLast('.')
-            ?.takeIf(String::isNotBlank)
-            ?: context.packageName
+        val componentNamespace = "com.music.bitchord"
         val states = aliases.map { (icon, className) ->
             val component = ComponentName(context.packageName, componentNamespace + className)
             val state = if (icon == selected) {

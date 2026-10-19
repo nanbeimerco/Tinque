@@ -43,6 +43,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.ContentScale
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import com.music.bitchord.data.model.ROW_ART_PX
@@ -143,6 +144,10 @@ fun MiniPlayer(
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val useArtworkColor by AppSettings.miniPlayerArtworkColor.collectAsStateWithLifecycle()
     val showPreviousButton by AppSettings.miniPlayerPreviousButton.collectAsStateWithLifecycle()
+    val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
+    val keepOriginalArtworkAspectRatio by AppSettings.keepOriginalArtworkAspectRatio.collectAsStateWithLifecycle()
+    val preserveSleeveArtworkShape = keepOriginalArtworkAspectRatio && !fullBleedArt
+    val miniArtContentScale = if (preserveSleeveArtworkShape) ContentScale.Fit else ContentScale.Crop
     val artworkPalette = rememberArtworkPalette(
         imageUrl = song.thumbnailUrl.takeIf { useArtworkColor },
         artPx = ROW_ART_PX,
@@ -241,6 +246,7 @@ fun MiniPlayer(
             AsyncImage(
                 model = song.artworkAt(ROW_ART_PX),
                 contentDescription = null,
+                contentScale = miniArtContentScale,
                 modifier = Modifier
                     .size(40.dp)
                     .playerDockArt(dock = effectiveDock, corner = ART_CORNER)

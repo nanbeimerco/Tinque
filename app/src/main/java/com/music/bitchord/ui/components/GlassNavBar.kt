@@ -51,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -319,6 +320,10 @@ private fun GlassNowPlaying(
     modifier: Modifier = Modifier,
 ) {
     val showPreviousButton by AppSettings.miniPlayerPreviousButton.collectAsStateWithLifecycle()
+    val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
+    val keepOriginalArtworkAspectRatio by AppSettings.keepOriginalArtworkAspectRatio.collectAsStateWithLifecycle()
+    val preserveSleeveArtworkShape = keepOriginalArtworkAspectRatio && !fullBleedArt
+    val miniArtContentScale = if (preserveSleeveArtworkShape) ContentScale.Fit else ContentScale.Crop
     val haptics = rememberHaptics()
     val pressSource = remember { MutableInteractionSource() }
     val isPressed by pressSource.collectIsPressedAsState()
@@ -369,6 +374,7 @@ private fun GlassNowPlaying(
             AsyncImage(
                 model = song.artworkAt(ROW_ART_PX),
                 contentDescription = null,
+                contentScale = miniArtContentScale,
                 modifier = Modifier
                     .size(artSize)
                     .playerDockArt(dock = dock, corner = if (isInline) 6.dp else 8.dp)
