@@ -265,6 +265,8 @@ import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsStripText
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.ui.components.LyricsLogConsole
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import com.music.bitchord.ui.player.components.DoubleTapSeekArea
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LyricsTextAlignment
@@ -1183,8 +1185,11 @@ fun NowPlayingScreen(
     var lyricsOpen by remember { mutableStateOf(false) }
     // The classic lyrics page, and the beta layout's in-player lyrics. Only one
     // of them answers to [lyricsOpen] at a time, chosen by the layout.
-    val classicLyrics = lyricsOpen && !betaLayout
-    val inPlayerLyrics = lyricsOpen && betaLayout
+    // The full lyrics page is gone: lyrics open inside the player, as in the
+    // beta layout, in both layouts. Only the classic "replace the artwork"
+    // option keeps a lyrics view of its own.
+    val classicLyrics = lyricsOpen && !betaLayout && lyricsReplaceArtworkOnly
+    val inPlayerLyrics = lyricsOpen && !classicLyrics
     val inPlayerLyricsT by animateFloatAsState(
         targetValue = if (inPlayerLyrics) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
@@ -1198,7 +1203,7 @@ fun NowPlayingScreen(
     LaunchedEffect(song.videoId, lyricsUnavailable) {
         if (lyricsUnavailable) {
             delay(150L)
-            if (lyricsUnavailable && lyricsOpen && !betaLayout) {
+            if (lyricsUnavailable && classicLyrics) {
                 lyricsOpen = false
                 lyricsLogsOpen = false
             }
@@ -1957,7 +1962,8 @@ fun NowPlayingScreen(
                 // theirs. Sizing it off the width alone is what pushed the
                 // credits down across the scrubber on anything but a phone.
                 val wantArt = minOf(
-                    maxWidth + if (betaLayout) ART_GUTTER_REACH * 2 else 0.dp,
+                    // Both layouts: the sleeve reaches a little past the gutter.
+                    maxWidth + ART_GUTTER_REACH * 2,
                     roomy - ART_TITLE_GAP - HEADER_HEIGHT,
                 )
                 // Held to what the box has actually got, for the single frame it
@@ -2079,18 +2085,10 @@ fun NowPlayingScreen(
                 val titleExpandedTop = targetGroupTop + targetArtHeight + ART_TITLE_GAP + settledTitleDrop
                 // Classic: the title row glides up into the top strip with the
                 // sleeve. Beta: it fades out where it is and fades in up there.
-                val titleUp = betaLayout && p >= 0.5f
-                val titleTop = if (betaLayout) {
-                    if (titleUp) 0.dp else titleExpandedTop
-                } else {
-                    lerp(titleExpandedTop, 0.dp, p)
-                }
-                val titleStart = if (betaLayout) {
-                    if (titleUp) THUMB_SIZE + 12.dp else 0.dp
-                } else {
-                    lerp(0.dp, THUMB_SIZE + 12.dp, p)
-                }
-                val titleAlpha = if (betaLayout) abs(1f - 2f * p) else 1f
+                val titleUp = p >= 0.5f
+                val titleTop = if (titleUp) 0.dp else titleExpandedTop
+                val titleStart = if (titleUp) THUMB_SIZE + 12.dp else 0.dp
+                val titleAlpha = abs(1f - 2f * p)
 
                 // How far down the *screen* the sleeve's bottom edge sits, which
                 // is where the full-bleed banner has to stop for the credits
@@ -2567,11 +2565,7 @@ fun NowPlayingScreen(
                         .onGloballyPositioned { dismissBandBottom = it.boundsInRoot().bottom },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val textScale = if (betaLayout) {
-                        if (p >= 0.5f) 16f / 20f else 1f
-                    } else {
-                        lerp(1f, 16f / 20f, p)
-                    }
+                    val textScale = if (p >= 0.5f) 16f / 20f else 1f
                     Column(
                         Modifier
                             .weight(1f)
@@ -2579,7 +2573,7 @@ fun NowPlayingScreen(
                             // top strip the credits still reach the buttons instead of
                             // stopping a fifth of the way short of them.
                             .then(
-                                if (betaLayout) {
+                                if (textScale != 1f) {
                                     Modifier.layout { measurable, constraints ->
                                         val wide = (constraints.maxWidth / textScale).roundToInt()
                                         val placeable = measurable.measure(
@@ -2614,7 +2608,7 @@ fun NowPlayingScreen(
                         // whatever is being read below it.
                         // The beta layout lets them run up there too, rather than
                         // leaving a long title cut off in the strip.
-                        val scrolls = p < 0.01f || (betaLayout && p > 0.99f)
+                        val scrolls = p < 0.01f || p > 0.99f
                         MarqueeText(
                             text = song.title,
                             style = MaterialTheme.typography.titleLarge,
@@ -2842,21 +2836,62 @@ fun NowPlayingScreen(
                 // The sleeve and title shrink into the top strip, the controls
                 // stay where they are, and the lyrics run in the room between.
                 if (inPlayerLyrics || inPlayerLyricsT > 0.01f) {
-                    LyricsPanel(
-                        lines = lyrics.orEmpty(),
-                        trackKey = song.videoId,
-                        positionMs = positionMs,
-                        isPlaying = isPlaying,
-                        onSeekToLine = onSeek,
-                        lyricsUnavailable = lyricsUnavailable,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = HEADER_HEIGHT)
-                            .graphicsLayer {
-                                alpha = ((inPlayerLyricsT - 0.45f) / 0.55f).coerceIn(0f, 1f)
-                                translationY = (1f - inPlayerLyricsT) * 26.dp.toPx()
+                    val panelModifier = Modifier
+                        .fillMaxSize()
+                        .padding(top = HEADER_HEIGHT)
+                        .graphicsLayer {
+                            alpha = ((inPlayerLyricsT - 0.45f) / 0.55f).coerceIn(0f, 1f)
+                            translationY = (1f - inPlayerLyricsT) * 26.dp.toPx()
+                        }
+                    if (lyricsLogsOpen) {
+                        // The lyrics log, in the lyrics' place until closed.
+                        Box(panelModifier) {
+                            LyricsLogConsole(Modifier.fillMaxSize().padding(top = 48.dp))
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.18f))
+                                    .clickable { lyricsLogsOpen = false },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = stringResource(R.string.close),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                    } else {
+                        val footerText = when {
+                            lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
+                            !lyrics.isNullOrEmpty() && !hideLyricsSavedMessage ->
+                                stringResource(R.string.lyrics_saved_with_download)
+                            else -> null
+                        }
+                        LyricsPanel(
+                            lines = lyrics.orEmpty(),
+                            trackKey = song.videoId,
+                            positionMs = positionMs,
+                            isPlaying = isPlaying,
+                            onSeekToLine = onSeek,
+                            lyricsUnavailable = lyricsUnavailable,
+                            footer = if (footerText != null || showLyricsLogsEnabled) {
+                                {
+                                    LyricsFooter(
+                                        text = footerText,
+                                        showLogs = showLyricsLogsEnabled,
+                                        onOpenLogs = { lyricsLogsOpen = true },
+                                    )
+                                }
+                            } else {
+                                null
                             },
-                    )
+                            modifier = panelModifier,
+                        )
+                    }
                 }
 
                 // Toggles and the queue arrive after the sleeve has finished
@@ -2913,11 +2948,11 @@ fun NowPlayingScreen(
                         .fillMaxWidth()
                         .clipToBounds()
                         .graphicsLayer {
-                            alpha = ((0.30f - p) / 0.30f).coerceIn(0f, 1f)
+                            alpha = ((0.30f - inPlayerLyricsT) / 0.30f).coerceIn(0f, 1f)
                         }
                         .layout { measurable, constraints ->
                             val placeable = measurable.measure(constraints.copy(minHeight = 0))
-                            val height = (placeable.height * (1f - p)).roundToInt()
+                            val height = (placeable.height * (1f - inPlayerLyricsT)).roundToInt()
                             layout(placeable.width, height) {
                                 placeable.placeRelative(0, 0)
                             }
@@ -3010,7 +3045,19 @@ fun NowPlayingScreen(
             val rowFolds = lyricsMode || (p > 0f && foldingForLyricsPage.value)
             // 0 → 1 as the queue opens. Only the queue tightens the controls:
             // the beta in-player lyrics leave every one of them where it was.
-            val queueCompact = if (rowFolds || betaLayout) 0f else queueProgress.coerceIn(0f, 1f)
+            // Nothing between the scrubber and the toggle row is tightened any
+            // more while a panel is up: the controls keep their places.
+            val queueCompact = 0f
+            // Classic: the volume bar folds away while the queue or the lyrics
+            // are up, and everything above it settles down by that much. (The
+            // beta layout has no volume bar to fold.)
+            //
+            // Read off the sleeve's collapse, which holds at 1 while switching
+            // straight from the lyrics to the queue or back. Read off the two
+            // panels instead, it sagged mid-switch (one fading out as the other
+            // came in), so the volume bar half came back and the transport
+            // bobbed up and down.
+            val volumeFold = if (rowFolds || betaLayout) 0f else p
             val racingLossless by NerdStats.racingLossless.collectAsStateWithLifecycle()
             val stillRacing = song.videoId in racingLossless
             Box(
@@ -3270,16 +3317,20 @@ fun NowPlayingScreen(
             // ---- Transport ----
             // With the queue open it stays, moved down to sit midway between
             // the scrubber and the toggle row, so the queue can be played from.
+            val seekButtonsVisible = when (seekButtonMode) {
+                SeekButtonMode.OFF -> false
+                SeekButtonMode.ALWAYS -> true
+                SeekButtonMode.LONG_TRACKS_ONLY -> effectiveDurationMs >= 15L * 60L * 1000L
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                // Previous and next line up with the toggle row's outer buttons,
+                // as it would stand with three: a touch outside their centres.
+                // With the seek pair as well there is no room to spread, so
+                // that row keeps its even spacing.
+                horizontalArrangement = if (seekButtonsVisible) Arrangement.SpaceEvenly else SkipButtonsAtToggleEnds,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                val seekButtonsVisible = when (seekButtonMode) {
-                    SeekButtonMode.OFF -> false
-                    SeekButtonMode.ALWAYS -> true
-                    SeekButtonMode.LONG_TRACKS_ONLY -> effectiveDurationMs >= 15L * 60L * 1000L
-                }
                 if (seekButtonsVisible) {
                     SeekTransportGlyph(
                         icon = Icons.Rounded.FastRewind,
@@ -3352,10 +3403,18 @@ fun NowPlayingScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clipToBounds()
-                    .graphicsLayer { alpha = ((0.30f - queueCompact) / 0.30f).coerceIn(0f, 1f) }
+                    .graphicsLayer { alpha = ((0.30f - volumeFold) / 0.30f).coerceIn(0f, 1f) }
                     .layout { measurable, constraints ->
                         val placeable = measurable.measure(constraints.copy(minHeight = 0))
-                        val height = (placeable.height * (1f - queueCompact)).roundToInt()
+                        // Folds down to the transport's gap above it (plus the
+                        // timestamps' lift), not to nothing: the transport then
+                        // sits midway between the scrubber and the toggle row
+                        // instead of dropping onto the row.
+                        val keep = minOf(
+                            placeable.height,
+                            (14.dp + controlSpread / 2 + TIMESTAMP_LIFT).roundToPx(),
+                        )
+                        val height = (placeable.height - (placeable.height - keep) * volumeFold).roundToInt()
                         layout(placeable.width, height) {
                             placeable.placeRelative(0, 0)
                         }
@@ -3562,7 +3621,7 @@ fun NowPlayingScreen(
                     if (segments.isNotEmpty()) {
                         PlayerToggleGroup(
                             segments,
-                            inverted = betaLayout,
+                            inverted = true,
                         )
                         Spacer(Modifier.height(18.dp))
                     }
@@ -4205,6 +4264,8 @@ private fun LyricsPanel(
     isPlaying: Boolean,
     onSeekToLine: (Long) -> Unit,
     lyricsUnavailable: Boolean = true,
+    /** Shown under the last line: in view once the lyrics are scrolled to the end. */
+    footer: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val clock = rememberLyricClock(positionMs, isPlaying)
@@ -4328,7 +4389,7 @@ private fun LyricsPanel(
             .fadingEdges(),
         contentPadding = PaddingValues(
             top = 40.dp - GLOW_ROOM,
-            bottom = with(LocalDensity.current) { viewportHeight.toDp() } * 0.8f,
+            bottom = 0.dp,
             start = PLAYER_GUTTER - GLOW_ROOM,
             end = PLAYER_GUTTER - GLOW_ROOM,
         ),
@@ -4608,6 +4669,21 @@ private fun LyricsPanel(
                         }
                     }
                 }
+            }
+        }
+
+        // The room after the last line (so it can still scroll up to where
+        // the current line is read) ends with the footer: scrolled all the
+        // way down, it sits just above the bottom edge.
+        item(key = "lyrics_tail", contentType = "lyrics_tail") {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(with(LocalDensity.current) { viewportHeight.toDp() } * 0.8f)
+                    .padding(bottom = 32.dp),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                footer?.invoke()
             }
         }
     }
@@ -4905,7 +4981,14 @@ private fun CurrentLyricLine(
             verticalAlignment = Alignment.CenterVertically,
             modifier = modifier
                 .clip(RoundedCornerShape(8.dp))
-                .clickable(onClick = onClick)
+                .clickable(
+                    // No press ripple: nothing else in the player darkens
+                    // under a finger, and the line opening the lyrics is
+                    // feedback enough.
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onClick,
+                )
                 .padding(vertical = 4.dp),
         ) {
             Icon(
@@ -4952,7 +5035,14 @@ private fun CurrentLyricLine(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
+            .clickable(
+                    // No press ripple: nothing else in the player darkens
+                    // under a finger, and the line opening the lyrics is
+                    // feedback enough.
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onClick,
+                )
             .padding(vertical = 4.dp),
     ) {
         if (instrumental) {
@@ -5176,13 +5266,22 @@ private fun CircleGlyph(
     haptic: Haptic = Haptic.Tap,
 ) {
     val haptics = rememberHaptics()
+    // On (a favourite, or a panel that is open): the same look as the bottom
+    // row's — a 70% white disc with the glyph cut out of it.
     val discAlpha by animateFloatAsState(
-        targetValue = if (active) 0.34f else 0.18f,
+        targetValue = if (active) SEGMENT_FILL_INVERTED else 0.18f,
+        animationSpec = tween(durationMillis = 350, easing = SegmentEasing),
         label = "glyphDisc",
+    )
+    val cutOut by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = tween(durationMillis = 350, easing = SegmentEasing),
+        label = "glyphCutOut",
     )
     Box(
         modifier = Modifier
             .size(34.dp)
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
             .clip(CircleShape)
             .background(Color.White.copy(alpha = discAlpha))
             .clickable(
@@ -5200,12 +5299,26 @@ private fun CircleGlyph(
             animationSpec = tween(durationMillis = 180),
             label = "playerMenuGlyph",
         ) { glyph ->
-            Icon(
-                imageVector = glyph,
-                contentDescription = contentDescription,
-                tint = Color.White,
-                modifier = Modifier.size(22.dp),
-            )
+            Box(contentAlignment = Alignment.Center) {
+                if (cutOut < 1f) {
+                    Icon(
+                        imageVector = glyph,
+                        contentDescription = contentDescription,
+                        tint = Color.White.copy(alpha = 1f - cutOut),
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                if (cutOut > 0f) {
+                    Icon(
+                        imageVector = glyph,
+                        contentDescription = if (cutOut >= 1f) contentDescription else null,
+                        tint = Color.Black.copy(alpha = cutOut),
+                        modifier = Modifier
+                            .size(22.dp)
+                            .graphicsLayer { blendMode = BlendMode.DstOut },
+                    )
+                }
+            }
         }
     }
 }
@@ -5235,6 +5348,81 @@ private val ART_GUTTER_REACH = 10.dp
 
 /** How far the timestamps are pulled up under the scrubber's touch target. */
 private val TIMESTAMP_LIFT = 9.dp
+
+/** How far outside the toggle row's 3-up end centres the skip buttons sit. */
+private val SKIP_OUTSET = 8.dp
+
+/**
+ * Previous · play · next, with the outer two centred a touch ([SKIP_OUTSET])
+ * outside where the toggle row's end buttons sit when it holds three.
+ * The skip glyphs' two triangles meet at the glyph's centre, so that seam is
+ * what lands there. Any other count falls back to even spacing.
+ */
+private object SkipButtonsAtToggleEnds : Arrangement.Horizontal {
+    override fun Density.arrange(
+        totalSize: Int,
+        sizes: IntArray,
+        layoutDirection: LayoutDirection,
+        outPositions: IntArray,
+    ) {
+        if (sizes.size != 3) {
+            with(Arrangement.SpaceEvenly) { arrange(totalSize, sizes, layoutDirection, outPositions) }
+            return
+        }
+        val gaps = (SEGMENT_GAP * 2).toPx()
+        val edge = (totalSize - gaps) / 6f - SKIP_OUTSET.toPx()
+        val centres = floatArrayOf(edge, totalSize / 2f, totalSize - edge)
+        val ltr = layoutDirection == LayoutDirection.Ltr
+        for (i in 0..2) {
+            val c = centres[if (ltr) i else 2 - i]
+            outPositions[i] = (c - sizes[i] / 2f).roundToInt()
+        }
+    }
+}
+
+/**
+ * The end of the lyrics: where they came from, and (when the lyrics log is
+ * switched on in Settings) a way into it.
+ */
+@Composable
+private fun LyricsFooter(text: String?, showLogs: Boolean, onOpenLogs: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (text != null) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White.copy(alpha = 0.7f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .clip(RoundedCornerShape(percent = 50))
+                    .background(Color.White.copy(alpha = 0.10f))
+                    .padding(horizontal = 18.dp, vertical = 8.dp),
+            )
+        }
+        if (showLogs) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.10f))
+                    .clickable(onClick = onOpenLogs),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.History,
+                    contentDescription = "Lyrics Logs",
+                    tint = Color.White.copy(alpha = 0.8f),
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
 
 private const val LYRICS_PLAY_SCALE = 1.2f
 private const val LYRICS_SKIP_SCALE = 0.84f

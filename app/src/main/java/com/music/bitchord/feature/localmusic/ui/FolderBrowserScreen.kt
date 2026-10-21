@@ -292,7 +292,12 @@ fun FolderBrowserScreen(
     // While picking, back ends the selection first (registered later, so it wins).
     BackHandler(enabled = selection?.active == true) { selection?.clear() }
     // Moving to another folder ends a selection.
-    LaunchedEffect(currentNavState.node.path) { selection?.clear() }
+    LaunchedEffect(currentNavState.node.path) {
+        selection?.clear()
+        // Without this the menu rode the page out on its exit animation and
+        // only closed once that had finished.
+        menuSong = null
+    }
 
     val folderTitleCallback = rememberUpdatedState(onFolderTitleChanged)
     val currentFolderTitle = currentNavState.node.name.takeIf { currentNavState.depth > 0 }
@@ -318,6 +323,10 @@ fun FolderBrowserScreen(
                     (slideOutHorizontally { it } + fadeOut())
             }
         },
+        // Keyed by place, not by the node object: the tree is rebuilt whenever
+        // the library is re-read (after a delete, say), and the same folder
+        // must not slide in again as if it were another page.
+        contentKey = { it.node.path },
         label = "folder_browser_transition",
         modifier = modifier.fillMaxSize(),
     ) { navState ->

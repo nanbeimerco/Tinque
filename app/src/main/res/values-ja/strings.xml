@@ -1154,4 +1154,5 @@
     <string name="font_error_typeface">フォントとして読み込めませんでした</string>
     <string name="beta_player_layout">ベータ版プレイヤーレイアウト</string>
     <string name="beta_player_layout_subtitle">操作を画面の下にまとめ、アートを大きく表示します。歌詞は再生画面の中に表示します</string>
+    <string name="favorites">お気に入りの曲</string>
 </resources>

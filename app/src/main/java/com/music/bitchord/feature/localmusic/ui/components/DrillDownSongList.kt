@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.localmusic.ui.components
 
+import androidx.compose.runtime.collectAsState
 import com.music.bitchord.data.settings.GridKind
 import com.music.bitchord.ui.components.ScaledGridCells
 import com.music.bitchord.ui.components.pinchToResizeGrid
@@ -200,7 +201,11 @@ private fun CompactDrillDownHeader(
         ) {
             if (isFavorites) {
                 Icon(
-                    imageVector = BitChordIcons.HeartFilled,
+                    imageVector = if (com.music.bitchord.data.settings.AppSettings.favoriteUsesStar.collectAsState().value) {
+                        BitChordIcons.StarFilled
+                    } else {
+                        BitChordIcons.HeartFilled
+                    },
                     contentDescription = null,
                     tint = Color.White.copy(alpha = 0.95f),
                     modifier = Modifier.size(76.dp),

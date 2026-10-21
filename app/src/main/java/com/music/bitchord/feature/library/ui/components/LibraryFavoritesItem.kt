@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.library.ui.components
 
+import androidx.compose.runtime.collectAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -73,7 +74,11 @@ fun LibraryFavoritesItem(
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
-                    imageVector = BitChordIcons.HeartFilled,
+                    imageVector = if (com.music.bitchord.data.settings.AppSettings.favoriteUsesStar.collectAsState().value) {
+                        BitChordIcons.StarFilled
+                    } else {
+                        BitChordIcons.HeartFilled
+                    },
                     contentDescription = null,
                     tint = Color.White,
                     modifier = Modifier.size(28.dp),

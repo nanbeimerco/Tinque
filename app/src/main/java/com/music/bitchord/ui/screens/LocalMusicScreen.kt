@@ -577,7 +577,10 @@ fun LocalMusicScreen(
     }
     SelectionDeleteEffect(deleteSelected)
     // Moving to another page ends a selection, as the back button would.
-    LaunchedEffect(selectedTab, drillDownLabel, drillDownShowsAlbums) { selection.clear() }
+    LaunchedEffect(selectedTab, drillDownLabel, drillDownShowsAlbums) {
+        selection.clear()
+        activeMenuSong = null
+    }
 
     // When tab row is showing, content scrolls beneath it. When tab row is hidden (bottom bar handles tabs),
     // content takes the full content padding including top bar padding.

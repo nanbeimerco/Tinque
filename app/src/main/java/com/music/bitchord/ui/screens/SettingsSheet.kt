@@ -414,21 +414,6 @@ fun SettingsScreen(
         SettingsSearchEntry(stringResource(R.string.hide_lyrics_saved_message), stringResource(R.string.hide_lyrics_saved_message_subtitle), listOf("lyrics", "歌詞", "保存済み", "downloaded"), hideLyricsSavedMessage) { AppSettings.setHideLyricsSavedMessage(!hideLyricsSavedMessage) },
         SettingsSearchEntry(stringResource(R.string.hide_lyrics_unavailable_label), stringResource(R.string.hide_lyrics_unavailable_label_subtitle), listOf("lyrics", "歌詞", "ありません", "unavailable"), hideLyricsUnavailableLabel) { AppSettings.setHideLyricsUnavailableLabel(!hideLyricsUnavailableLabel) },
         SettingsSearchEntry(stringResource(R.string.hide_lyrics_gap_note), stringResource(R.string.hide_lyrics_gap_note_subtitle), listOf("lyrics", "歌詞", "音符", "gap", "instrumental"), hideLyricsGapNote) { AppSettings.setHideLyricsGapNote(!hideLyricsGapNote) },
-        SettingsSearchEntry(stringResource(R.string.lyrics_show_previous), stringResource(R.string.lyrics_transport_visibility_subtitle), listOf("lyrics", "歌詞", "previous", "前の曲"), showLyricsPreviousControl) { AppSettings.setShowLyricsPreviousControl(!showLyricsPreviousControl) },
-        SettingsSearchEntry(stringResource(R.string.lyrics_show_play_pause), stringResource(R.string.lyrics_transport_visibility_subtitle), listOf("lyrics", "歌詞", "play", "pause", "再生", "一時停止"), showLyricsPlayPauseControl) { AppSettings.setShowLyricsPlayPauseControl(!showLyricsPlayPauseControl) },
-        SettingsSearchEntry(stringResource(R.string.lyrics_show_next), stringResource(R.string.lyrics_transport_visibility_subtitle), listOf("lyrics", "歌詞", "next", "次の曲"), showLyricsNextControl) { AppSettings.setShowLyricsNextControl(!showLyricsNextControl) },
-        SettingsSearchEntry(stringResource(R.string.lyrics_transport_controls_centered), stringResource(R.string.lyrics_transport_controls_centered_subtitle), listOf("lyrics", "歌詞", "center", "中央揃え", "ボタン"), lyricsTransportControlsCentered) { AppSettings.setLyricsTransportControlsCentered(!lyricsTransportControlsCentered) },
-        SettingsSearchEntry(
-            title = stringResource(R.string.lyrics_transport_control_size),
-            subtitle = stringResource(R.string.lyrics_transport_control_size_subtitle),
-            keywords = listOf("lyrics", "歌詞", "button", "ボタン", "size", "サイズ", "transport"),
-            valueLabel = stringResource(R.string.lyrics_transport_control_size_value, lyricsTransportControlSize.roundToInt()),
-            sliderValue = lyricsTransportControlSize,
-            sliderValueRange = 14f..64f,
-            sliderSteps = 49,
-            onSliderValueChange = AppSettings::setLyricsTransportControlSize,
-            activate = {},
-        ),
         SettingsSearchEntry(stringResource(R.string.hide_lossless_label), stringResource(R.string.hide_lossless_label_subtitle), listOf("lossless", "quality", "ロスレス", "高音質"), hideLosslessLabel) { AppSettings.setHideLosslessLabel(!hideLosslessLabel) },
         SettingsSearchEntry(
             stringResource(R.string.frosted_queue_manager),
@@ -2906,7 +2891,10 @@ fun SettingsScreen(
                 },
                 onClick = { AppSettings.setHideLyricsGapNote(!hideLyricsGapNote) },
             )
-            if (hideLyricsSavedMessage || hideLyricsUnavailableLabel) {
+            // The lyrics page's own small transport is gone (lyrics now open inside
+            // the player, with its controls left in place), so its settings are
+            // hidden. Their values are kept.
+            if (LYRICS_PAGE_TRANSPORT_SETTINGS && (hideLyricsSavedMessage || hideLyricsUnavailableLabel)) {
                 RowDivider()
                 SettingsRow(
                     icon = Icons.Rounded.FastRewind,
@@ -4769,3 +4757,6 @@ private fun SegmentedControl(
         }
     }
 }
+
+/** The old lyrics page's transport settings: off since the page went away. */
+private const val LYRICS_PAGE_TRANSPORT_SETTINGS = false

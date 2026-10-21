@@ -578,7 +578,13 @@ fun LibraryScreen(
     }
     val pick: (Song) -> Unit = { song -> if (selection != null) selection.toggle(song) else onSongLongPress(song) }
     // Moving to another page of the Library ends a selection.
-    LaunchedEffect(drillDownLabel, selectedFilter) { selection?.clear() }
+    LaunchedEffect(drillDownLabel, selectedFilter) {
+        selection?.clear()
+        // A menu left open on a page must neither ride it out on its exit
+        // animation nor be waiting there when the page is opened again.
+        activeMenuSong = null
+        activeMenuSection = null
+    }
     menuPlaylistSongs?.let { picked ->
         LocalAddToPlaylistSheet(songs = picked, onDismissRequest = { menuPlaylistSongs = null })
     }
@@ -779,7 +785,7 @@ fun LibraryScreen(
                     val onFavoritesClick = {
                         drillDownPlaylistId = null
                         playlistReorderEnabled = false
-                        drillDownLabel = "Favorites"
+                        drillDownLabel = context.getString(R.string.favorites)
                         drillDownSongs = favoriteSongs
                         drillDownArt = "favorites"
                     }

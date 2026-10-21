@@ -178,7 +178,10 @@ fun LocalSearchScreen(
         }
     }
     // Moving between the results and an opened album ends a selection.
-    LaunchedEffect(drillDownLabel) { selection?.clear() }
+    LaunchedEffect(drillDownLabel) {
+        selection?.clear()
+        menuSong = null
+    }
 
     LaunchedEffect(focusTrigger) {
         if (focusTrigger > 0) {
