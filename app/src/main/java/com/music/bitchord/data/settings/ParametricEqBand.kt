@@ -15,16 +15,15 @@ enum class ParametricEqFilterType(
     val apoLabel: String,
     val displayLabel: String,
     val eelFunction: String,
-    val descriptionJa: String,
 ) {
-    PEAKING(0, "PK", "PK", "calc_peak", "ピーキング (Peaking)"),
-    LOW_SHELF(1, "LSC", "LSC", "calc_lshelf", "ローシェルフ (Low Shelf)"),
-    HIGH_SHELF(2, "HSC", "HSC", "calc_hshelf", "ハイシェルフ (High Shelf)"),
-    LOW_PASS(3, "LPQ", "LPF", "calc_lpf", "ローパス (Low Pass)"),
-    HIGH_PASS(4, "HPQ", "HPF", "calc_hpf", "ハイパス (High Pass)"),
-    BAND_PASS(5, "BP", "BPF", "calc_bpf", "バンドパス (Band Pass)"),
-    NOTCH(6, "NO", "NO", "calc_notch", "ノッチ (Notch)"),
-    ALL_PASS(7, "AP", "AP", "calc_allpass", "オールパス (All Pass)");
+    PEAKING(0, "PK", "PK", "calc_peak"),
+    LOW_SHELF(1, "LSC", "LSC", "calc_lshelf"),
+    HIGH_SHELF(2, "HSC", "HSC", "calc_hshelf"),
+    LOW_PASS(3, "LPQ", "LPF", "calc_lpf"),
+    HIGH_PASS(4, "HPQ", "HPF", "calc_hpf"),
+    BAND_PASS(5, "BP", "BPF", "calc_bpf"),
+    NOTCH(6, "NO", "NO", "calc_notch"),
+    ALL_PASS(7, "AP", "AP", "calc_allpass");
 
     companion object {
         fun fromCode(code: Int): ParametricEqFilterType =
@@ -59,10 +58,10 @@ enum class ParametricEqFilterType(
     }
 }
 
-enum class ParametricEqChannelTarget(val labelJa: String, val shortLabel: String) {
-    GLOBAL("両ch共通 (Global)", "Global"),
-    LEFT("左ch独立 (Left)", "L ch"),
-    RIGHT("右ch独立 (Right)", "R ch"),
+enum class ParametricEqChannelTarget(@androidx.annotation.StringRes val labelRes: Int, val shortLabel: String) {
+    GLOBAL(com.music.bitchord.R.string.peq_target_global, "Global"),
+    LEFT(com.music.bitchord.R.string.peq_target_left, "L ch"),
+    RIGHT(com.music.bitchord.R.string.peq_target_right, "R ch"),
 }
 
 /** One biquad filter band in the high-precision software parametric equalizer. */

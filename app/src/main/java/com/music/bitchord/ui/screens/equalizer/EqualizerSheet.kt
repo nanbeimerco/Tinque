@@ -236,11 +236,11 @@ private fun EqualizerPage(onClose: () -> Unit, recordGlass: Boolean = true) {
                 onConfigChange = AppSettings::setParametricEqConfig,
             )
 
-            EqGroup(title = "グラフィックEQ") {
+            EqGroup(title = stringResource(R.string.eq_graphic)) {
                 row {
                     EqSwitchRow(
-                        title = "グラフィックEQ",
-                        subtitle = "5バンド・システムエフェクト",
+                        title = stringResource(R.string.eq_graphic),
+                        subtitle = stringResource(R.string.eq_graphic_subtitle),
                         checked = enabled,
                         onCheckedChange = { EqualizerSettings.setEnabled(it) },
                         icon = Icons.Rounded.Equalizer,

@@ -9,6 +9,7 @@ import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
+import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
 import java.io.File
 import java.io.RandomAccessFile
@@ -28,18 +29,18 @@ object CustomFont {
     fun import(context: Context, uri: Uri): Result<String> = runCatching {
         val displayName = queryDisplayName(context, uri) ?: "custom font"
         val ext = displayName.substringAfterLast('.', "ttf").lowercase()
-        require(ext == "ttf" || ext == "otf") { ".ttf または .otf ファイルを選んでください" }
+        require(ext == "ttf" || ext == "otf") { context.getString(R.string.font_error_type) }
 
         val dir = File(context.filesDir, DIR).apply { mkdirs() }
         val target = File(dir, "custom_${System.currentTimeMillis()}.$ext")
         context.contentResolver.openInputStream(uri)?.use { input ->
             target.outputStream().use { input.copyTo(it) }
-        } ?: error("ファイルを開けませんでした")
+        } ?: error(context.getString(R.string.font_error_open))
 
         val typeface = Typeface.Builder(target).build()
         if (typeface == null) {
             target.delete()
-            error("フォントとして読み込めませんでした")
+            error(context.getString(R.string.font_error_typeface))
         }
 
         // Only the newest import is kept.

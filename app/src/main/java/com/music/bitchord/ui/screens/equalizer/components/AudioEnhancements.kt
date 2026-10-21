@@ -27,7 +27,7 @@ fun AudioEnhancements(
     val context = LocalContext.current
     val systemEqLabel = stringResource(R.string.equalizer_subtitle)
 
-    EqGroup(modifier = modifier, title = "エフェクト") {
+    EqGroup(modifier = modifier, title = stringResource(R.string.eq_effects)) {
         row {
             EqSliderRow(
                 label = "Bass Boost",

@@ -151,12 +151,12 @@ fun ParametricEqControls(
             val text = context.contentResolver.openInputStream(uri)
                 ?.bufferedReader()
                 ?.use { it.readText() }
-                ?: error("ファイルを読み込めませんでした")
+                ?: error(context.getString(R.string.peq_error_read_file))
             val parsed = AppSettings.importEelPreset(text, displayName)
             selectedTab = 0
-            Toast.makeText(context, "プリセット「${parsed.preset.name}」を読み込み・保存しました", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.peq_preset_imported, parsed.preset.name), Toast.LENGTH_SHORT).show()
         }.onFailure { err ->
-            Toast.makeText(context, "読み込みエラー: ${err.message}", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, context.getString(R.string.peq_import_error, err.message.orEmpty()), Toast.LENGTH_LONG).show()
         }
     }
 
@@ -167,19 +167,19 @@ fun ParametricEqControls(
         runCatching {
             val eelText = BiquadUtils.toEelString(config)
             context.contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(eelText) }
-            Toast.makeText(context, ".eelファイルを書き出しました", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.peq_exported), Toast.LENGTH_SHORT).show()
         }.onFailure { err ->
-            Toast.makeText(context, "書き出しエラー: ${err.message}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.peq_export_error, err.message.orEmpty()), Toast.LENGTH_SHORT).show()
         }
     }
 
     Column(modifier = modifier.fillMaxWidth()) {
         // 1. Master switch, response graph, live summary
-        EqGroup(title = "パラメトリックEQ") {
+        EqGroup(title = stringResource(R.string.peq_title)) {
             row {
                 EqSwitchRow(
-                    title = "パラメトリックEQ",
-                    subtitle = "64-bit Biquad・左右独立EQ・チャンネルスワップ（アプリ内のみ）",
+                    title = stringResource(R.string.peq_title),
+                    subtitle = stringResource(R.string.peq_subtitle),
                     checked = config.enabled,
                     onCheckedChange = { AppSettings.setParametricEqEnabled(it) },
                     icon = Icons.Rounded.GraphicEq,
@@ -190,12 +190,12 @@ fun ParametricEqControls(
         }
 
         // 2. Saved presets
-        EqGroup(title = "プリセット (${presets.size})") {
+        EqGroup(title = stringResource(R.string.peq_presets_count, presets.size)) {
             if (presets.isEmpty()) {
                 row {
                     EqRowContent {
                         Text(
-                            text = "保存されたプリセットはありません。下の「EQファイルを読み込む」または「プリセットとして保存」から追加できます。",
+                            text = stringResource(R.string.peq_presets_empty),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -209,11 +209,11 @@ fun ParametricEqControls(
                         selected = preset.id == config.activePresetId,
                         onSelect = {
                             AppSettings.selectParametricEqPreset(preset.id)
-                            Toast.makeText(context, "プリセット「${preset.name}」を適用しました", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.peq_preset_applied, preset.name), Toast.LENGTH_SHORT).show()
                         },
                         onDelete = {
                             AppSettings.deleteParametricEqPreset(preset.id)
-                            Toast.makeText(context, "プリセット「${preset.name}」を削除しました", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.peq_preset_deleted, preset.name), Toast.LENGTH_SHORT).show()
                         },
                     )
                 }
@@ -221,10 +221,10 @@ fun ParametricEqControls(
         }
 
         // 3. File actions
-        EqGroup(title = "ファイル") {
+        EqGroup(title = stringResource(R.string.peq_file)) {
             row {
                 EqActionRow(
-                    title = "EQファイルを読み込む",
+                    title = stringResource(R.string.peq_load_file),
                     subtitle = ".eel / EqualizerAPO .txt",
                     icon = Icons.Rounded.FileOpen,
                     onClick = { importEelLauncher.launch(arrayOf("*/*")) },
@@ -232,14 +232,14 @@ fun ParametricEqControls(
             }
             row {
                 EqActionRow(
-                    title = "プリセットとして保存",
+                    title = stringResource(R.string.peq_save_as_preset),
                     icon = Icons.Rounded.BookmarkAdd,
                     onClick = { showSavePresetDialog = true },
                 )
             }
             row {
                 EqActionRow(
-                    title = ".eel に書き出す",
+                    title = stringResource(R.string.peq_export_eel),
                     icon = Icons.Rounded.FileUpload,
                     onClick = {
                         val suggested = (config.activePresetName ?: "custom_peq")
@@ -250,34 +250,34 @@ fun ParametricEqControls(
             }
             row {
                 EqActionRow(
-                    title = "EELコードを表示",
+                    title = stringResource(R.string.peq_show_eel),
                     icon = Icons.Rounded.Code,
                     onClick = { showRawEelDialog = true },
                 )
             }
             row {
                 EqActionRow(
-                    title = "フラットに戻す",
+                    title = stringResource(R.string.peq_reset_flat),
                     icon = Icons.Rounded.RestartAlt,
                     titleColor = MaterialTheme.colorScheme.error,
                     showChevron = false,
                     onClick = {
                         AppSettings.resetParametricEqConfig()
-                        Toast.makeText(context, "PEQ・スワップを初期状態にリセットしました", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, context.getString(R.string.peq_reset_done), Toast.LENGTH_SHORT).show()
                     },
                 )
             }
         }
 
         // 4. Channel swap & preamp
-        EqGroup(title = "チャンネル・プリアンプ") {
+        EqGroup(title = stringResource(R.string.peq_channel_preamp)) {
             row {
                 EqSwitchRow(
-                    title = "左右チャンネルスワップ",
+                    title = stringResource(R.string.peq_swap_channels),
                     subtitle = if (config.swapChannels) {
-                        if (config.swapBeforeEq) "EQの前に L↔R を入れ替え" else "EQの後に L↔R を入れ替え"
+                        if (config.swapBeforeEq) stringResource(R.string.peq_swap_before_desc) else stringResource(R.string.peq_swap_after_desc)
                     } else {
-                        "通常のステレオ配置"
+                        stringResource(R.string.peq_swap_off_desc)
                     },
                     checked = config.swapChannels,
                     onCheckedChange = { AppSettings.setParametricEqSwapChannels(it, config.swapBeforeEq) },
@@ -288,12 +288,12 @@ fun ParametricEqControls(
                 row {
                     EqRowContent {
                         Text(
-                            "スワップ位置",
+                            stringResource(R.string.peq_swap_position),
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                         )
                         EqSegmented(
-                            options = listOf("EQ前", "EQ後"),
+                            options = listOf(stringResource(R.string.peq_before_eq), stringResource(R.string.peq_after_eq)),
                             selectedIndex = if (config.swapBeforeEq) 0 else 1,
                             onSelect = { AppSettings.setParametricEqSwapChannels(true, it == 0) },
                         )
@@ -303,15 +303,15 @@ fun ParametricEqControls(
             row {
                 val linGain = Math.pow(10.0, config.totalPreampDb.toDouble() / 20.0)
                 EqActionRow(
-                    title = "プリアンプ 合計 ${EelEqParser.fmtSignedDb(config.totalPreampDb)}",
-                    subtitle = String.format(Locale.US, "×%.4f ・ タップで数値入力", linGain),
+                    title = stringResource(R.string.peq_preamp_total, EelEqParser.fmtSignedDb(config.totalPreampDb)),
+                    subtitle = stringResource(R.string.peq_preamp_linear_tap, String.format(Locale.US, "%.4f", linGain)),
                     icon = Icons.Rounded.Edit,
                     onClick = { editingPreampDialog = true },
                 )
             }
             row {
                 EqSliderRow(
-                    label = "Global プリアンプ",
+                    label = stringResource(R.string.peq_global_preamp),
                     valueText = EelEqParser.fmtSignedDb(config.globalPreampDb),
                     value = config.globalPreampDb,
                     valueRange = -20f..12f,
@@ -323,7 +323,7 @@ fun ParametricEqControls(
             }
             row {
                 EqSliderRow(
-                    label = "L/R プリアンプ",
+                    label = stringResource(R.string.peq_lr_preamp),
                     valueText = EelEqParser.fmtSignedDb(config.lrPreampDb),
                     value = config.lrPreampDb,
                     valueRange = -20f..12f,
@@ -336,13 +336,13 @@ fun ParametricEqControls(
         }
 
         // 5. Filters
-        EqGroup(title = "フィルター") {
+        EqGroup(title = stringResource(R.string.peq_filters)) {
             row {
                 EqRowContent {
                     EqSegmented(
                         options = listOf(
-                            "一覧 ${report.globalBands.size + report.leftBands.size + report.rightBands.size}",
-                            "共通 ${config.globalBands.size}",
+                            stringResource(R.string.peq_tab_overview, report.globalBands.size + report.leftBands.size + report.rightBands.size),
+                            stringResource(R.string.peq_tab_shared, config.globalBands.size),
                             "L ${config.leftBands.size}",
                             "R ${config.rightBands.size}",
                         ),
@@ -413,7 +413,7 @@ fun ParametricEqControls(
             onSave = { name ->
                 val saved = AppSettings.saveCurrentAsParametricEqPreset(name)
                 showSavePresetDialog = false
-                Toast.makeText(context, "プリセット「${saved.name}」を保存しました", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.peq_preset_saved, saved.name), Toast.LENGTH_SHORT).show()
             },
         )
     }
@@ -516,13 +516,13 @@ private fun PresetRow(
                 ) {
                     val tagBg = MaterialTheme.colorScheme.surfaceContainerHighest
                     val tagFg = MaterialTheme.colorScheme.onSurfaceVariant
-                    if (selected) EqTag("適用中", MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary)
+                    if (selected) EqTag(stringResource(R.string.peq_active), MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary)
                     if (preset.swapChannels) EqTag("L↔R", tagBg, tagFg)
                     if (abs(preset.totalPreampDb) > 0.001f) {
                         EqTag("Pre ${EelEqParser.fmtSignedDb(preset.totalPreampDb)}", tagBg, tagFg)
                     }
                     EqTag(
-                        "共通${preset.globalBands.size}・L${preset.leftBands.size}・R${preset.rightBands.size}",
+                        stringResource(R.string.peq_preset_band_counts, preset.globalBands.size, preset.leftBands.size, preset.rightBands.size),
                         tagBg,
                         tagFg,
                     )
@@ -531,7 +531,7 @@ private fun PresetRow(
             IconButton(onClick = onDelete) {
                 Icon(
                     imageVector = Icons.Rounded.DeleteOutline,
-                    contentDescription = "プリセットを削除",
+                    contentDescription = stringResource(R.string.peq_delete_preset),
                     tint = MaterialTheme.colorScheme.error,
                 )
             }
@@ -584,7 +584,7 @@ private fun ParametricEqResponseGraph(config: ParametricEqConfig) {
 
     EqRowContent {
         Text(
-            text = "周波数特性",
+            text = stringResource(R.string.peq_frequency_response),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
@@ -690,7 +690,7 @@ private fun ParametricEqResponseGraph(config: ParametricEqConfig) {
         ) {
             LegendDot(color = leftColor, label = "L ch")
             LegendDot(color = rightColor, label = "R ch")
-            LegendDot(color = globalColor, label = "共通 (破線)")
+            LegendDot(color = globalColor, label = stringResource(R.string.peq_legend_shared))
         }
 
         val lPeak = response.leftGainsDb.maxOrNull() ?: 0.0
@@ -699,12 +699,12 @@ private fun ParametricEqResponseGraph(config: ParametricEqConfig) {
         val rMin = response.rightGainsDb.minOrNull() ?: 0.0
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                text = String.format(Locale.US, "L  最大 %+.1f dB ／ 最小 %+.1f dB", lPeak, lMin),
+                text = stringResource(R.string.peq_peak_min, "L", String.format(Locale.US, "%+.1f", lPeak), String.format(Locale.US, "%+.1f", lMin)),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                text = String.format(Locale.US, "R  最大 %+.1f dB ／ 最小 %+.1f dB", rPeak, rMin),
+                text = stringResource(R.string.peq_peak_min, "R", String.format(Locale.US, "%+.1f", rPeak), String.format(Locale.US, "%+.1f", rMin)),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -733,38 +733,38 @@ private fun ActiveDspSummary(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "現在の構成",
+                    text = stringResource(R.string.peq_current_config),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    text = config.activePresetName ?: "カスタム",
+                    text = config.activePresetName ?: stringResource(R.string.peq_custom),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
             }
             EqTag(
-                text = if (config.enabled) "稼働中" else "オフ",
+                text = if (config.enabled) stringResource(R.string.peq_running) else stringResource(R.string.off),
                 container = if (config.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHighest,
                 content = if (config.enabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         if (!config.sourceFileName.isNullOrBlank()) {
             Text(
-                text = "読込元: ${config.sourceFileName}",
+                text = stringResource(R.string.peq_source, config.sourceFileName.orEmpty()),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         if (!config.notes.isNullOrBlank()) {
             Text(
-                text = "備考: ${config.notes}",
+                text = stringResource(R.string.peq_notes, config.notes.orEmpty()),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        report.summaryLinesJa.forEach { line ->
+        peqSummaryLines(report).forEach { line ->
             Text(
                 text = line,
                 style = MaterialTheme.typography.bodyMedium,
@@ -799,22 +799,22 @@ private fun EqGroupScope.filterBreakdownRows(
     report: EelEqParser.EelAnalysisReport,
     onJumpToEdit: (ParametricEqChannelTarget, Int) -> Unit,
 ) {
-    row { SubheaderRow("両ch共通 ・ ${config.globalBands.size}") }
+    row { SubheaderRow(stringResource(R.string.peq_sub_shared, config.globalBands.size)) }
     if (config.globalBands.isEmpty()) {
-        row { EmptyRow("共通フィルターなし") }
+        row { EmptyRow(stringResource(R.string.peq_empty_shared)) }
     } else {
         config.globalBands.forEachIndexed { idx, band ->
             row { BandSummaryRow(index = idx + 1, band = band, onClick = { onJumpToEdit(ParametricEqChannelTarget.GLOBAL, idx) }) }
         }
     }
 
-    row { SubheaderRow("左右独立 ・ L ${config.leftBands.size} / R ${config.rightBands.size}") }
+    row { SubheaderRow(stringResource(R.string.peq_sub_lr, config.leftBands.size, config.rightBands.size)) }
     val pairedView = report.lrPairs.isNotEmpty() &&
         report.lrPairs.size == config.leftBands.size &&
         config.leftBands.size == config.rightBands.size
     when {
         config.leftBands.isEmpty() && config.rightBands.isEmpty() ->
-            row { EmptyRow("左右独立フィルターなし（「L」「R」タブから追加できます）") }
+            row { EmptyRow(stringResource(R.string.peq_empty_lr)) }
         pairedView -> report.lrPairs.forEachIndexed { idx, pair ->
             row {
                 LrPairRow(
@@ -968,7 +968,7 @@ private fun EqGroupScope.channelBandRows(
     row {
         EqRowContent {
             Text(
-                text = "${target.labelJa} ・ ${bands.size}バンド",
+                text = stringResource(R.string.peq_target_bands, stringResource(target.labelRes), bands.size),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -999,18 +999,18 @@ private fun EqGroupScope.channelBandRows(
                 ) {
                     Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("バンド追加")
+                    Text(stringResource(R.string.peq_add_band))
                 }
                 if (bands.isNotEmpty()) {
                     TextButton(onClick = { onBandsChange(emptyList()) }) {
-                        Text("全消去", color = MaterialTheme.colorScheme.error)
+                        Text(stringResource(R.string.peq_clear_all), color = MaterialTheme.colorScheme.error)
                     }
                 }
                 val otherCh = if (target == ParametricEqChannelTarget.LEFT) "R" else "L"
                 onCopyFromOpposite?.let { copyFn ->
                     AssistChip(
                         onClick = copyFn,
-                        label = { Text("${otherCh}から複製") },
+                        label = { Text(stringResource(R.string.peq_copy_from, otherCh)) },
                         shape = RoundedCornerShape(50),
                         border = null,
                         colors = AssistChipDefaults.assistChipColors(
@@ -1021,7 +1021,7 @@ private fun EqGroupScope.channelBandRows(
                 onInvertFromOpposite?.let { invFn ->
                     AssistChip(
                         onClick = invFn,
-                        label = { Text("${otherCh}を反転して複製") },
+                        label = { Text(stringResource(R.string.peq_copy_inverted_from, otherCh)) },
                         shape = RoundedCornerShape(50),
                         border = null,
                         colors = AssistChipDefaults.assistChipColors(
@@ -1034,7 +1034,7 @@ private fun EqGroupScope.channelBandRows(
     }
 
     if (bands.isEmpty()) {
-        row { EmptyRow("このチャンネルにはフィルターがありません。「バンド追加」で追加できます。") }
+        row { EmptyRow(stringResource(R.string.peq_empty_channel)) }
     } else {
         bands.forEachIndexed { index, band ->
             row {
@@ -1153,7 +1153,7 @@ private fun BandEditorRow(
                     TextButton(onClick = onOpenNumericEditor) {
                         Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("数値入力")
+                        Text(stringResource(R.string.peq_enter_value))
                     }
                     TextButton(onClick = onDelete) {
                         Icon(
@@ -1163,7 +1163,7 @@ private fun BandEditorRow(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text("削除", color = MaterialTheme.colorScheme.error)
+                        Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -1198,25 +1198,25 @@ private fun SavePresetDialog(
     GlassAlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(28.dp),
-        title = { Text("プリセットとして保存") },
+        title = { Text(stringResource(R.string.peq_save_as_preset)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "現在のPEQ・スワップ設定を保存します。いつでも呼び出し・削除できます。",
+                    text = stringResource(R.string.peq_save_preset_desc),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
                     singleLine = true,
-                    label = { Text("プリセット名") },
+                    label = { Text(stringResource(R.string.peq_preset_name)) },
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
         },
-        confirmButton = { TextButton(onClick = { onSave(name) }) { Text("保存") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } },
+        confirmButton = { TextButton(onClick = { onSave(name) }) { Text(stringResource(R.string.save)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -1228,7 +1228,7 @@ private fun RawEelPreviewDialog(
     GlassAlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(28.dp),
-        title = { Text("EELコード") },
+        title = { Text(stringResource(R.string.peq_eel_code)) },
         text = {
             Column(
                 modifier = Modifier
@@ -1249,7 +1249,7 @@ private fun RawEelPreviewDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("閉じる") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
     )
 }
 
@@ -1267,16 +1267,16 @@ private fun PreampNumericEditDialog(
     GlassAlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(28.dp),
-        title = { Text("プリアンプ (dB)") },
+        title = { Text(stringResource(R.string.peq_preamp_db)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                DecimalField(globalText, { globalText = it }, "Global プリアンプ")
-                DecimalField(lrText, { lrText = it }, "L/R プリアンプ")
-                DecimalField(leftText, { leftText = it }, "L ch 追加ゲイン")
-                DecimalField(rightText, { rightText = it }, "R ch 追加ゲイン")
+                DecimalField(globalText, { globalText = it }, stringResource(R.string.peq_global_preamp))
+                DecimalField(lrText, { lrText = it }, stringResource(R.string.peq_lr_preamp))
+                DecimalField(leftText, { leftText = it }, stringResource(R.string.peq_left_extra_gain))
+                DecimalField(rightText, { rightText = it }, stringResource(R.string.peq_right_extra_gain))
             }
         },
         confirmButton = {
@@ -1289,9 +1289,9 @@ private fun PreampNumericEditDialog(
                         rightText.toFloatOrNull() ?: config.rightGainDb,
                     )
                 },
-            ) { Text("適用") }
+            ) { Text(stringResource(R.string.peq_apply)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -1325,13 +1325,13 @@ private fun BandNumericEditDialog(
     GlassAlertDialog(
         onDismissRequest = onDismiss,
         shape = RoundedCornerShape(28.dp),
-        title = { Text("${target.shortLabel} バンド ${bandIndex + 1}") },
+        title = { Text(stringResource(R.string.peq_band_title, target.shortLabel, bandIndex + 1)) },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("フィルター種別", style = MaterialTheme.typography.labelLarge)
+                Text(stringResource(R.string.peq_filter_type), style = MaterialTheme.typography.labelLarge)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1347,8 +1347,8 @@ private fun BandNumericEditDialog(
                         )
                     }
                 }
-                DecimalField(freqText, { freqText = it }, "周波数 (Hz) 10–24000")
-                DecimalField(gainText, { gainText = it }, "ゲイン (dB) −30–+30")
+                DecimalField(freqText, { freqText = it }, stringResource(R.string.peq_frequency_field))
+                DecimalField(gainText, { gainText = it }, stringResource(R.string.peq_gain_field))
                 DecimalField(qText, { qText = it }, "Q 0.05–30")
             }
         },
@@ -1364,9 +1364,9 @@ private fun BandNumericEditDialog(
                         ),
                     )
                 },
-            ) { Text("適用") }
+            ) { Text(stringResource(R.string.peq_apply)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -1422,4 +1422,80 @@ private fun queryDisplayName(context: Context, uri: Uri): String? {
             } else null
         }
     }.getOrNull() ?: uri.lastPathSegment
+}
+
+/** The current setup in a few readable lines, in the user's language. */
+@Composable
+private fun peqSummaryLines(report: EelEqParser.EelAnalysisReport): List<String> {
+    val res = LocalContext.current.resources
+    return remember(report, res) {
+        buildList {
+            if (report.swapChannels) {
+                val timing = res.getString(if (report.swapBeforeEq) R.string.peq_sum_before else R.string.peq_sum_after)
+                add(res.getString(R.string.peq_sum_swap_on, timing))
+            } else {
+                add(res.getString(R.string.peq_sum_swap_off))
+            }
+
+            if (abs(report.globalPreampDb) > 0.001f || abs(report.lrPreampDb) > 0.001f ||
+                abs(report.leftGainDb) > 0.001f || abs(report.rightGainDb) > 0.001f
+            ) {
+                val parts = mutableListOf<String>()
+                if (abs(report.globalPreampDb) > 0.001f) parts.add("Global ${EelEqParser.fmtSignedDb(report.globalPreampDb)}")
+                if (abs(report.lrPreampDb) > 0.001f) parts.add("L/R ${EelEqParser.fmtSignedDb(report.lrPreampDb)}")
+                if (abs(report.leftGainDb) > 0.001f || abs(report.rightGainDb) > 0.001f) {
+                    parts.add(
+                        res.getString(
+                            R.string.peq_sum_ch_trim,
+                            EelEqParser.fmtSignedDb(report.leftGainDb),
+                            EelEqParser.fmtSignedDb(report.rightGainDb),
+                        ),
+                    )
+                }
+                val left = String.format(Locale.US, "%.4f", report.linearGainLeft)
+                val right = String.format(Locale.US, "%.4f", report.linearGainRight)
+                val total = if (abs(report.totalLeftPreampDb - report.totalRightPreampDb) < 0.005f) {
+                    res.getString(R.string.peq_sum_total_linear, EelEqParser.fmtSignedDb(report.totalLeftPreampDb), left)
+                } else {
+                    "L: ${EelEqParser.fmtSignedDb(report.totalLeftPreampDb)} (×$left) / " +
+                        "R: ${EelEqParser.fmtSignedDb(report.totalRightPreampDb)} (×$right)"
+                }
+                add(res.getString(R.string.peq_sum_preamp, parts.joinToString(" + "), total))
+            } else {
+                add(res.getString(R.string.peq_sum_preamp_zero))
+            }
+
+            val global = report.globalBands
+            if (global.isNotEmpty()) {
+                val typeCounts = global.groupingBy { it.filterType.displayLabel }.eachCount()
+                    .entries.joinToString(", ") { "${it.key}×${it.value}" }
+                add(
+                    res.getString(
+                        R.string.peq_sum_global,
+                        global.size,
+                        typeCounts,
+                        EelEqParser.fmtHz(global.minOf { it.frequencyHz }),
+                        EelEqParser.fmtHz(global.maxOf { it.frequencyHz }),
+                    ),
+                )
+            } else {
+                add(res.getString(R.string.peq_sum_global_none))
+            }
+
+            val left = report.leftBands
+            val right = report.rightBands
+            if (left.isNotEmpty() || right.isNotEmpty()) {
+                val complementary = report.lrPairs.count { it.isComplementary }
+                val note = when {
+                    complementary > 0 && complementary == left.size && left.size == right.size ->
+                        res.getString(R.string.peq_sum_all_pairs, complementary)
+                    complementary > 0 -> res.getString(R.string.peq_sum_some_pairs, complementary)
+                    else -> ""
+                }
+                add(res.getString(R.string.peq_sum_lr, left.size, right.size, note))
+            } else {
+                add(res.getString(R.string.peq_sum_lr_none))
+            }
+        }
+    }
 }

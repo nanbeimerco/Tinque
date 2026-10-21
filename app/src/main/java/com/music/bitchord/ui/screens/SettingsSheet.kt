@@ -4297,17 +4297,17 @@ private fun CustomFontSettingsRows() {
         if (uri == null) return@rememberLauncherForActivityResult
         com.music.bitchord.ui.theme.CustomFont.import(context, uri)
             .onSuccess { name ->
-                android.widget.Toast.makeText(context, "フォント「$name」を適用しました", android.widget.Toast.LENGTH_SHORT).show()
+                android.widget.Toast.makeText(context, context.getString(R.string.font_applied, name), android.widget.Toast.LENGTH_SHORT).show()
             }
             .onFailure { err ->
-                android.widget.Toast.makeText(context, "フォントを読み込めません: ${err.message}", android.widget.Toast.LENGTH_LONG).show()
+                android.widget.Toast.makeText(context, context.getString(R.string.font_load_error, err.message.orEmpty()), android.widget.Toast.LENGTH_LONG).show()
             }
     }
     SettingsRow(
         icon = Icons.Rounded.TextFields,
-        title = "フォント",
-        subtitle = ".ttf / .otf ファイルを読み込んでアプリ全体の書体を変更します",
-        value = if (fontPath.isNotEmpty()) fontName.ifBlank { "カスタム" } else "標準",
+        title = stringResource(R.string.font_title),
+        subtitle = stringResource(R.string.font_subtitle),
+        value = if (fontPath.isNotEmpty()) fontName.ifBlank { stringResource(R.string.font_custom) } else stringResource(R.string.font_default),
         onClick = {
             // Some file managers label fonts application/octet-stream, so accept anything
             // and let the import check the file.
@@ -4318,7 +4318,7 @@ private fun CustomFontSettingsRows() {
         RowDivider()
         SettingsRow(
             icon = Icons.Rounded.RestartAlt,
-            title = "標準フォントに戻す",
+            title = stringResource(R.string.font_reset),
             onClick = { com.music.bitchord.ui.theme.CustomFont.reset(context) },
         )
     }

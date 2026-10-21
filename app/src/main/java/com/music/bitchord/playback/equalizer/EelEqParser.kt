@@ -46,7 +46,6 @@ object EelEqParser {
         val leftBands: List<ParametricEqBand>,
         val rightBands: List<ParametricEqBand>,
         val lrPairs: List<FilterPairDiff>,
-        val summaryLinesJa: List<String>,
     )
 
     data class ParseResult(
@@ -112,66 +111,6 @@ object EelEqParser {
             }
         }
 
-        val summaryLines = mutableListOf<String>()
-
-        // 1. Channel Swap summary
-        if (config.swapChannels) {
-            val timing = if (config.swapBeforeEq) "EQ処理前 (入力段)" else "EQ処理後 (出力段)"
-            summaryLines.add("・チャンネルスワップ: ON ($timing で Left ↔ Right を入れ替え)")
-        } else {
-            summaryLines.add("・チャンネルスワップ: OFF (通常ステレオ L→L, R→R)")
-        }
-
-        // 2. Preamp summary
-        if (abs(config.globalPreampDb) > 0.001f || abs(config.lrPreampDb) > 0.001f ||
-            abs(config.leftGainDb) > 0.001f || abs(config.rightGainDb) > 0.001f
-        ) {
-            val parts = mutableListOf<String>()
-            if (abs(config.globalPreampDb) > 0.001f) {
-                parts.add("Global ${fmtSignedDb(config.globalPreampDb)}")
-            }
-            if (abs(config.lrPreampDb) > 0.001f) {
-                parts.add("L/R ${fmtSignedDb(config.lrPreampDb)}")
-            }
-            if (abs(config.leftGainDb) > 0.001f || abs(config.rightGainDb) > 0.001f) {
-                parts.add("Ch補正 L:${fmtSignedDb(config.leftGainDb)} / R:${fmtSignedDb(config.rightGainDb)}")
-            }
-            val totalText = if (abs(totalLeftDb - totalRightDb) < 0.005f) {
-                "${fmtSignedDb(totalLeftDb)} (リニア倍率 ×${String.format(Locale.US, "%.4f", linLeft)})"
-            } else {
-                "L: ${fmtSignedDb(totalLeftDb)} (×${String.format(Locale.US, "%.4f", linLeft)}) / R: ${fmtSignedDb(totalRightDb)} (×${String.format(Locale.US, "%.4f", linRight)})"
-            }
-            summaryLines.add("・プリアンプ: ${parts.joinToString(" + ")} → 合計 $totalText")
-        } else {
-            summaryLines.add("・プリアンプ: 0.0 dB (等倍 ×1.0000)")
-        }
-
-        // 3. Global bands summary
-        if (activeGlobal.isNotEmpty()) {
-            val typeCounts = activeGlobal.groupingBy { it.filterType.displayLabel }.eachCount()
-                .entries.joinToString(", ") { "${it.key}×${it.value}" }
-            val minF = activeGlobal.minOf { it.frequencyHz }
-            val maxF = activeGlobal.maxOf { it.frequencyHz }
-            summaryLines.add("・両ch共通 (Global) EQ: ${activeGlobal.size}バンド ($typeCounts | ${fmtHz(minF)} 〜 ${fmtHz(maxF)})")
-        } else {
-            summaryLines.add("・両ch共通 (Global) EQ: なし (0バンド)")
-        }
-
-        // 4. L/R independent bands summary
-        if (activeLeft.isNotEmpty() || activeRight.isNotEmpty()) {
-            val complementaryCount = lrPairs.count { it.isComplementary }
-            val extraNote = if (complementaryCount > 0 && complementaryCount == activeLeft.size && activeLeft.size == activeRight.size) {
-                " (全${complementaryCount}バンドがL/R逆相ゲインによる左右バランス補正ペア)"
-            } else if (complementaryCount > 0) {
-                " (うち${complementaryCount}バンドがL/R逆相ゲインペア)"
-            } else {
-                ""
-            }
-            summaryLines.add("・左右独立PEQ: Left ${activeLeft.size}バンド / Right ${activeRight.size}バンド$extraNote")
-        } else {
-            summaryLines.add("・左右独立PEQ: なし (Left 0 / Right 0)")
-        }
-
         return EelAnalysisReport(
             title = title,
             sourceFileName = sourceFileName,
@@ -190,7 +129,6 @@ object EelEqParser {
             leftBands = activeLeft,
             rightBands = activeRight,
             lrPairs = lrPairs,
-            summaryLinesJa = summaryLines,
         )
     }
 
