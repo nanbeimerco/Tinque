@@ -998,6 +998,14 @@ object AppSettings {
         prefs.edit()
             .putStringSet(KEY_VISIBLE_MAIN_NAVIGATION_TABS, firstTabs.map { it.name }.toSet())
             .putString(KEY_MAIN_NAVIGATION_TAB_ORDER, order.joinToString(",") { it.name })
+            // The Album Artists bar tab follows this set, not the one above, so
+            // leave it out here too. Marking the migration done stops it being
+            // added back as if this were an upgrade.
+            .putStringSet(
+                KEY_VISIBLE_LOCAL_LIBRARY_TABS,
+                LocalLibraryTab.entries.filterNot { it == LocalLibraryTab.ALBUM_ARTISTS }.map { it.name }.toSet(),
+            )
+            .putBoolean(KEY_ALBUM_ARTISTS_TAB_MIGRATED, true)
             .putString(KEY_STARTUP_TAB, MainNavigationTab.FOLDERS.name)
             // Glass needs RenderEffect (Android 12); older devices keep plain bars.
             .putBoolean(KEY_LIQUID_GLASS, android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S)
