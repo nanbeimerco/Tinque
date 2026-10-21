@@ -352,3 +352,23 @@ fun GlassWindowScope(modifier: Modifier = Modifier, content: @Composable () -> U
         }
     }
 }
+
+/**
+ * Call inside a full-screen [androidx.compose.ui.window.Dialog]: turns off the
+ * window's dim-behind.
+ *
+ * A platform dialog darkens what is under it by default. A full-screen page
+ * covers that anyway, so the dim was only ever seen in the gaps: the moment
+ * the window appears before the page fades in, and the moment the page has
+ * faded out before the window goes. Both read as a dark flash.
+ */
+@Composable
+fun NoDialogDim() {
+    val window = (LocalView.current.parent as? androidx.compose.ui.window.DialogWindowProvider)?.window
+    // Synchronously in composition, so the very first frame is already undimmed.
+    remember(window) {
+        window?.setDimAmount(0f)
+        window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        Unit
+    }
+}

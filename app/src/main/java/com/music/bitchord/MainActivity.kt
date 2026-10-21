@@ -3115,6 +3115,7 @@ private fun BitChordApp(
                         decorFitsSystemWindows = false,
                     ),
                 ) {
+                    com.music.bitchord.ui.components.NoDialogDim()
                     TagEditorScreen(
                         song = song,
                         onNavigateBack = {
@@ -3140,6 +3141,7 @@ private fun BitChordApp(
                         decorFitsSystemWindows = false,
                     ),
                 ) {
+                    com.music.bitchord.ui.components.NoDialogDim()
                     val isActiveLyricsTrack = player.song?.videoId == song.videoId ||
                         (song.localUri != null && player.song?.localUri == song.localUri)
                     LyricsEditorScreen(

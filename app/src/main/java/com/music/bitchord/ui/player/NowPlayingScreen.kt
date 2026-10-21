@@ -249,6 +249,9 @@ import com.music.bitchord.ui.components.optimizedHazeEffect
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
+import com.music.bitchord.ui.icons.PlayerControlIcons
+import androidx.compose.runtime.key
+import androidx.compose.ui.semantics.selected
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.canvas.CanvasArtwork
@@ -2893,14 +2896,29 @@ fun NowPlayingScreen(
             // detached in the background, and the badge should keep saying
             // "loading" through that stretch rather than going blank only to
             // possibly say "loading" again a moment later.
+            // Whether this collapse folds the controls away (full-screen lyrics,
+            // or on the way back from them) or keeps them (the queue: the
+            // volume folds, the transport moves down, the toggle row stays).
+            val rowFolds = lyricsMode || (p > 0f && !queueOpen && queueProgress < 0.01f)
+            // 0 → 1 as the queue opens.
+            val queueCompact = if (rowFolds) 0f else p
             val racingLossless by NerdStats.racingLossless.collectAsStateWithLifecycle()
             val stillRacing = song.videoId in racingLossless
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     // The slider's touch target extends well past the drawn
-                    // bar, so pull the labels back up under it.
-                    .offset(y = (-9).dp),
+                    // bar, so pull the labels back up under it. With the queue
+                    // open the space they left behind is given back too, or the
+                    // transport below would sit that much low of centre.
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints)
+                        val lift = TIMESTAMP_LIFT.roundToPx()
+                        val height = placeable.height - (lift * queueCompact).roundToInt()
+                        layout(placeable.width, height) {
+                            placeable.placeRelative(0, -lift)
+                        }
+                    },
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -2938,7 +2956,10 @@ fun NowPlayingScreen(
                 )
             }
 
-            if (lyricsMode || p > 0.001f) {
+            // The full-screen lyrics header. Only lyrics open it: grown by the
+            // queue's collapse too, it sat here invisible and pushed the
+            // transport away from the scrubber.
+            if (lyricsMode || (p > 0.001f && rowFolds)) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2950,7 +2971,7 @@ fun NowPlayingScreen(
                         }
                         .layout { measurable, constraints ->
                             val placeable = measurable.measure(constraints.copy(minHeight = 0))
-                            val height = (placeable.height * p).roundToInt()
+                            val height = (placeable.height * (if (rowFolds) p else 0f)).roundToInt()
                             layout(placeable.width, height) {
                                 placeable.placeRelative(0, 0)
                             }
@@ -3110,11 +3131,12 @@ fun NowPlayingScreen(
                         .fillMaxWidth()
                         .clipToBounds()
                         .graphicsLayer {
-                            alpha = ((0.30f - p) / 0.30f).coerceIn(0f, 1f)
+                            alpha = if (rowFolds) ((0.30f - p) / 0.30f).coerceIn(0f, 1f) else 1f
                         }
                         .layout { measurable, constraints ->
                             val placeable = measurable.measure(constraints.copy(minHeight = 0))
-                            val height = (placeable.height * (1f - p)).roundToInt()
+                            val fold = if (rowFolds) p else 0f
+                            val height = (placeable.height * (1f - fold)).roundToInt()
                             layout(placeable.width, height) {
                                 placeable.placeRelative(0, 0)
                             }
@@ -3126,9 +3148,11 @@ fun NowPlayingScreen(
                         // which sit close enough together to read as one. Both of its own
                         // gaps take half the spread, so on a tall screen it holds the
                         // centre rather than drifting up under the seek bar.
-                        Spacer(Modifier.height(14.dp + controlSpread / 2))
+                        Spacer(Modifier.height(lerp(14.dp + controlSpread / 2, QUEUE_TRANSPORT_GAP, queueCompact)))
 
             // ---- Transport ----
+            // With the queue open it stays, moved down to sit midway between
+            // the scrubber and the toggle row, so the queue can be played from.
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -3207,6 +3231,19 @@ fun NowPlayingScreen(
             // on, the slider takes up no space at all, so the transport and
             // the toggle row below it close the gap instead of leaving a
             // blank strip where the volume bar used to be.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clipToBounds()
+                    .graphicsLayer { alpha = ((0.30f - queueCompact) / 0.30f).coerceIn(0f, 1f) }
+                    .layout { measurable, constraints ->
+                        val placeable = measurable.measure(constraints.copy(minHeight = 0))
+                        val height = (placeable.height * (1f - queueCompact)).roundToInt()
+                        layout(placeable.width, height) {
+                            placeable.placeRelative(0, 0)
+                        }
+                    },
+            ) {
             if (hideVolumeBar) {
                 Spacer(Modifier.height(24.dp + controlSpread / 2))
             } else {
@@ -3252,95 +3289,157 @@ fun NowPlayingScreen(
 
                 Spacer(Modifier.height(24.dp))
             }
+            }
 
-            // ---- Shuffle · Repeat · AutoPlay · Queue ----
-            // These live here rather than in the queue panel so their state is
-            // readable without opening anything.
-            if (visiblePlayerControls.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    playerControlOrder.forEach { control ->
-                        if (control !in visiblePlayerControls) return@forEach
-                        when (control) {
-                            PlayerControl.SHUFFLE -> BottomGlyph(
-                                icon = BitChordIcons.Shuffle,
-                                contentDescription = stringResource(
-                                    if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
-                                ),
-                                onClick = onToggleShuffle,
-                                highlighted = shuffleEnabled,
-                                haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
-                                tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
-                            )
-                            PlayerControl.REPEAT -> BottomGlyph(
-                                icon = if (repeatMode == Player.REPEAT_MODE_ONE) null else BitChordIcons.Repeat,
-                                label = if (repeatMode == Player.REPEAT_MODE_ONE) "1" else null,
-                                contentDescription = when (repeatMode) {
-                                    Player.REPEAT_MODE_ONE -> stringResource(R.string.repeat_one)
-                                    Player.REPEAT_MODE_ALL -> stringResource(R.string.repeat_all)
-                                    else -> stringResource(R.string.repeat_off)
-                                },
-                                onClick = onCycleRepeat,
-                                highlighted = repeatMode != Player.REPEAT_MODE_OFF,
-                                haptic = when (repeatMode) {
-                                    Player.REPEAT_MODE_OFF -> Haptic.ToggleOn
-                                    Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
-                                    else -> Haptic.Select
-                                },
-                            )
-                            PlayerControl.LYRICS -> BottomGlyph(
-                                icon = Icons.AutoMirrored.Rounded.Notes,
-                                contentDescription = stringResource(R.string.quick_action_lyrics),
-                                onClick = {
-                                    lyricsOpen = !lyricsOpen
-                                    if (lyricsOpen) queueOpen = false
-                                },
-                                highlighted = lyricsOpen,
-                                haptic = if (lyricsOpen) Haptic.Tap else Haptic.Select,
-                            )
-                            PlayerControl.LIKE -> if (PlayerQuickAction.FAVORITE !in playerQuickActions) BottomGlyph(
-                                icon = likeIcon,
-                                contentDescription = likeDescription,
-                                onClick = toggleLike,
-                                highlighted = liked,
-                                enabled = likeAvailable,
-                                haptic = if (liked) Haptic.ToggleOff else Haptic.ToggleOn,
-                            )
-                            PlayerControl.QUEUE -> BottomGlyph(
-                                icon = Icons.AutoMirrored.Rounded.QueueMusic,
-                                contentDescription = stringResource(R.string.up_next),
-                                onClick = {
-                                    lyricsOpen = false
-                                    queueOpen = !queueOpen
-                                },
-                                highlighted = queueOpen,
-                                haptic = if (queueOpen) Haptic.Tap else Haptic.Expand,
-                            )
-                            PlayerControl.PLAYLIST -> BottomGlyph(
-                                icon = if (useLibraryIconForPlaylistControl) {
-                                    Icons.Rounded.LibraryMusic
-                                } else {
-                                    Icons.AutoMirrored.Rounded.PlaylistPlay
-                                },
-                                contentDescription = stringResource(R.string.playlists),
-                                onClick = onOpenPlaylists,
-                                haptic = Haptic.Select,
-                            )
-                            PlayerControl.SEARCH -> BottomGlyph(
-                                icon = BitChordIcons.Search,
-                                contentDescription = stringResource(R.string.search),
-                                onClick = onOpenSearch,
-                                haptic = Haptic.Select,
-                            )
-                        }
                     }
                 }
             }
 
-            if (visiblePlayerControls.isNotEmpty()) Spacer(Modifier.height(18.dp))
+            // ---- Shuffle · Repeat · Lyrics · Like · Queue · Playlists · Search ----
+            // Kept outside the folding block above so it can stay while the queue
+            // is open: the transport and volume fold away, this row slides up
+            // under the queue, and a shuffle can be watched reordering it.
+            // Full-screen lyrics still take it away along with everything else.
+            if (visiblePlayerControls.isNotEmpty() && (!lyricsMode || p < 1f)) {
+                val segments = buildList {
+                    playerControlOrder.forEach { control ->
+                        if (control !in visiblePlayerControls) return@forEach
+                        when (control) {
+                            PlayerControl.SHUFFLE -> add(
+                                ToggleSegment(
+                                    key = control,
+                                    icon = PlayerControlIcons.Shuffle,
+                                    contentDescription = stringResource(
+                                        if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
+                                    ),
+                                    selected = shuffleEnabled,
+                                    onClick = onToggleShuffle,
+                                    haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
+                                    tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
+                                    popOnSelect = true,
+                                ),
+                            )
+                            PlayerControl.REPEAT -> add(
+                                ToggleSegment(
+                                    key = control,
+                                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) {
+                                        PlayerControlIcons.RepeatOne
+                                    } else {
+                                        PlayerControlIcons.Repeat
+                                    },
+                                    contentDescription = when (repeatMode) {
+                                        Player.REPEAT_MODE_ONE -> stringResource(R.string.repeat_one)
+                                        Player.REPEAT_MODE_ALL -> stringResource(R.string.repeat_all)
+                                        else -> stringResource(R.string.repeat_off)
+                                    },
+                                    selected = repeatMode != Player.REPEAT_MODE_OFF,
+                                    onClick = onCycleRepeat,
+                                    haptic = when (repeatMode) {
+                                        Player.REPEAT_MODE_OFF -> Haptic.ToggleOn
+                                        Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
+                                        else -> Haptic.Select
+                                    },
+                                    // Every step turns the arrows, so all → one,
+                                    // which keeps the same shape, still reads as a move.
+                                    spinKey = repeatMode,
+                                ),
+                            )
+                            PlayerControl.LYRICS -> add(
+                                ToggleSegment(
+                                    key = control,
+                                    icon = PlayerControlIcons.Lyrics,
+                                    contentDescription = stringResource(R.string.quick_action_lyrics),
+                                    selected = lyricsOpen,
+                                    onClick = {
+                                        lyricsOpen = !lyricsOpen
+                                        if (lyricsOpen) queueOpen = false
+                                    },
+                                    haptic = if (lyricsOpen) Haptic.Tap else Haptic.Select,
+                                    // No bounce: it would land on the frames that build
+                                    // the panel, and the panel opening is feedback enough.
+                                ),
+                            )
+                            PlayerControl.LIKE -> if (PlayerQuickAction.FAVORITE !in playerQuickActions) add(
+                                ToggleSegment(
+                                    key = control,
+                                    icon = when {
+                                        favoriteUsesStar && liked -> PlayerControlIcons.StarFilled
+                                        favoriteUsesStar -> PlayerControlIcons.Star
+                                        liked -> PlayerControlIcons.HeartFilled
+                                        else -> PlayerControlIcons.Heart
+                                    },
+                                    contentDescription = likeDescription,
+                                    selected = liked,
+                                    onClick = toggleLike,
+                                    enabled = likeAvailable,
+                                    haptic = if (liked) Haptic.ToggleOff else Haptic.ToggleOn,
+                                    popOnSelect = true,
+                                ),
+                            )
+                            PlayerControl.QUEUE -> add(
+                                ToggleSegment(
+                                    key = control,
+                                    icon = PlayerControlIcons.Queue,
+                                    contentDescription = stringResource(R.string.up_next),
+                                    selected = queueOpen,
+                                    onClick = {
+                                        lyricsOpen = false
+                                        queueOpen = !queueOpen
+                                    },
+                                    haptic = if (queueOpen) Haptic.Tap else Haptic.Expand,
+                                    // No bounce: it would land on the frames that build
+                                    // the panel, and the panel opening is feedback enough.
+                                ),
+                            )
+                            PlayerControl.PLAYLIST -> add(
+                                ToggleSegment(
+                                    key = control,
+                                    icon = if (useLibraryIconForPlaylistControl) {
+                                        Icons.Rounded.LibraryMusic
+                                    } else {
+                                        PlayerControlIcons.Playlists
+                                    },
+                                    contentDescription = stringResource(R.string.playlists),
+                                    selected = false,
+                                    onClick = onOpenPlaylists,
+                                    haptic = Haptic.Select,
+                                ),
+                            )
+                            PlayerControl.SEARCH -> add(
+                                ToggleSegment(
+                                    key = control,
+                                    icon = PlayerControlIcons.Search,
+                                    contentDescription = stringResource(R.string.search),
+                                    selected = false,
+                                    onClick = onOpenSearch,
+                                    haptic = Haptic.Select,
+                                ),
+                            )
+                        }
+                    }
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clipToBounds()
+                        .graphicsLayer {
+                            alpha = if (rowFolds) ((0.30f - p) / 0.30f).coerceIn(0f, 1f) else 1f
+                        }
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints.copy(minHeight = 0))
+                            val fold = if (rowFolds) p else 0f
+                            val height = (placeable.height * (1f - fold)).roundToInt()
+                            layout(placeable.width, height) {
+                                placeable.placeRelative(0, 0)
+                            }
+                        },
+                ) {
+                    // With the transport folded away, keep the row off the timestamps.
+                    // Matches the gap above the transport, so it sits midway.
+                    if (!rowFolds) Spacer(Modifier.height(QUEUE_TRANSPORT_GAP * p))
+                    if (segments.isNotEmpty()) {
+                        PlayerToggleGroup(segments)
+                        Spacer(Modifier.height(18.dp))
                     }
                 }
             }
@@ -4980,7 +5079,7 @@ private fun CircleGlyph(
                 imageVector = glyph,
                 contentDescription = contentDescription,
                 tint = Color.White,
-                modifier = Modifier.size(19.dp),
+                modifier = Modifier.size(22.dp),
             )
         }
     }
@@ -4992,6 +5091,16 @@ private fun CircleGlyph(
  * glyphs like fast-forward and the queue list.
  */
 /** Lyrics-mode transport: play/pause and skip scales of the size setting (0.84 / 1.2 ≈ 0.7). */
+/**
+ * Gap above and below the transport while the queue is open — the same on
+ * both sides so it sits midway, and tight so the queue gets the room. The
+ * glyphs' own touch padding adds a little more to what is seen.
+ */
+private val QUEUE_TRANSPORT_GAP = 8.dp
+
+/** How far the timestamps are pulled up under the scrubber's touch target. */
+private val TIMESTAMP_LIFT = 9.dp
+
 private const val LYRICS_PLAY_SCALE = 1.2f
 private const val LYRICS_SKIP_SCALE = 0.84f
 
@@ -5040,13 +5149,16 @@ private fun SeekTransportGlyph(
     label: String,
     showLabel: Boolean,
     onClick: () -> Unit,
+    visibility: Float = 1f,
 ) {
     val haptics = rememberHaptics()
     Column(
         modifier = Modifier
             .size(42.dp)
+            .graphicsLayer { alpha = visibility }
             .clip(CircleShape)
             .clickable(
+                enabled = visibility > 0.5f,
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onClick = {
@@ -5074,73 +5186,166 @@ private fun SeekTransportGlyph(
     }
 }
 
-@Composable
-private fun BottomGlyph(
-    icon: ImageVector?,
-    contentDescription: String,
-    onClick: () -> Unit,
-    highlighted: Boolean = false,
-    enabled: Boolean = true,
-    haptic: Haptic = Haptic.Tap,
-    label: String? = null,
+/** One button in the player's bottom row. */
+private class ToggleSegment(
+    val key: PlayerControl,
+    val icon: ImageVector,
+    val contentDescription: String,
+    val selected: Boolean,
+    val onClick: () -> Unit,
+    val haptic: Haptic,
+    val enabled: Boolean = true,
     /**
      * Shortest gap between taps that both reach [onClick]. A tap inside the
-     * window of the last one is dropped whole — haptic included, so a swallowed
-     * tap doesn't buzz as though something happened. The default lets every tap
-     * through: only the glyphs whose work is too heavy to repeat at finger speed
-     * ask for a window.
+     * window of the last one is dropped whole, haptic included. Only the
+     * buttons whose work is too heavy to repeat at finger speed ask for one.
      */
-    tapWindowMs: Long = 0L,
+    val tapWindowMs: Long = 0L,
+    /** Bounce the glyph once when this turns on. */
+    val popOnSelect: Boolean = false,
+    /** Turn the glyph whenever this changes (repeat's off → all → one). */
+    val spinKey: Any? = null,
+)
+
+private val SEGMENT_HEIGHT = 48.dp
+private val SEGMENT_INNER_CORNER = 8.dp
+private val SEGMENT_GAP = 3.dp
+/** Same wash as the title row's [CircleGlyph], so the two read as one material. */
+private const val SEGMENT_FILL = 0.18f
+private const val SEGMENT_FILL_ON = 0.40f
+private val SegmentEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+
+/**
+ * The bottom row as one connected group: square-ish segments split by a thin
+ * gap, rounded only on the group's outer ends. A segment that turns on rounds
+ * into a capsule and its wash deepens; pressing any segment squeezes it.
+ */
+@Composable
+private fun PlayerToggleGroup(segments: List<ToggleSegment>) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(SEGMENT_GAP),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        segments.forEachIndexed { index, segment ->
+            key(segment.key) {
+                PlayerToggleSegment(
+                    segment = segment,
+                    first = index == 0,
+                    last = index == segments.lastIndex,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerToggleSegment(
+    segment: ToggleSegment,
+    first: Boolean,
+    last: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
-    // Read only from the click handler, never during composition, so writing it
-    // costs no recomposition. Starts a full window in the past so the first tap
-    // is never the one that gets swallowed.
-    val lastTap = remember { mutableLongStateOf(-tapWindowMs) }
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    // Read only from the click handler, so writing it costs no recomposition.
+    val lastTap = remember { mutableLongStateOf(-segment.tapWindowMs) }
+    val on = segment.selected && segment.enabled
+
+    val round = SEGMENT_HEIGHT / 2
+    val shapeSpec = tween<Dp>(durationMillis = 600, easing = SegmentEasing)
+    val startCorner by animateDpAsState(
+        targetValue = if (on || first) round else SEGMENT_INNER_CORNER,
+        animationSpec = shapeSpec,
+        label = "segmentStart",
+    )
+    val endCorner by animateDpAsState(
+        targetValue = if (on || last) round else SEGMENT_INNER_CORNER,
+        animationSpec = shapeSpec,
+        label = "segmentEnd",
+    )
+    val fill by animateFloatAsState(
+        targetValue = if (on) SEGMENT_FILL_ON else SEGMENT_FILL,
+        animationSpec = tween(durationMillis = 350, easing = SegmentEasing),
+        label = "segmentFill",
+    )
+    val squeeze by animateFloatAsState(
+        targetValue = if (pressed) 0.9f else 1f,
+        animationSpec = spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium),
+        label = "segmentPress",
+    )
+
+    val glyphScale = remember { Animatable(1f) }
+    val glyphTurn = remember { Animatable(0f) }
+    // Both start from what is already showing, so the first frame never animates.
+    val wasOn = remember { mutableStateOf(on) }
+    LaunchedEffect(on) {
+        val turnedOn = on && !wasOn.value
+        wasOn.value = on
+        if (turnedOn && segment.popOnSelect) {
+            glyphScale.snapTo(0.5f)
+            glyphScale.animateTo(1f, spring(dampingRatio = 0.4f, stiffness = 500f))
+        }
+    }
+    val lastSpin = remember { mutableStateOf(segment.spinKey) }
+    LaunchedEffect(segment.spinKey) {
+        if (segment.spinKey == lastSpin.value) return@LaunchedEffect
+        lastSpin.value = segment.spinKey
+        launch {
+            glyphTurn.snapTo(-180f)
+            glyphTurn.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = 380f))
+        }
+        glyphScale.snapTo(0.75f)
+        glyphScale.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 420f))
+    }
+
+    val shape = RoundedCornerShape(
+        topStart = startCorner,
+        bottomStart = startCorner,
+        topEnd = endCorner,
+        bottomEnd = endCorner,
+    )
     Box(
-        modifier = Modifier
-            .size(44.dp)
-            .clip(CircleShape)
-            .background(
-                if (highlighted && enabled) Color.White.copy(alpha = 0.20f) else Color.Transparent,
-            )
+        modifier = modifier
+            .height(SEGMENT_HEIGHT)
+            .graphicsLayer {
+                scaleX = squeeze
+                scaleY = squeeze
+            }
+            .clip(shape)
+            .background(Color.White.copy(alpha = fill))
             .clickable(
-                enabled = enabled,
-                interactionSource = remember { MutableInteractionSource() },
+                enabled = segment.enabled,
+                interactionSource = interaction,
                 indication = null,
             ) {
                 val now = SystemClock.uptimeMillis()
-                if (now - lastTap.longValue >= tapWindowMs) {
+                if (now - lastTap.longValue >= segment.tapWindowMs) {
                     lastTap.longValue = now
-                    haptics.play(haptic)
-                    onClick()
+                    haptics.play(segment.haptic)
+                    segment.onClick()
                 }
             }
-            .semantics { this.contentDescription = contentDescription },
+            .semantics {
+                contentDescription = segment.contentDescription
+                selected = on
+            },
         contentAlignment = Alignment.Center,
     ) {
-        val tint = Color.White.copy(
-            alpha = when {
-                !enabled -> 0.30f
-                highlighted -> 1f
-                else -> 0.75f
-            },
+        Icon(
+            imageVector = segment.icon,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = if (segment.enabled) 1f else 0.30f),
+            modifier = Modifier
+                .size(22.dp)
+                .graphicsLayer {
+                    rotationZ = glyphTurn.value
+                    scaleX = glyphScale.value
+                    scaleY = glyphScale.value
+                },
         )
-        if (icon != null) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = tint,
-                modifier = Modifier.size(26.dp),
-            )
-        } else if (label != null) {
-            Text(
-                text = label,
-                color = tint,
-                fontSize = 19.sp,
-                fontWeight = FontWeight.Bold,
-            )
-        }
     }
 }
 

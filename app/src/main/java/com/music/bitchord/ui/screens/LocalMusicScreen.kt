@@ -1092,6 +1092,7 @@ fun LocalMusicScreen(
                 decorFitsSystemWindows = false,
             ),
         ) {
+            com.music.bitchord.ui.components.NoDialogDim()
             TagEditorScreen(
                 song = song,
                 onNavigateBack = { tagEditorSong = null },
@@ -1114,6 +1115,7 @@ fun LocalMusicScreen(
                 decorFitsSystemWindows = false,
             ),
         ) {
+            com.music.bitchord.ui.components.NoDialogDim()
             LyricsEditorScreen(
                 song = song,
                 onBackClick = { lyricsEditorSong = null },

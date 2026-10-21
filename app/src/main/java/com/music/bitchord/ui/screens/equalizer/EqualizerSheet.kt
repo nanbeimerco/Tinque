@@ -118,6 +118,7 @@ fun EqualizerSheet(
             dismissOnClickOutside = false,
         ),
     ) {
+        com.music.bitchord.ui.components.NoDialogDim()
         AnimatedVisibility(
             visibleState = visibleState,
             enter = slideInVertically(tween(320)) { it / 6 } + fadeIn(tween(220)),
@@ -128,14 +129,21 @@ fun EqualizerSheet(
                 color = MaterialTheme.colorScheme.surface,
             ) {
                 BackHandler(onBack = close)
-                com.music.bitchord.ui.components.GlassWindowScope { EqualizerPage(onClose = close) }
+                com.music.bitchord.ui.components.GlassWindowScope {
+                    // Recording the page for the top buttons' glass is the heaviest
+                    // thing on screen; it waits until the slide in has finished.
+                    EqualizerPage(
+                        onClose = close,
+                        recordGlass = visibleState.isIdle && visibleState.currentState,
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun EqualizerPage(onClose: () -> Unit) {
+private fun EqualizerPage(onClose: () -> Unit, recordGlass: Boolean = true) {
     val enabled by EqualizerSettings.enabled.collectAsStateWithLifecycle()
     val presetId by EqualizerSettings.presetId.collectAsStateWithLifecycle()
     val bandLevels by EqualizerSettings.bandLevels.collectAsStateWithLifecycle()
@@ -188,7 +196,7 @@ private fun EqualizerPage(onClose: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .then(if (glassOn) Modifier.layerBackdrop(eqBackdrop) else Modifier)
+                .then(if (glassOn && recordGlass) Modifier.layerBackdrop(eqBackdrop) else Modifier)
                 .background(pageColor)
                 .verticalScroll(scrollState)
                 .padding(top = topInset + TopBarContentHeight),
