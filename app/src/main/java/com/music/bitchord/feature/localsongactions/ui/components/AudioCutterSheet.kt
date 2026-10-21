@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.localsongactions.ui.components
 
+import com.music.bitchord.ui.components.GlassModalBottomSheet
+import com.music.bitchord.ui.components.GlassAlertDialog
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -111,7 +113,7 @@ fun AudioCutterSheet(
     }
 
     val isExporting = cutterState == CutterState.EXPORTING
-    ModalBottomSheet(
+    GlassModalBottomSheet(
         onDismissRequest = { if (!isExporting) onDismissRequest() },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surface,
@@ -189,7 +191,7 @@ fun AudioCutterSheet(
     }
 
     if (showConfirm) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { showConfirm = false },
             title = { Text(stringResource(R.string.audio_cutter_confirm_title)) },
             text = { Text(stringResource(R.string.audio_cutter_confirm_message)) },
@@ -210,7 +212,7 @@ fun AudioCutterSheet(
     }
 
     if (cutterState == CutterState.COMPLETE) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = onDismissRequest,
             title = { Text(stringResource(R.string.audio_cutter_complete_title)) },
             text = { Text(stringResource(R.string.audio_cutter_complete_message)) },
@@ -219,7 +221,7 @@ fun AudioCutterSheet(
             },
         )
     } else if (cutterState == CutterState.ERROR) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { cutterState = CutterState.EDITING },
             title = { Text(stringResource(R.string.audio_cutter_error_title)) },
             text = { Text(stringResource(R.string.audio_cutter_error_message)) },

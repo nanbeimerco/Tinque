@@ -878,6 +878,8 @@ fun NowPlayingScreen(
     docked: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    // Its own window: give the sheets and menus opened in it their glass.
+    com.music.bitchord.ui.components.GlassWindowScope {
     val context = LocalContext.current
     val density = LocalDensity.current
     val haptics = rememberHaptics()
@@ -2483,7 +2485,7 @@ fun NowPlayingScreen(
                     val showNext = swipeSettle > 0f
                     val enabled = if (showNext) hasNext else hasPrevious
                     Icon(
-                        imageVector = if (showNext) Icons.Rounded.FastForward else Icons.Rounded.FastRewind,
+                        imageVector = if (showNext) BitChordIcons.TransportNext else BitChordIcons.TransportPrevious,
                         contentDescription = null,
                         tint = Color.White.copy(
                             alpha = swipeHintProgress * (if (enabled) 0.85f else 0.3f),
@@ -3067,27 +3069,29 @@ fun NowPlayingScreen(
                         ) {
                             if (showLyricsPreviousControl) {
                                 TransportGlyph(
-                                    icon = Icons.Rounded.FastRewind,
+                                    icon = BitChordIcons.TransportPrevious,
                                     contentDescription = stringResource(R.string.widget_previous),
-                                    size = lyricsTransportControlSize.dp,
+                                    // The slider sets the row's overall size; within it the
+                                    // full player's proportions hold (skip ≈ 0.7 × play).
+                                    size = (lyricsTransportControlSize * LYRICS_SKIP_SCALE).dp,
                                     enabled = hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS,
                                     onClick = onPrevious,
                                 )
                             }
                             if (showLyricsPlayPauseControl) {
                                 TransportGlyph(
-                                    icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                    icon = if (isPlaying) BitChordIcons.TransportPause else BitChordIcons.TransportPlay,
                                     contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
-                                    size = lyricsTransportControlSize.dp,
+                                    size = (lyricsTransportControlSize * LYRICS_PLAY_SCALE).dp,
                                     enabled = !isLoading,
                                     onClick = onPlayPause,
                                 )
                             }
                             if (showLyricsNextControl) {
                                 TransportGlyph(
-                                    icon = Icons.Rounded.FastForward,
+                                    icon = BitChordIcons.TransportNext,
                                     contentDescription = stringResource(R.string.widget_next),
-                                    size = lyricsTransportControlSize.dp,
+                                    size = (lyricsTransportControlSize * LYRICS_SKIP_SCALE).dp,
                                     enabled = hasNext,
                                     onClick = onNext,
                                 )
@@ -3147,7 +3151,7 @@ fun NowPlayingScreen(
                     )
                 }
                 TransportGlyph(
-                    icon = Icons.Rounded.FastRewind,
+                    icon = BitChordIcons.TransportPrevious,
                     contentDescription = stringResource(R.string.widget_previous),
                     size = 46.dp,
                     onClick = onPrevious,
@@ -3161,7 +3165,7 @@ fun NowPlayingScreen(
                 if (isLoading) {
                     // Same footprint as TransportGlyph(62.dp) — a smaller box
                     // here would shunt everything below it on every load.
-                    Box(Modifier.size(74.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.size(78.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(
                             color = Color.White,
                             strokeWidth = 3.dp,
@@ -3170,15 +3174,15 @@ fun NowPlayingScreen(
                     }
                 } else {
                     TransportGlyph(
-                        icon = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        icon = if (isPlaying) BitChordIcons.TransportPause else BitChordIcons.TransportPlay,
                         contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
-                        size = 62.dp,
+                        size = 66.dp,
                         onClick = onPlayPause,
                         haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
                     )
                 }
                 TransportGlyph(
-                    icon = Icons.Rounded.FastForward,
+                    icon = BitChordIcons.TransportNext,
                     contentDescription = stringResource(R.string.widget_next),
                     size = 46.dp,
                     onClick = onNext,
@@ -3343,6 +3347,7 @@ fun NowPlayingScreen(
             }
             }
         }
+    }
     }
 }
 
@@ -4986,6 +4991,10 @@ private fun CircleGlyph(
  * never on the [Icon] — clipping the icon itself shaves the corners off wide
  * glyphs like fast-forward and the queue list.
  */
+/** Lyrics-mode transport: play/pause and skip scales of the size setting (0.84 / 1.2 ≈ 0.7). */
+private const val LYRICS_PLAY_SCALE = 1.2f
+private const val LYRICS_SKIP_SCALE = 0.84f
+
 @Composable
 private fun TransportGlyph(
     icon: ImageVector,

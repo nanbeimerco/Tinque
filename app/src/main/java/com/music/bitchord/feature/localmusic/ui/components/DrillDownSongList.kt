@@ -1,5 +1,9 @@
 package com.music.bitchord.feature.localmusic.ui.components
 
+import com.music.bitchord.data.settings.GridKind
+import com.music.bitchord.ui.components.ScaledGridCells
+import com.music.bitchord.ui.components.pinchToResizeGrid
+import com.music.bitchord.ui.components.rememberGridColumns
 import android.os.Build
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -479,18 +483,25 @@ fun SongGridCard(
     onLongPress: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    val cardCompact = com.music.bitchord.ui.components.rememberCardCompact()
     Column(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f) else Color.Transparent)
+            .then(cardCompact.measure)
+            .clip(RoundedCornerShape(16.dp))
             .debouncedCombinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(4.dp),
     ) {
-        val shape = RoundedCornerShape(12.dp)
+        val selectionActive = com.music.bitchord.ui.components.LocalSongSelection.current?.active == true
+        val artScale = com.music.bitchord.ui.components.selectionArtScale(selected)
+        val shape = RoundedCornerShape(com.music.bitchord.ui.components.selectionArtCorner(selected, 16.dp))
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
+                .graphicsLayer {
+                    scaleX = artScale
+                    scaleY = artScale
+                }
                 .clip(shape)
                 .thumbnailBorder(shape)
                 .background(MaterialTheme.colorScheme.surfaceVariant),
@@ -518,20 +529,28 @@ fun SongGridCard(
                     modifier = Modifier.size(28.dp),
                 )
             }
+            if (selectionActive) {
+                com.music.bitchord.ui.components.SelectionMark(
+                    selected = selected,
+                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                )
+            }
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(if (cardCompact.compact) 4.dp else 8.dp))
         ExplicitSongTitle(
             song = song,
-            style = MaterialTheme.typography.titleMedium,
+            style = if (cardCompact.compact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
-        Text(
-            text = song.artist.ifBlank { stringResource(R.string.unknown_artist) },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        if (!cardCompact.compact) {
+            Text(
+                text = song.artist.ifBlank { stringResource(R.string.unknown_artist) },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -636,10 +655,11 @@ fun DrillDownSongList(
                     },
                 )
             }
+            val gridCols = rememberGridColumns(GridKind.COLLECTION_SONGS)
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 140.dp),
+                columns = ScaledGridCells(gridCols),
                 state = gridState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().pinchToResizeGrid(GridKind.COLLECTION_SONGS, gridCols),
                 contentPadding = PaddingValues(
                     start = PAGE_GUTTER,
                     end = PAGE_GUTTER,
@@ -679,6 +699,7 @@ fun DrillDownSongList(
                 }
                 itemsIndexed(songs) { index, song ->
                     SongGridCard(
+                        modifier = Modifier.animateItem(),
                         song = song,
                         selected = song.videoId in selectedIds || (song.localUri ?: song.videoId) in selectedIds,
                         isCurrent = song.isSameTrackAs(currentSong),
@@ -918,21 +939,9 @@ private fun CollectionPageBackground(
     artHeight: Dp,
     artTopPx: () -> Float,
 ) {
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val softenFoot = !reduceDynamicBlur && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    var blurReady by remember(imageUrl) { mutableStateOf(false) }
-    LaunchedEffect(imageUrl) {
-        if (softenFoot) {
-            delay(280L)
-            blurReady = true
-        }
-    }
-    val footAlpha by animateFloatAsState(
-        targetValue = if (softenFoot && blurReady) 1f else 0f,
-        animationSpec = tween(280),
-        label = "softFootAlpha",
-    )
-
+    // The sleeve stays sharp with only the wash below it. A blurred copy used
+    // to fade in over its lower half ~280ms after opening, which read as the
+    // page "going blurry" a beat late; the first frame is the intended look.
     Box(Modifier.fillMaxSize().clipToBounds()) {
         if (!imageUrl.isNullOrBlank()) {
             Box(
@@ -949,30 +958,6 @@ private fun CollectionPageBackground(
                         .fillMaxSize()
                         .background(palette.elevated),
                 )
-                // Follow BitChord's release-page treatment: keep the sleeve
-                // sharp above, and blend in a blurred copy toward its lower
-                // fifth so it merges naturally into the artwork-derived wash.
-                //
-                // Deferred until the slide-in transition finishes to avoid
-                // running an offscreen-composited 48dp blur while in motion.
-                if (softenFoot && footAlpha > 0f) {
-                    AsyncImage(
-                        model = imageUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                compositingStrategy = CompositingStrategy.Offscreen
-                                alpha = footAlpha
-                            }
-                            .drawWithContent {
-                                drawContent()
-                                drawRect(SOFT_FOOT_MASK, blendMode = BlendMode.DstIn)
-                            }
-                            .blur(SOFT_FOOT_BLUR, BlurredEdgeTreatment.Rectangle),
-                    )
-                }
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -990,13 +975,6 @@ private fun CollectionPageBackground(
         }
     }
 }
-
-private val SOFT_FOOT_MASK = Brush.verticalGradient(
-    0.35f to Color.Transparent,
-    0.75f to Color.Black,
-)
-
-private val SOFT_FOOT_BLUR = 48.dp
 
 /** Drag-to-reorder state for the song section below the two static header rows. */
 @Composable

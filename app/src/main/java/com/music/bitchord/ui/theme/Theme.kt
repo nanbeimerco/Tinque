@@ -8,6 +8,10 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.data.settings.AppSettings
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
@@ -34,6 +38,15 @@ private val DarkColors = darkColorScheme(
     surfaceVariant = Color(0xFF1C1C1E),
     onSurfaceVariant = Color(0xFF8E8E93),
     outline = Color(0xFF2C2C2E),
+    // Neutral greys for grouped containers; left unset these fall back to
+    // Material's purple-tinted baseline.
+    surfaceContainerLowest = Color.Black,
+    surfaceContainerLow = Color(0xFF111113),
+    surfaceContainer = Color(0xFF161618),
+    surfaceContainerHigh = Color(0xFF1C1C1E),
+    surfaceContainerHighest = Color(0xFF2C2C2E),
+    secondaryContainer = Color(0xFF3A3A3C),
+    onSecondaryContainer = Color.White,
 )
 
 private val LightColors = lightColorScheme(
@@ -46,6 +59,13 @@ private val LightColors = lightColorScheme(
     surfaceVariant = Color(0xFFF2F2F7),
     onSurfaceVariant = Color(0xFF6E6E73),
     outline = Color(0xFFE5E5EA),
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = Color(0xFFF7F7F9),
+    surfaceContainer = Color(0xFFF2F2F7),
+    surfaceContainerHigh = Color(0xFFEDEDF2),
+    surfaceContainerHighest = Color(0xFFE5E5EA),
+    secondaryContainer = Color(0xFFDCDCE1),
+    onSecondaryContainer = Color.Black,
 )
 
 private val AmoledColors = darkColorScheme(
@@ -58,6 +78,13 @@ private val AmoledColors = darkColorScheme(
     surfaceVariant = Color(0xFF080808),
     onSurfaceVariant = Color(0xFFB0B0B0),
     outline = Color(0xFF242424),
+    surfaceContainerLowest = Color.Black,
+    surfaceContainerLow = Color(0xFF0A0A0A),
+    surfaceContainer = Color(0xFF101010),
+    surfaceContainerHigh = Color(0xFF161616),
+    surfaceContainerHighest = Color(0xFF1F1F1F),
+    secondaryContainer = Color(0xFF2A2A2A),
+    onSecondaryContainer = Color.White,
 )
 
 /**
@@ -114,13 +141,21 @@ fun BitChordTheme(
     matchButtonAccentToArtwork: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    // A user-imported font replaces the bundled face across the whole type scale.
+    val customFontPath by AppSettings.customFontPath.collectAsStateWithLifecycle()
+    val typography = remember(customFontPath) {
+        customFontPath.takeIf { it.isNotEmpty() }
+            ?.let(CustomFont::familyFor)
+            ?.let { BitChordTypography.withFamily(it) }
+            ?: BitChordTypography
+    }
     MaterialTheme(
         colorScheme = when {
             amoledBlack -> AmoledColors
             darkTheme -> DarkColors
             else -> LightColors
         },
-        typography = BitChordTypography,
+        typography = typography,
     ) {
         // Resolve the playing sleeve through the existing palette/cache path.
         val base = MaterialTheme.colorScheme
@@ -184,7 +219,7 @@ fun BitChordTheme(
                 surfaceTint = accent,
             )
         } else base
-        MaterialTheme(colorScheme = colors, typography = BitChordTypography, content = content)
+        MaterialTheme(colorScheme = colors, typography = typography, content = content)
     }
 }
 

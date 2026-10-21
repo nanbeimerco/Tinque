@@ -1,5 +1,10 @@
 package com.music.bitchord.ui.screens
 
+import com.music.bitchord.ui.components.GlassAlertDialog
+import com.music.bitchord.data.settings.DEFAULT_GLASS_SHADE
+import androidx.compose.material.icons.rounded.Contrast
+import com.music.bitchord.data.settings.DEFAULT_GLASS_CLARITY
+import com.music.bitchord.data.settings.GlassRenderStyle
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -83,6 +88,7 @@ import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ScreenRotation
@@ -236,9 +242,16 @@ fun SettingsScreen(
     onPlayCueSheet: (List<com.music.bitchord.data.model.Song>) -> Unit,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
+    /** Whether the large "Settings" title has scrolled out of view — drives the top bar's title capsule. */
+    onTitleScrolledAway: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val settingsScrollState = rememberScrollState()
+    val titleThresholdPx = with(androidx.compose.ui.platform.LocalDensity.current) { 48.dp.toPx() }
+    val titleScrolledAway by remember(titleThresholdPx) {
+        androidx.compose.runtime.derivedStateOf { settingsScrollState.value > titleThresholdPx }
+    }
+    LaunchedEffect(titleScrolledAway) { onTitleScrolledAway(titleScrolledAway) }
     val popupOverlayPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) {
@@ -279,6 +292,9 @@ fun SettingsScreen(
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
     val liquidGlassBlurDp by AppSettings.liquidGlassBlurDp.collectAsStateWithLifecycle()
     val liquidGlassOpacity by AppSettings.liquidGlassOpacity.collectAsStateWithLifecycle()
+    val glassRenderStyle by AppSettings.glassRenderStyle.collectAsStateWithLifecycle()
+    val glassClarity by AppSettings.glassClarity.collectAsStateWithLifecycle()
+    val glassShade by AppSettings.glassShade.collectAsStateWithLifecycle()
     val pillMotionStyle by AppSettings.pillMotionStyle.collectAsStateWithLifecycle()
     val classicNavBar by AppSettings.classicNavBar.collectAsStateWithLifecycle()
     val lockBottomBarExpanded by AppSettings.lockBottomBarExpanded.collectAsStateWithLifecycle()
@@ -923,12 +939,6 @@ fun SettingsScreen(
             hideCollectionTopBar,
         ) { AppSettings.setHideCollectionTopBar(!hideCollectionTopBar) },
         SettingsSearchEntry(
-            stringResource(R.string.hide_floating_collection_controls),
-            stringResource(R.string.hide_floating_collection_controls_subtitle),
-            listOf("album", "playlist", "artwork", "back", "settings", "アルバム", "プレイリスト", "アート", "戻る", "設定", "ボタン"),
-            hideFloatingCollectionControls,
-        ) { AppSettings.setHideFloatingCollectionControls(!hideFloatingCollectionControls) },
-        SettingsSearchEntry(
             stringResource(R.string.artists_open_albums),
             stringResource(R.string.artists_open_albums_subtitle),
             listOf("artist", "album", "アーティスト", "アルバム", "曲一覧"),
@@ -1320,12 +1330,8 @@ fun SettingsScreen(
             .padding(contentPadding),
     ) {
         val originalDeveloperLabel = stringResource(R.string.original_developer)
-        Text(
-            text = stringResource(R.string.settings),
-            style = MaterialTheme.typography.displayLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 14.dp),
-        )
+        // No large "Settings" title: like every tab, the page name lives in
+        // the top bar's capsule, which stays shown here.
 
         OutlinedTextField(
             value = settingsSearchQuery,
@@ -2126,6 +2132,10 @@ fun SettingsScreen(
                 modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
             )
             RowDivider()
+            CustomFontSettingsRows()
+            RowDivider()
+            GridSizeSettingsRows()
+            RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.AutoAwesome,
                 title = stringResource(R.string.app_icon),
@@ -2172,21 +2182,30 @@ fun SettingsScreen(
                 onClick = { AppSettings.setMiniPlayerArtworkColor(!miniPlayerArtworkColor) },
             )
             RowDivider()
+            // Which transport buttons the mini player shows. With "play/pause
+            // only", tracks change by swiping the artwork / title.
+            val miniPlayerPlayPauseOnly by AppSettings.miniPlayerPlayPauseOnly.collectAsStateWithLifecycle()
             SettingsRow(
                 icon = Icons.Rounded.SkipPrevious,
-                title = stringResource(R.string.mini_player_previous_button),
-                subtitle = stringResource(R.string.mini_player_previous_button_subtitle),
-                trailing = {
-                    Switch(
-                        checked = miniPlayerPreviousButton,
-                        onCheckedChange = AppSettings::setMiniPlayerPreviousButton,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
+                title = stringResource(R.string.mini_player_buttons),
+                subtitle = stringResource(R.string.mini_player_buttons_subtitle),
+            )
+            SegmentedControl(
+                options = listOf(
+                    stringResource(R.string.mini_player_buttons_all),
+                    stringResource(R.string.mini_player_buttons_no_previous),
+                    stringResource(R.string.mini_player_buttons_play_only),
+                ),
+                selectedIndex = when {
+                    miniPlayerPlayPauseOnly -> 2
+                    !miniPlayerPreviousButton -> 1
+                    else -> 0
                 },
-                onClick = { AppSettings.setMiniPlayerPreviousButton(!miniPlayerPreviousButton) },
+                onSelect = { index ->
+                    AppSettings.setMiniPlayerPlayPauseOnly(index == 2)
+                    AppSettings.setMiniPlayerPreviousButton(index == 0)
+                },
+                modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
             )
             RowDivider()
             SettingsRow(
@@ -2396,6 +2415,98 @@ fun SettingsScreen(
             )
             if (liquidGlass && liquidGlassSupported) {
                 RowDivider()
+                // How the glass treats what is behind it: Tinque's milky glass,
+                // or Mornye's clear pane with an optical rim.
+                SettingsRow(
+                    icon = Icons.Rounded.AutoAwesome,
+                    title = stringResource(R.string.glass_render_style),
+                    subtitle = stringResource(R.string.glass_render_style_subtitle),
+                )
+                SegmentedControl(
+                    options = listOf(
+                        stringResource(R.string.glass_render_style_frosted),
+                        stringResource(R.string.glass_render_style_clear),
+                    ),
+                    selectedIndex = GlassRenderStyle.entries.indexOf(glassRenderStyle),
+                    onSelect = { AppSettings.setGlassRenderStyle(GlassRenderStyle.entries[it]) },
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                )
+                if (glassRenderStyle == GlassRenderStyle.CLEAR) {
+                    RowDivider()
+                    SettingsRow(
+                        icon = Icons.Rounded.Contrast,
+                        title = stringResource(R.string.glass_clarity),
+                        subtitle = stringResource(R.string.glass_clarity_subtitle),
+                        trailing = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = stringResource(R.string.liquid_glass_opacity_value, (glassClarity * 100).roundToInt()),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (glassClarity != DEFAULT_GLASS_CLARITY) {
+                                    Spacer(Modifier.width(4.dp))
+                                    IconButton(
+                                        onClick = { AppSettings.setGlassClarity(DEFAULT_GLASS_CLARITY) },
+                                        modifier = Modifier.size(32.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.RestartAlt,
+                                            contentDescription = stringResource(R.string.reset_to_default),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                    )
+                    Slider(
+                        value = glassClarity,
+                        onValueChange = AppSettings::setGlassClarity,
+                        valueRange = 0f..1f,
+                        steps = 19,
+                        modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                    )
+                    RowDivider()
+                    SettingsRow(
+                        icon = Icons.Rounded.Contrast,
+                        title = stringResource(R.string.glass_shade),
+                        subtitle = stringResource(R.string.glass_shade_subtitle),
+                        trailing = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = stringResource(R.string.liquid_glass_opacity_value, (glassShade * 100).roundToInt()),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (glassShade != DEFAULT_GLASS_SHADE) {
+                                    Spacer(Modifier.width(4.dp))
+                                    IconButton(
+                                        onClick = { AppSettings.setGlassShade(DEFAULT_GLASS_SHADE) },
+                                        modifier = Modifier.size(32.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.RestartAlt,
+                                            contentDescription = stringResource(R.string.reset_to_default),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                    )
+                    Slider(
+                        value = glassShade,
+                        onValueChange = AppSettings::setGlassShade,
+                        valueRange = 0f..1f,
+                        steps = 19,
+                        modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                    )
+                }
+                if (glassRenderStyle == GlassRenderStyle.FROSTED) {
+                RowDivider()
                 SettingsRow(
                     icon = Icons.Rounded.BlurOn,
                     title = stringResource(R.string.liquid_glass_blur),
@@ -2467,6 +2578,7 @@ fun SettingsScreen(
                     steps = 11,
                     modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
                 )
+                }
                 RowDivider()
                 SettingsRow(
                     icon = Icons.Rounded.Speed,
@@ -3197,23 +3309,6 @@ fun SettingsScreen(
             )
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.VisibilityOff,
-                title = stringResource(R.string.hide_floating_collection_controls),
-                subtitle = stringResource(R.string.hide_floating_collection_controls_subtitle),
-                trailing = {
-                    Switch(
-                        checked = hideFloatingCollectionControls,
-                        onCheckedChange = AppSettings::setHideFloatingCollectionControls,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setHideFloatingCollectionControls(!hideFloatingCollectionControls) },
-            )
-            RowDivider()
-            SettingsRow(
                 icon = Icons.Rounded.Person,
                 title = stringResource(R.string.artists_open_albums),
                 subtitle = stringResource(R.string.artists_open_albums_subtitle),
@@ -3576,7 +3671,7 @@ fun SettingsScreen(
         }
 
         if (showLauncherIconPicker) {
-            AlertDialog(
+            GlassAlertDialog(
                 onDismissRequest = { showLauncherIconPicker = false },
                 title = { Text(stringResource(R.string.app_icon)) },
                 text = {
@@ -3618,7 +3713,7 @@ fun SettingsScreen(
         }
 
         if (showStartupTabPicker) {
-            AlertDialog(
+            GlassAlertDialog(
                 onDismissRequest = { showStartupTabPicker = false },
                 title = { Text(stringResource(R.string.startup_tab)) },
                 text = {
@@ -3717,7 +3812,7 @@ fun SettingsScreen(
     // thing being confirmed is that this device's own history is about to be
     // thrown away, and that is true whichever file gets picked.
     if (confirmImport) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { confirmImport = false },
             title = { Text(stringResource(R.string.import_backup_title)) },
             text = {
@@ -3740,7 +3835,7 @@ fun SettingsScreen(
     }
 
     preparedM3uImport?.let { prepared ->
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { preparedM3uImport = null },
             title = { Text(stringResource(R.string.import_m3u_playlist)) },
             text = {
@@ -3792,7 +3887,7 @@ fun SettingsScreen(
     preparedMusicoletBackup?.let { prepared ->
         val allSelected = prepared.playlists.isNotEmpty() &&
             selectedMusicoletPlaylistIds.size == prepared.playlists.size
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { preparedMusicoletBackup = null },
             title = { Text(stringResource(R.string.import_musicolet_backup)) },
             text = {
@@ -3914,7 +4009,7 @@ fun SettingsScreen(
     }
 
     if (showPlaylistOrderDialog) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { showPlaylistOrderDialog = false },
             title = { Text(stringResource(R.string.playlist_order_title)) },
             text = {
@@ -3964,7 +4059,7 @@ fun SettingsScreen(
     }
 
     if (showPerformanceWarning) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { showPerformanceWarning = false },
             title = { Text(stringResource(R.string.high_performance_before_enabling)) },
             text = { Text(stringResource(R.string.high_performance_battery_warning)) },
@@ -3993,7 +4088,7 @@ fun SettingsScreen(
     }
 
     if (showPerformanceConfirmation) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { showPerformanceConfirmation = false },
             title = { Text(stringResource(R.string.enable_high_performance_title)) },
             text = { Text(stringResource(R.string.enable_high_performance_confirmation)) },
@@ -4017,7 +4112,7 @@ fun SettingsScreen(
 
     if (showListenBrainzTokenDialog) {
         var tokenInput by remember { mutableStateOf(listenBrainzToken) }
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { showListenBrainzTokenDialog = false },
             title = { Text(stringResource(R.string.listenbrainz_token)) },
             text = {
@@ -4050,7 +4145,7 @@ fun SettingsScreen(
         var passwordInput by remember { mutableStateOf("") }
         var lastfmError by remember { mutableStateOf<String?>(null) }
         var lastfmLoading by remember { mutableStateOf(false) }
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { if (!lastfmLoading) showLastfmLoginDialog = false },
             title = { Text(stringResource(R.string.lastfm_login)) },
             text = {
@@ -4142,6 +4237,91 @@ fun SettingsScreen(
         )
     }
 
+}
+
+/**
+ * Grid size per page, as columns per row (2–5). The same values the pinch
+ * gesture on a grid changes, so the two always agree.
+ */
+@Composable
+private fun GridSizeSettingsRows() {
+    SettingsRow(
+        icon = Icons.Rounded.ViewStream,
+        title = stringResource(R.string.grid_size),
+        subtitle = stringResource(R.string.grid_size_subtitle),
+    )
+    val kinds = listOf(
+        com.music.bitchord.data.settings.GridKind.SONGS to R.string.grid_size_songs,
+        com.music.bitchord.data.settings.GridKind.ALBUMS to R.string.grid_size_albums,
+        com.music.bitchord.data.settings.GridKind.ARTISTS to R.string.grid_size_artists,
+        com.music.bitchord.data.settings.GridKind.LIBRARY to R.string.grid_size_library,
+        com.music.bitchord.data.settings.GridKind.COLLECTION_SONGS to R.string.grid_size_collection,
+    )
+    kinds.forEach { (kind, labelRes) ->
+        val columns = com.music.bitchord.ui.components.rememberGridColumns(kind)
+        Column(modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = stringResource(labelRes),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = stringResource(R.string.grid_columns_value, columns),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            androidx.compose.material3.Slider(
+                value = columns.toFloat(),
+                onValueChange = { v -> AppSettings.setGridColumns(kind, v.roundToInt()) },
+                valueRange = com.music.bitchord.data.settings.GridKind.MIN_COLUMNS.toFloat()..
+                    com.music.bitchord.data.settings.GridKind.MAX_COLUMNS.toFloat(),
+                steps = com.music.bitchord.data.settings.GridKind.MAX_COLUMNS - com.music.bitchord.data.settings.GridKind.MIN_COLUMNS - 1,
+            )
+        }
+    }
+}
+
+/**
+ * App font: pick a .ttf / .otf to use everywhere, or go back to the built-in
+ * face. The file is copied into app storage by [com.music.bitchord.ui.theme.CustomFont].
+ */
+@Composable
+private fun CustomFontSettingsRows() {
+    val context = LocalContext.current
+    val fontName by AppSettings.customFontName.collectAsStateWithLifecycle()
+    val fontPath by AppSettings.customFontPath.collectAsStateWithLifecycle()
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        com.music.bitchord.ui.theme.CustomFont.import(context, uri)
+            .onSuccess { name ->
+                android.widget.Toast.makeText(context, "フォント「$name」を適用しました", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            .onFailure { err ->
+                android.widget.Toast.makeText(context, "フォントを読み込めません: ${err.message}", android.widget.Toast.LENGTH_LONG).show()
+            }
+    }
+    SettingsRow(
+        icon = Icons.Rounded.TextFields,
+        title = "フォント",
+        subtitle = ".ttf / .otf ファイルを読み込んでアプリ全体の書体を変更します",
+        value = if (fontPath.isNotEmpty()) fontName.ifBlank { "カスタム" } else "標準",
+        onClick = {
+            // Some file managers label fonts application/octet-stream, so accept anything
+            // and let the import check the file.
+            picker.launch(arrayOf("font/ttf", "font/otf", "font/sfnt", "application/x-font-ttf", "application/octet-stream", "*/*"))
+        },
+    )
+    if (fontPath.isNotEmpty()) {
+        RowDivider()
+        SettingsRow(
+            icon = Icons.Rounded.RestartAlt,
+            title = "標準フォントに戻す",
+            onClick = { com.music.bitchord.ui.theme.CustomFont.reset(context) },
+        )
+    }
 }
 
 /** "3 months of listening" — the unit a backup is actually measured in. */

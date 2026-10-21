@@ -483,6 +483,12 @@ object AppSettings {
     val miniPlayerArtworkColor = MutableStateFlow(false)
     /** Shows a previous-track control in expanded mini-player surfaces. */
     val miniPlayerPreviousButton = MutableStateFlow(true)
+
+    /** Mini player shows only play/pause; tracks change by swiping the artwork/title area. */
+    val miniPlayerPlayPauseOnly = MutableStateFlow(false)
+
+    /** Grid column counts per page, keyed by [GridKind.key]; absent = that page's default. */
+    val gridColumns = MutableStateFlow<Map<String, Int>>(emptyMap())
     val launcherIcon = MutableStateFlow(LauncherIcon.PINK)
     val frostedQueueManager = MutableStateFlow(true)
     val frostedPlayerDetails = MutableStateFlow(true)
@@ -535,6 +541,12 @@ object AppSettings {
 
     /** Surface tint opacity (0.10f .. 0.70f) for the Liquid Glass navigation bar. */
     val liquidGlassOpacity = MutableStateFlow(DEFAULT_LIQUID_GLASS_OPACITY)
+    /** Tinque's own glass, or Mornye's clear optical one — see [GlassRenderStyle]. */
+    val glassRenderStyle = MutableStateFlow(GlassRenderStyle.FROSTED)
+    /** Mornye glass only: 0 = tinted, 1 = clear. */
+    val glassClarity = MutableStateFlow(DEFAULT_GLASS_CLARITY)
+    /** Mornye glass only: how much of Mornye's dark underlay to keep (1 = as Mornye). */
+    val glassShade = MutableStateFlow(DEFAULT_GLASS_SHADE)
 
     /** Pill motion animation speed and fluid styling preset. */
     val pillMotionStyle = MutableStateFlow(PillMotionStyle.DEFAULT)
@@ -846,6 +858,12 @@ object AppSettings {
     /** Empty means every MediaStore folder; otherwise this is a persisted SAF tree URI. */
     val localMusicFolderUri = MutableStateFlow("")
 
+    /** Absolute path of a user-imported font file (app-private copy), or "" for the built-in face. */
+    val customFontPath = MutableStateFlow("")
+
+    /** The imported font's original file name, for display in Settings. */
+    val customFontName = MutableStateFlow("")
+
     /** Normalized paths of folders blacklisted/excluded from local music scanning. */
     val blacklistedFolders = MutableStateFlow<Set<String>>(emptySet())
 
@@ -958,8 +976,36 @@ object AppSettings {
         appContext = context.applicationContext
         prefs = appContext.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
         authStore = AuthStore(appContext)
+        applyFirstInstallDefaults()
         readAll()
         watchConnection(context)
+    }
+
+    /**
+     * The setup a fresh install starts from: Library, Folders and Search in the
+     * bar (opening on Folders), Liquid Glass in its frosted style, the bar held
+     * expanded with the standalone tab folded in, and the album-art theme.
+     *
+     * Written as saved settings, only when the settings file is empty — a new
+     * install. An update keeps whatever the person had, including the old
+     * built-in defaults for anything they never touched, since those are not
+     * written down and so are left to the code's own defaults below.
+     */
+    private fun applyFirstInstallDefaults() {
+        if (prefs.all.isNotEmpty()) return
+        val firstTabs = listOf(MainNavigationTab.LIBRARY, MainNavigationTab.FOLDERS, MainNavigationTab.SEARCH)
+        val order = MainNavigationTabs.normalizeOrder(firstTabs)
+        prefs.edit()
+            .putStringSet(KEY_VISIBLE_MAIN_NAVIGATION_TABS, firstTabs.map { it.name }.toSet())
+            .putString(KEY_MAIN_NAVIGATION_TAB_ORDER, order.joinToString(",") { it.name })
+            .putString(KEY_STARTUP_TAB, MainNavigationTab.FOLDERS.name)
+            // Glass needs RenderEffect (Android 12); older devices keep plain bars.
+            .putBoolean(KEY_LIQUID_GLASS, android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S)
+            .putString(KEY_GLASS_RENDER_STYLE, GlassRenderStyle.FROSTED.key)
+            .putBoolean(KEY_LOCK_BOTTOM_BAR_EXPANDED, true)
+            .putBoolean(KEY_INTEGRATE_STANDALONE_TAB, true)
+            .putString(KEY_THEME, ThemeMode.ARTWORK.name)
+            .apply()
     }
 
     /**
@@ -1045,6 +1091,10 @@ object AppSettings {
         matchButtonAccentToArtwork.value = prefs.getBoolean(KEY_MATCH_BUTTON_ACCENT_TO_ARTWORK, false)
         miniPlayerArtworkColor.value = prefs.getBoolean(KEY_MINI_PLAYER_ARTWORK_COLOR, false)
         miniPlayerPreviousButton.value = prefs.getBoolean(KEY_MINI_PLAYER_PREVIOUS_BUTTON, true)
+        miniPlayerPlayPauseOnly.value = prefs.getBoolean(KEY_MINI_PLAYER_PLAY_PAUSE_ONLY, false)
+        gridColumns.value = GridKind.entries.mapNotNull { kind ->
+            prefs.getInt(KEY_GRID_COLUMNS_PREFIX + kind.key, -1).takeIf { it > 0 }?.let { kind.key to it }
+        }.toMap()
         launcherIcon.value = runCatching {
             LauncherIcon.valueOf(prefs.getString(KEY_LAUNCHER_ICON, LauncherIcon.PINK.name) ?: LauncherIcon.PINK.name)
         }.getOrDefault(LauncherIcon.PINK)
@@ -1071,6 +1121,9 @@ object AppSettings {
             .coerceIn(MIN_LIQUID_GLASS_BLUR_DP, MAX_LIQUID_GLASS_BLUR_DP)
         liquidGlassOpacity.value = prefs.getFloat(KEY_LIQUID_GLASS_OPACITY, DEFAULT_LIQUID_GLASS_OPACITY)
             .coerceIn(MIN_LIQUID_GLASS_OPACITY, MAX_LIQUID_GLASS_OPACITY)
+        glassRenderStyle.value = GlassRenderStyle.fromKey(prefs.getString(KEY_GLASS_RENDER_STYLE, null))
+        glassClarity.value = prefs.getFloat(KEY_GLASS_CLARITY, DEFAULT_GLASS_CLARITY).coerceIn(0f, 1f)
+        glassShade.value = prefs.getFloat(KEY_GLASS_SHADE, DEFAULT_GLASS_SHADE).coerceIn(0f, 1f)
         pillMotionStyle.value = prefs.getString(KEY_PILL_MOTION_STYLE, null)?.let { name ->
             try {
                 PillMotionStyle.valueOf(name)
@@ -1211,6 +1264,10 @@ object AppSettings {
         localArtistsViewType.value = readLibraryViewType(KEY_LOCAL_ARTISTS_VIEW_TYPE, LibraryViewType.GRID)
         localFolderHierarchy.value = prefs.getBoolean(KEY_LOCAL_FOLDER_HIERARCHY, false)
         localMusicFolderUri.value = prefs.getString(KEY_LOCAL_MUSIC_FOLDER_PATH, "").orEmpty()
+        customFontPath.value = prefs.getString(KEY_CUSTOM_FONT_PATH, "").orEmpty()
+            .takeIf { it.isNotEmpty() && java.io.File(it).isFile }
+            .orEmpty()
+        customFontName.value = prefs.getString(KEY_CUSTOM_FONT_NAME, "").orEmpty()
         fullScreenCollectionArtwork.value = prefs.getBoolean(KEY_FULL_SCREEN_COLLECTION_ARTWORK, false)
         hideCollectionTopBar.value = prefs.getBoolean(KEY_HIDE_COLLECTION_TOP_BAR, true)
         hideFloatingCollectionControls.value = prefs.getBoolean(KEY_HIDE_FLOATING_COLLECTION_CONTROLS, true)
@@ -1448,6 +1505,17 @@ object AppSettings {
     fun setMiniPlayerPreviousButton(value: Boolean) {
         miniPlayerPreviousButton.value = value
         prefs.edit().putBoolean(KEY_MINI_PLAYER_PREVIOUS_BUTTON, value).apply()
+    }
+
+    fun setMiniPlayerPlayPauseOnly(value: Boolean) {
+        miniPlayerPlayPauseOnly.value = value
+        prefs.edit().putBoolean(KEY_MINI_PLAYER_PLAY_PAUSE_ONLY, value).apply()
+    }
+
+    fun setGridColumns(kind: GridKind, columns: Int) {
+        val clamped = columns.coerceIn(GridKind.MIN_COLUMNS, GridKind.MAX_COLUMNS)
+        gridColumns.value = gridColumns.value + (kind.key to clamped)
+        prefs.edit().putInt(KEY_GRID_COLUMNS_PREFIX + kind.key, clamped).apply()
     }
 
     fun setParametricEqEnabled(value: Boolean) {
@@ -1695,6 +1763,23 @@ object AppSettings {
         val normalized = value.coerceIn(MIN_LIQUID_GLASS_BLUR_DP, MAX_LIQUID_GLASS_BLUR_DP)
         liquidGlassBlurDp.value = normalized
         prefs.edit().putFloat(KEY_LIQUID_GLASS_BLUR_DP, normalized).apply()
+    }
+
+    fun setGlassRenderStyle(value: GlassRenderStyle) {
+        glassRenderStyle.value = value
+        prefs.edit().putString(KEY_GLASS_RENDER_STYLE, value.key).apply()
+    }
+
+    fun setGlassClarity(value: Float) {
+        val normalized = value.coerceIn(0f, 1f)
+        glassClarity.value = normalized
+        prefs.edit().putFloat(KEY_GLASS_CLARITY, normalized).apply()
+    }
+
+    fun setGlassShade(value: Float) {
+        val normalized = value.coerceIn(0f, 1f)
+        glassShade.value = normalized
+        prefs.edit().putFloat(KEY_GLASS_SHADE, normalized).apply()
     }
 
     fun setLiquidGlassOpacity(value: Float) {
@@ -2597,6 +2682,16 @@ object AppSettings {
         prefs.edit().putString(KEY_LOCAL_MUSIC_FOLDER_PATH, path).apply()
     }
 
+    /** Points the app at an imported font file, or back at the built-in face with "". */
+    fun setCustomFont(path: String, displayName: String) {
+        customFontPath.value = path
+        customFontName.value = displayName
+        prefs.edit()
+            .putString(KEY_CUSTOM_FONT_PATH, path)
+            .putString(KEY_CUSTOM_FONT_NAME, displayName)
+            .apply()
+    }
+
     fun setFullScreenCollectionArtwork(value: Boolean) {
         fullScreenCollectionArtwork.value = value
         prefs.edit().putBoolean(KEY_FULL_SCREEN_COLLECTION_ARTWORK, value).apply()
@@ -2908,6 +3003,8 @@ object AppSettings {
     private const val KEY_MATCH_BUTTON_ACCENT_TO_ARTWORK = "match_button_accent_to_artwork"
     private const val KEY_MINI_PLAYER_ARTWORK_COLOR = "mini_player_artwork_color"
     private const val KEY_MINI_PLAYER_PREVIOUS_BUTTON = "mini_player_previous_button"
+    private const val KEY_MINI_PLAYER_PLAY_PAUSE_ONLY = "mini_player_play_pause_only"
+    private const val KEY_GRID_COLUMNS_PREFIX = "grid_columns_"
     private const val KEY_PARAMETRIC_EQ_ENABLED = "parametric_eq_enabled"
     private const val KEY_PARAMETRIC_EQ_BANDS = "parametric_eq_bands"
     private const val KEY_PARAMETRIC_EQ_CONFIG_JSON = "parametric_eq_config_json"
@@ -2937,6 +3034,9 @@ object AppSettings {
     private const val KEY_LIQUID_GLASS = "liquid_glass"
     private const val KEY_LIQUID_GLASS_BLUR_DP = "liquid_glass_blur_dp"
     private const val KEY_LIQUID_GLASS_OPACITY = "liquid_glass_opacity"
+    private const val KEY_GLASS_RENDER_STYLE = "glass_render_style"
+    private const val KEY_GLASS_CLARITY = "glass_clarity"
+    private const val KEY_GLASS_SHADE = "glass_shade"
     private const val KEY_PILL_MOTION_STYLE = "pill_motion_style"
     private const val KEY_CLASSIC_NAV_BAR = "classic_nav_bar"
     private const val KEY_LOCK_BOTTOM_BAR_EXPANDED = "lock_bottom_bar_expanded"
@@ -3027,6 +3127,8 @@ object AppSettings {
     private const val KEY_LOCAL_LIBRARY_TAB_ORDER = "local_library_tab_order"
     private const val KEY_LOCAL_FOLDER_HIERARCHY = "local_folder_hierarchy"
     private const val KEY_LOCAL_MUSIC_FOLDER_PATH = "local_music_folder_path"
+    private const val KEY_CUSTOM_FONT_PATH = "custom_font_path"
+    private const val KEY_CUSTOM_FONT_NAME = "custom_font_name"
     private const val KEY_FULL_SCREEN_COLLECTION_ARTWORK = "full_screen_collection_artwork"
     private const val KEY_HIDE_COLLECTION_TOP_BAR = "hide_collection_top_bar"
     private const val KEY_HIDE_FLOATING_COLLECTION_CONTROLS = "hide_floating_collection_controls"

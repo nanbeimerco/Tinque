@@ -9,6 +9,14 @@
  */
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.components.backdrop.effects.clearRefractionIndex
+import com.music.bitchord.ui.components.backdrop.effects.RimLight
+import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.compositeOver
+import com.music.bitchord.ui.components.backdrop.highlight.HighlightStyle
+import com.music.bitchord.ui.components.backdrop.effects.opticalLens
+import com.music.bitchord.data.settings.GlassRenderStyle
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -132,16 +140,24 @@ fun Modifier.lightweightLiquidGlass(
 ): Modifier {
     val useGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
     val surfaceOpacity by AppSettings.liquidGlassOpacity.collectAsStateWithLifecycle()
-    val glassTint = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
+    val renderStyle by AppSettings.glassRenderStyle.collectAsStateWithLifecycle()
+    val clarity by AppSettings.glassClarity.collectAsStateWithLifecycle()
+    val lightTheme = MaterialTheme.colorScheme.surface.luminance() > 0.5f
+    val glassTint = if (lightTheme) {
         Color(0xFFFAFAFA)
     } else {
         Color(0xFF121212)
     }
+    // With nothing sampled behind it, Mornye's glass is its fill alone.
+    val palette = glassPalette()
+    val clearFill = if (renderStyle == GlassRenderStyle.CLEAR) {
+        clearGlassFill(palette.container, palette.dark, clarity, opacity = 0.80f, shade = AppSettings.glassShade.collectAsStateWithLifecycle().value)
+    } else null
     val shapeProvider = remember(shape) { ShapeProvider { shape } }
 
     return clip(shape)
         .background(
-            color = if (useGlass) glassTint.copy(alpha = surfaceOpacity) else fallbackColor,
+            color = if (useGlass) clearFill ?: glassTint.copy(alpha = surfaceOpacity) else fallbackColor,
             shape = shape,
         )
         .then(
@@ -174,7 +190,13 @@ fun Modifier.lightweightLiquidGlass(
  * throws for any other shape type.
  */
 @Composable
-fun Modifier.liquidGlass(shape: CornerBasedShape): Modifier {
+fun Modifier.liquidGlass(
+    shape: CornerBasedShape,
+    /** A tint at least this opaque, for glass that has text over busy content (menus). */
+    surfaceAlpha: Float? = null,
+    /** What the surface is, for the per-part values of Mornye-style glass. */
+    role: GlassRole = if (surfaceAlpha != null) GlassRole.Overlay else GlassRole.Control,
+): Modifier {
     if (!isGlassSupported()) return this
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     if (reduceDynamicBlur) {
@@ -183,10 +205,18 @@ fun Modifier.liquidGlass(shape: CornerBasedShape): Modifier {
     }
     val backdrop = LocalAppBackdrop.current
     val exportedBackdrop = LocalGlassExport.current
+    val renderStyle by AppSettings.glassRenderStyle.collectAsStateWithLifecycle()
+    if (renderStyle == GlassRenderStyle.CLEAR) {
+        return clearGlass(shape, backdrop, exportedBackdrop, role)
+    }
     val blurRadiusDp by AppSettings.liquidGlassBlurDp.collectAsStateWithLifecycle()
     val surfaceOpacity by AppSettings.liquidGlassOpacity.collectAsStateWithLifecycle()
     val density = LocalDensity.current
-    val blurPx = with(density) { blurRadiusDp.dp.toPx() } * GLASS_RESOLUTION_SCALE
+    // Floating overlays (menus, sheets, the toolbar) carry text over busy pages:
+    // they keep the bars' tint, a little denser, and get their legibility from
+    // a heavier blur rather than from going dark.
+    val overlay = role == GlassRole.Overlay
+    val blurPx = with(density) { blurRadiusDp.dp.toPx() } * GLASS_RESOLUTION_SCALE * (if (overlay) 1.5f else 1f)
     val lensHeightPx = with(density) { (LENS_HEIGHT * LENS_MAX_DP).dp.toPx() } * GLASS_RESOLUTION_SCALE
     val lensAmountPx = with(density) { (LENS_AMOUNT * LENS_MAX_DP).dp.toPx() } * GLASS_RESOLUTION_SCALE
     val surfaceTintColor = if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) {
@@ -209,7 +239,9 @@ fun Modifier.liquidGlass(shape: CornerBasedShape): Modifier {
             }
         }
     }
-    val tintedSurfaceColor = surfaceTintColor.copy(alpha = surfaceOpacity)
+    val tintedSurfaceColor = surfaceTintColor.copy(
+        alpha = if (overlay) (surfaceOpacity + 0.15f).coerceAtMost(0.85f) else surfaceOpacity,
+    )
     val onDrawSurfaceLambda = remember<DrawScope.() -> Unit>(tintedSurfaceColor) {
         {
             drawRect(color = tintedSurfaceColor, size = size)
@@ -225,5 +257,171 @@ fun Modifier.liquidGlass(shape: CornerBasedShape): Modifier {
         onDrawSurface = onDrawSurfaceLambda,
         exportedBackdrop = exportedBackdrop,
         backdropScale = GLASS_RESOLUTION_SCALE,
+    )
+}
+
+/** What a glass surface is. Only Mornye-style glass tells them apart. */
+enum class GlassRole {
+    /** The tab bar capsule. */
+    TabBar,
+    /** The mini player. */
+    Player,
+    /** Floating top buttons and the title capsule. */
+    Control,
+    /** Menus, sheets and the selection toolbar: text over busy content. */
+    Overlay,
+}
+
+/*
+ * Mornye's glass (Settings → Liquid Glass → Rendering), after the Mornye
+ * player's `MornyeGlass` + `MornyeLiquidBackdrop` over liquid_glass_easy 5.0.0:
+ * a light blur set by one clarity value, a lens that bends only a band along
+ * the edge (see [opticalLens]), and a fill painted over it. Mornye's bars and
+ * menus all use its "strong tint": a fixed opacity per part, the theme's
+ * container darkened under dark glass, thinned a little as clarity rises.
+ */
+
+/** Mornye samples the backdrop at full size, and so does this. */
+private const val CLEAR_GLASS_RESOLUTION_SCALE = 1f
+
+/** MornyeLiquidBackdrop's defaults: a 20 px band, light travel of 70 px. */
+private const val CLEAR_GLASS_REFRACTION_WIDTH = 20f
+private const val CLEAR_GLASS_TRAVEL_DP = 70f
+
+/** Widest colour split at full clarity (Mornye: 1.32 x clarity px), and the package's floor. */
+private const val CLEAR_GLASS_DISPERSION_DP = 1.32f
+private const val CLEAR_GLASS_DISPERSION_MIN_DP = 0.66f
+
+/** Mornye's refraction depth per part. */
+private fun GlassRole.clearDepth(): Float = when (this) {
+    GlassRole.TabBar -> 0.45f
+    else -> 0.30f
+}
+
+/** Mornye's fill opacity per part (MornyeTheme.navigationOpacity / chromeOpacity / overlay). */
+private fun GlassRole.clearTintOpacity(dark: Boolean, artworkTheme: Boolean): Float = when (this) {
+    // Under an artwork theme Mornye thins its bars (navigationOpacity 0.24, chromeOpacity 0.36).
+    GlassRole.TabBar, GlassRole.Control -> if (artworkTheme) 0.24f else if (dark) 0.36f else 0.49f
+    GlassRole.Player -> if (artworkTheme) 0.36f else if (dark) 0.60f else 0.70f
+    GlassRole.Overlay -> 0.78f
+}
+
+/**
+ * Mornye's quantised blur: σ 2 for clear glass, 6 in the middle, 16 when it
+ * is mostly tint. Returned as a blur radius in dp (Skia's σ = 0.577·r + 0.5).
+ */
+internal fun clearBlurRadiusDp(clarity: Float): Float {
+    val sigma = when {
+        clarity >= 0.9f -> 2f
+        clarity >= 0.6f -> 6f
+        else -> 16f
+    }
+    return ((sigma - 0.5f) / 0.57735f).coerceAtLeast(0f)
+}
+
+/**
+ * Mornye's strong-tint fill: [opacity] of the container (darkened by 35% black
+ * under dark glass), with a further veil of the container that fades out as
+ * clarity rises — (1 − clarity)².
+ */
+internal fun clearGlassFill(
+    container: Color,
+    dark: Boolean,
+    clarity: Float,
+    opacity: Float,
+    /** Share of Mornye's dark underlay and density to keep (Settings → Darkness); 1 = as Mornye. */
+    shade: Float = 1f,
+): Color {
+    val source = if (dark) container else Color.White
+    val density = opacity * (0.7f + 0.3f * shade)
+    var baseTint = source.copy(alpha = if (dark) density * 0.82f else (density * 0.88f).coerceIn(0.5f, 1f))
+    if (dark) baseTint = baseTint.compositeOver(Color.Black.copy(alpha = 0.35f * shade))
+    val tintStrength = (1f - clarity) * (1f - clarity)
+    return container.copy(alpha = tintStrength).compositeOver(baseTint)
+}
+
+/** Mornye's rim: a 4 px specular on the side arcs, and a faint 22 px glow. */
+internal fun clearSpecular(dark: Boolean, density: Float, scale: Float, strength: Float = 1f): RimLight =
+    RimLight(
+        thickness = 0.75f * 5.4f * density * scale,
+        angleDegrees = 0f,
+        spread = 0.2f,
+        intensity = (if (dark) 0.25f else 0.12f) * strength,
+        red = 1f,
+        green = 1f,
+        blue = 1f,
+        colorAlpha = if (dark) 1f else 0x88 / 255f,
+    )
+
+internal fun clearGlow(density: Float, scale: Float, strength: Float = 1f): RimLight =
+    RimLight(
+        thickness = 0.75f * 29.4f * density * scale,
+        angleDegrees = 39f,
+        spread = 0.9f,
+        intensity = 0.05f * strength,
+    )
+
+private val ClearShadowDarkProvider: () -> Shadow? = {
+    Shadow(radius = 8.dp, offset = DpOffset(0.dp, 2.dp), color = Color.Black.copy(alpha = 0.14f))
+}
+private val ClearShadowLightProvider: () -> Shadow? = {
+    Shadow(radius = 8.dp, offset = DpOffset(0.dp, 2.dp), color = Color.Black.copy(alpha = 0.08f))
+}
+private val NoHighlight: () -> Highlight? = { null }
+
+@Composable
+private fun Modifier.clearGlass(
+    shape: CornerBasedShape,
+    backdrop: Backdrop,
+    exportedBackdrop: LayerBackdrop?,
+    role: GlassRole,
+): Modifier {
+    val clarity by AppSettings.glassClarity.collectAsStateWithLifecycle()
+    val shade by AppSettings.glassShade.collectAsStateWithLifecycle()
+    val density = LocalDensity.current
+    val palette = glassPalette()
+    val dark = palette.dark
+    val scale = CLEAR_GLASS_RESOLUTION_SCALE
+    val blurPx = with(density) { clearBlurRadiusDp(clarity).dp.toPx() } * scale
+    val bandPx = with(density) { CLEAR_GLASS_REFRACTION_WIDTH.dp.toPx() } * scale
+    val travelPx = with(density) { CLEAR_GLASS_TRAVEL_DP.dp.toPx() } * scale
+    val dispersionPx = with(density) { (CLEAR_GLASS_DISPERSION_DP * clarity).dp.toPx() } * scale
+    val dispersionMinPx = with(density) { CLEAR_GLASS_DISPERSION_MIN_DP.dp.toPx() } * scale
+    val index = clearRefractionIndex(CLEAR_GLASS_REFRACTION_WIDTH, role.clearDepth())
+    val specular = clearSpecular(dark, density.density, scale)
+    val glow = clearGlow(density.density, scale)
+    // Neutral, as every glass is (see [GlassPalette]) — never the artwork theme's container.
+    val fill = clearGlassFill(palette.container, dark, clarity, role.clearTintOpacity(dark, palette.artworkTheme), shade)
+
+    val shapeLambda = remember<() -> Shape>(shape) { { shape } }
+    val effectsLambda = remember<BackdropEffectScope.() -> Unit>(blurPx, bandPx, travelPx, index, dispersionPx, dark) {
+        {
+            if (blurPx > 0f) blur(blurPx)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                opticalLens(
+                    band = bandPx,
+                    refractionIndex = index,
+                    travel = travelPx,
+                    dispersion = dispersionPx,
+                    dispersionMin = dispersionMinPx,
+                    specular = specular,
+                    glow = glow,
+                )
+            }
+        }
+    }
+    val onDrawSurfaceLambda = remember<DrawScope.() -> Unit>(fill) {
+        { drawRect(color = fill, size = size) }
+    }
+    return drawBackdrop(
+        backdrop = backdrop,
+        shape = shapeLambda,
+        effects = effectsLambda,
+        // The lens draws its own rim; Mornye adds no second one over a lens.
+        highlight = NoHighlight,
+        shadow = if (dark) ClearShadowDarkProvider else ClearShadowLightProvider,
+        onDrawSurface = onDrawSurfaceLambda,
+        exportedBackdrop = exportedBackdrop,
+        backdropScale = scale,
     )
 }

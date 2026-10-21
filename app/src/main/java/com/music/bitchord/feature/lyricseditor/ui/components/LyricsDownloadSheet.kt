@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.lyricseditor.ui.components
 
+import com.music.bitchord.ui.components.GlassModalBottomSheet
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -105,7 +106,7 @@ fun LyricsDownloadSheet(
 
     val canSearch = title.isNotBlank() || artist.isNotBlank()
 
-    ModalBottomSheet(
+    GlassModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),

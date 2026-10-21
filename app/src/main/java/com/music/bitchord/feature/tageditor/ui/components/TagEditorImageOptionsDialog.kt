@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.tageditor.ui.components
 
+import com.music.bitchord.ui.components.GlassAlertDialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,7 +36,7 @@ fun TagEditorImageOptionsDialog(
     onRemoveCover: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = onDismissRequest,
         shape = RoundedCornerShape(24.dp),
         title = {

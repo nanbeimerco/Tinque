@@ -100,17 +100,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
@@ -824,6 +828,14 @@ private fun SharedTransitionScope.ExpandedTabs(
         Offset(if (isRtl) rowSize.width - x else x, rowHeightPx / 2f)
     }
     val showPill = selectedTabIndex >= 0 && tabWidthPx > 0f
+    // The pill as actually drawn — position, and its live size while lifted
+    // and stretching — in tab-row coordinates. Read at draw time.
+    val rowCoords = remember { CoordsHolder() }
+    val pillRectInRow: () -> Rect = {
+        val center = pillCenterInRow(pill.position)
+        val size = if (!pill.isFlat) pill.liveSize(restSize, liftedSize) else restSize
+        Rect(Offset(center.x - size.width / 2f, center.y - size.height / 2f), size)
+    }
 
     LaunchedEffect(selectedTabIndex) {
         if (selectedTabIndex >= 0) {
@@ -885,6 +897,7 @@ private fun SharedTransitionScope.ExpandedTabs(
                     modifier = Modifier
                         .fillMaxWidth()
                         .onSizeChanged { rowSize = it }
+                        .onGloballyPositioned { rowCoords.coords = it }
                         .layerBackdrop(tabRow)
                         .pointerInput(tabCount, tabStepPx, isRtl) {
                             if (tabCount <= 0 || tabStepPx <= 0f) return@pointerInput
@@ -1004,43 +1017,15 @@ private fun SharedTransitionScope.ExpandedTabs(
                                 ) {
                                     val hasArtwork = showPill && colors.isArtworkTheme && colors.artworkColor != Color.Unspecified
 
+                                    // Normal colour outside the pill, accent inside — split
+                                    // along the pill's real capsule outline (see [pillSplit]).
                                     Box(
-                                        modifier = Modifier.drawWithContent {
-                                            if (hasArtwork) {
-                                                val pillPos = pill.position
-                                                val pillW = if (!pill.isFlat) pill.liveSize(restSize, liftedSize).width else restSize.width
-                                                val pillCenterX = pillCenterInRow(pillPos).x
-                                                val pillLeft = pillCenterX - pillW / 2f
-                                                val pillRight = pillCenterX + pillW / 2f
-
-                                                val tabCenterX = if (isRtl) {
-                                                    rowSize.width - (tabIndex * tabStepPx + tabWidthPx / 2f)
-                                                } else {
-                                                    tabIndex * tabStepPx + tabWidthPx / 2f
-                                                }
-
-                                                val iconLeft = tabCenterX - size.width / 2f
-                                                val clipStart = (pillLeft - iconLeft).coerceAtLeast(0f)
-                                                val clipEnd = (pillRight - iconLeft).coerceAtMost(size.width)
-
-                                                if (clipEnd > clipStart) {
-                                                    if (clipStart > 0f) {
-                                                        clipRect(left = 0f, top = 0f, right = clipStart, bottom = size.height) {
-                                                            this@drawWithContent.drawContent()
-                                                        }
-                                                    }
-                                                    if (clipEnd < size.width) {
-                                                        clipRect(left = clipEnd, top = 0f, right = size.width, bottom = size.height) {
-                                                            this@drawWithContent.drawContent()
-                                                        }
-                                                    }
-                                                } else {
-                                                    this@drawWithContent.drawContent()
-                                                }
-                                            } else {
-                                                this@drawWithContent.drawContent()
-                                            }
-                                        }
+                                        modifier = Modifier.pillSplit(
+                                            enabled = hasArtwork,
+                                            inside = false,
+                                            row = rowCoords,
+                                            pillRect = pillRectInRow,
+                                        )
                                     ) {
                                         CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.unselectedContentColor) {
                                             tab.icon()
@@ -1051,29 +1036,12 @@ private fun SharedTransitionScope.ExpandedTabs(
                                         Box(
                                             modifier = Modifier
                                                 .matchParentSize()
-                                                .drawWithContent {
-                                                    val pillPos = pill.position
-                                                    val pillW = if (!pill.isFlat) pill.liveSize(restSize, liftedSize).width else restSize.width
-                                                    val pillCenterX = pillCenterInRow(pillPos).x
-                                                    val pillLeft = pillCenterX - pillW / 2f
-                                                    val pillRight = pillCenterX + pillW / 2f
-
-                                                    val tabCenterX = if (isRtl) {
-                                                        rowSize.width - (tabIndex * tabStepPx + tabWidthPx / 2f)
-                                                    } else {
-                                                        tabIndex * tabStepPx + tabWidthPx / 2f
-                                                    }
-
-                                                    val iconLeft = tabCenterX - size.width / 2f
-                                                    val clipStart = (pillLeft - iconLeft).coerceAtLeast(0f)
-                                                    val clipEnd = (pillRight - iconLeft).coerceAtMost(size.width)
-
-                                                    if (clipEnd > clipStart) {
-                                                        clipRect(left = clipStart, top = 0f, right = clipEnd, bottom = size.height) {
-                                                            this@drawWithContent.drawContent()
-                                                        }
-                                                    }
-                                                }
+                                                .pillSplit(
+                                                    enabled = true,
+                                                    inside = true,
+                                                    row = rowCoords,
+                                                    pillRect = pillRectInRow,
+                                                )
                                         ) {
                                             CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.artworkColor) {
                                                 tab.icon()
@@ -1092,42 +1060,12 @@ private fun SharedTransitionScope.ExpandedTabs(
                                     val hasArtwork = showPill && colors.isArtworkTheme && colors.artworkColor != Color.Unspecified
 
                                     Box(
-                                        modifier = Modifier.drawWithContent {
-                                            if (hasArtwork) {
-                                                val pillPos = pill.position
-                                                val pillW = if (!pill.isFlat) pill.liveSize(restSize, liftedSize).width else restSize.width
-                                                val pillCenterX = pillCenterInRow(pillPos).x
-                                                val pillLeft = pillCenterX - pillW / 2f
-                                                val pillRight = pillCenterX + pillW / 2f
-
-                                                val tabCenterX = if (isRtl) {
-                                                    rowSize.width - (tabIndex * tabStepPx + tabWidthPx / 2f)
-                                                } else {
-                                                    tabIndex * tabStepPx + tabWidthPx / 2f
-                                                }
-
-                                                val textLeft = tabCenterX - size.width / 2f
-                                                val clipStart = (pillLeft - textLeft).coerceAtLeast(0f)
-                                                val clipEnd = (pillRight - textLeft).coerceAtMost(size.width)
-
-                                                if (clipEnd > clipStart) {
-                                                    if (clipStart > 0f) {
-                                                        clipRect(left = 0f, top = 0f, right = clipStart, bottom = size.height) {
-                                                            this@drawWithContent.drawContent()
-                                                        }
-                                                    }
-                                                    if (clipEnd < size.width) {
-                                                        clipRect(left = clipEnd, top = 0f, right = size.width, bottom = size.height) {
-                                                            this@drawWithContent.drawContent()
-                                                        }
-                                                    }
-                                                } else {
-                                                    this@drawWithContent.drawContent()
-                                                }
-                                            } else {
-                                                this@drawWithContent.drawContent()
-                                            }
-                                        }
+                                        modifier = Modifier.pillSplit(
+                                            enabled = hasArtwork,
+                                            inside = false,
+                                            row = rowCoords,
+                                            pillRect = pillRectInRow,
+                                        )
                                     ) {
                                         CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.unselectedContentColor) {
                                             tab.title()
@@ -1138,29 +1076,12 @@ private fun SharedTransitionScope.ExpandedTabs(
                                         Box(
                                             modifier = Modifier
                                                 .matchParentSize()
-                                                .drawWithContent {
-                                                    val pillPos = pill.position
-                                                    val pillW = if (!pill.isFlat) pill.liveSize(restSize, liftedSize).width else restSize.width
-                                                    val pillCenterX = pillCenterInRow(pillPos).x
-                                                    val pillLeft = pillCenterX - pillW / 2f
-                                                    val pillRight = pillCenterX + pillW / 2f
-
-                                                    val tabCenterX = if (isRtl) {
-                                                        rowSize.width - (tabIndex * tabStepPx + tabWidthPx / 2f)
-                                                    } else {
-                                                        tabIndex * tabStepPx + tabWidthPx / 2f
-                                                    }
-
-                                                    val textLeft = tabCenterX - size.width / 2f
-                                                    val clipStart = (pillLeft - textLeft).coerceAtLeast(0f)
-                                                    val clipEnd = (pillRight - textLeft).coerceAtMost(size.width)
-
-                                                    if (clipEnd > clipStart) {
-                                                        clipRect(left = clipStart, top = 0f, right = clipEnd, bottom = size.height) {
-                                                            this@drawWithContent.drawContent()
-                                                        }
-                                                    }
-                                                }
+                                                .pillSplit(
+                                                    enabled = true,
+                                                    inside = true,
+                                                    row = rowCoords,
+                                                    pillRect = pillRectInRow,
+                                                )
                                         ) {
                                             CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.artworkColor) {
                                                 tab.title()
@@ -1548,4 +1469,66 @@ object FloatingTabBarDefaults {
         inlineElevation = inlineElevation,
         expandedElevation = expandedElevation,
     )
+}
+
+/** Holds a node's latest [LayoutCoordinates] for draw-time maths, without recomposing. */
+private class CoordsHolder {
+    var coords: LayoutCoordinates? = null
+}
+
+/**
+ * Draws this element only inside ([inside] = true) or only outside the
+ * selection pill — clipped to the pill's real capsule outline.
+ *
+ * The split used to be a rectangle from the pill's left edge to its right
+ * edge, the full height of the element. The pill's ends are round, so
+ * everything above and below those curves still fell "inside" and changed
+ * colour before the pill actually reached it. Here the pill rectangle is
+ * mapped into this element's own coordinates (through any scale on the way)
+ * and clipped as a rounded rect with radius half its shorter side.
+ *
+ * When [enabled] is false the element draws normally (no split).
+ */
+@Composable
+private fun Modifier.pillSplit(
+    enabled: Boolean,
+    inside: Boolean,
+    row: CoordsHolder,
+    pillRect: () -> Rect,
+): Modifier {
+    val mine = remember { CoordsHolder() }
+    if (!enabled) return this
+    return this
+        .onGloballyPositioned { mine.coords = it }
+        .drawWithContent {
+            val rowCoords = row.coords
+            val myCoords = mine.coords
+            if (rowCoords == null || myCoords == null || !rowCoords.isAttached || !myCoords.isAttached) {
+                if (!inside) drawContent()
+                return@drawWithContent
+            }
+            val rect = pillRect()
+            val topLeft = myCoords.localPositionOf(rowCoords, rect.topLeft)
+            val bottomRight = myCoords.localPositionOf(rowCoords, rect.bottomRight)
+            val local = Rect(topLeft, bottomRight)
+            val radius = minOf(local.width, local.height) / 2f
+            val capsule = androidx.compose.ui.graphics.Path().apply {
+                addRoundRect(
+                    androidx.compose.ui.geometry.RoundRect(
+                        local,
+                        androidx.compose.ui.geometry.CornerRadius(radius, radius),
+                    ),
+                )
+            }
+            clipPath(
+                capsule,
+                clipOp = if (inside) {
+                    androidx.compose.ui.graphics.ClipOp.Intersect
+                } else {
+                    androidx.compose.ui.graphics.ClipOp.Difference
+                },
+            ) {
+                this@drawWithContent.drawContent()
+            }
+        }
 }

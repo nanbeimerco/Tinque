@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.player
 
+import com.music.bitchord.ui.components.GlassModalBottomSheet
+import com.music.bitchord.ui.components.GlassAlertDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -70,7 +72,7 @@ internal fun SavedQueuesDialog(
     } else MaterialTheme.colorScheme.surfaceContainerHigh
 
     val sheetShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
-    ModalBottomSheet(
+    GlassModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         shape = sheetShape,
@@ -208,7 +210,7 @@ internal fun SavedQueuesDialog(
     }
 
     deleting?.let { queue ->
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { deleting = null },
             shape = RoundedCornerShape(28.dp),
             title = { Text(stringResource(R.string.delete_saved_queue), color = foreground) },

@@ -1,5 +1,15 @@
 package com.music.bitchord.feature.localmusic.ui
 
+import com.music.bitchord.feature.localsongactions.ui.LocalSongActionsHelper
+import com.music.bitchord.feature.localsongactions.ui.components.LocalDeleteConfirmDialog
+import com.music.bitchord.feature.localsongactions.ui.components.LocalAddToPlaylistSheet
+import com.music.bitchord.feature.localsongactions.ui.components.LocalSongDropdownMenu
+import com.music.bitchord.ui.components.SelectionMark
+import com.music.bitchord.ui.components.SelectionScopeEffect
+import com.music.bitchord.ui.components.LocalSongSelection
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
@@ -47,6 +57,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -71,7 +84,10 @@ import com.music.bitchord.feature.localmusic.domain.FolderNode
 import com.music.bitchord.feature.localmusic.domain.FolderTreeBuilder
 import com.music.bitchord.feature.localmusic.ui.components.DrillDownSongList
 import com.music.bitchord.feature.localmusic.ui.components.FolderArtworkThumbnail
+import com.music.bitchord.ui.components.ExpressiveGroupDefaults
 import com.music.bitchord.ui.components.SongRow
+import com.music.bitchord.ui.components.TabLogoHeader
+import com.music.bitchord.ui.components.expressiveItem
 import com.music.bitchord.ui.theme.ArtworkPalette
 
 data class FolderNavState(
@@ -93,12 +109,31 @@ private val PathStackSaver = listSaver<SnapshotStateList<String>, String>(
 private val PersistedFolderPathStacks = mutableMapOf<String, List<String>>()
 private val PersistedFolderScrollStates = mutableMapOf<String, Pair<Int, Int>>()
 
+/** The last folder tree built, reused while the song list and root are unchanged. */
+private object FolderTreeCache {
+    private var songsRef: List<Song>? = null
+    private var root: String? = null
+    private var tree: FolderNode? = null
+
+    @Synchronized
+    fun get(songs: List<Song>, customRoot: String?): FolderNode? =
+        tree?.takeIf { songsRef === songs && root == customRoot }
+
+    @Synchronized
+    fun put(songs: List<Song>, customRoot: String?, built: FolderNode) {
+        songsRef = songs
+        root = customRoot
+        tree = built
+    }
+}
+
 /**
  * Screen providing hierarchical browsing of local music storage folders.
  * Intermediate folders display subfolders and direct tracks with thumbnail artwork.
  * Leaf folders (folders containing tracks directly with no subfolders) render using
  * [DrillDownSongList] with full-screen artwork and blur background matching the album view.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun FolderBrowserScreen(
     songs: List<Song>,
@@ -115,10 +150,77 @@ fun FolderBrowserScreen(
     onArtworkPaletteChanged: ((ArtworkPalette?) -> Unit)? = null,
     songDropdownMenu: (@Composable (Song) -> Unit)? = null,
     onNavigationChanged: ((Boolean, (() -> Unit)?) -> Unit)? = null,
+    /** The open folder's name below the root, null at the root — for the top bar's title capsule. */
+    onFolderTitleChanged: ((String?) -> Unit)? = null,
+    // The ⋮ menu's actions that belong to the activity (queue, other pages, sheets).
+    onPlayNext: ((Song) -> Unit)? = null,
+    onAddToQueue: ((Song) -> Unit)? = null,
+    onGoToAlbum: ((String, String?) -> Unit)? = null,
+    onGoToArtist: ((String) -> Unit)? = null,
+    onTagEditor: ((Song) -> Unit)? = null,
+    onDetails: ((Song) -> Unit)? = null,
+    onDeleteSong: ((Song) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    val tree = remember(songs, customRootPath) {
-        FolderTreeBuilder.build(songs, customRootPath)
+    val context = LocalContext.current
+    // Long-press picks tracks here exactly as on the Songs and Albums tabs; the
+    // ⋮ on each row opens the track's menu.
+    val selection = LocalSongSelection.current
+    var menuSong by remember { mutableStateOf<Song?>(null) }
+    var deleteSong by remember { mutableStateOf<Song?>(null) }
+    var playlistSongs by remember { mutableStateOf<List<Song>?>(null) }
+    val ownMenu: @Composable (Song) -> Unit = { song ->
+        LocalSongDropdownMenu(
+            expanded = menuSong?.videoId == song.videoId,
+            onDismissRequest = { menuSong = null },
+            song = song,
+            onQueueNext = { onPlayNext?.invoke(song) ?: onSongSwipe(song) },
+            onAddToQueue = { onAddToQueue?.invoke(song) ?: onSongSwipe(song) },
+            onAddToPlaylist = { playlistSongs = listOf(song) },
+            onGoToAlbum = onGoToAlbum?.let { go -> { album -> go(album, song.thumbnailUrl) } },
+            onGoToArtist = onGoToArtist,
+            onGoToFolder = null,
+            onTagEditor = { onTagEditor?.invoke(song) },
+            onShare = { LocalSongActionsHelper.shareSong(context, song) },
+            onDeleteFromDevice = { deleteSong = song },
+            onDetails = { onDetails?.invoke(song) },
+        )
+    }
+    val rowMenu = songDropdownMenu ?: ownMenu
+    val pickOrPlay: (List<Song>, Int) -> Unit = { list, index ->
+        if (selection?.active == true) selection.toggle(list[index]) else onSongClick(list, index)
+    }
+    val pick: (Song) -> Unit = { song -> if (selection != null) selection.toggle(song) else onSongLongPress(song) }
+
+    deleteSong?.let { song ->
+        LocalDeleteConfirmDialog(
+            song = song,
+            onDismissRequest = { deleteSong = null },
+            onDeleted = {
+                deleteSong = null
+                onDeleteSong?.invoke(song)
+            },
+        )
+    }
+    playlistSongs?.let { picked ->
+        LocalAddToPlaylistSheet(songs = picked, onDismissRequest = { playlistSongs = null })
+    }
+    // The tree covers the whole library (path splitting plus a natural sort of
+    // every folder), and this screen is disposed whenever another tab shows —
+    // so building it here, on the main thread, on every visit stalled the
+    // switch into Folders. It is now cached across visits and, when it does
+    // need building, built off the main thread.
+    val cachedTree = remember(songs, customRootPath) { FolderTreeCache.get(songs, customRootPath) }
+    val loadedTree by produceState(cachedTree, songs, customRootPath) {
+        // Keyed state is not reset when songs change, so check the cache
+        // rather than `value`: a stale tree must still be rebuilt.
+        value = FolderTreeCache.get(songs, customRootPath)
+            ?: withContext(Dispatchers.Default) { FolderTreeBuilder.build(songs, customRootPath) }
+                .also { FolderTreeCache.put(songs, customRootPath, it) }
+    }
+    val tree = loadedTree ?: run {
+        Box(modifier = modifier.fillMaxSize())
+        return
     }
 
     val rootKey = customRootPath.orEmpty()
@@ -187,6 +289,15 @@ fun FolderBrowserScreen(
     BackHandler(enabled = canGoBack) {
         popBack()
     }
+    // While picking, back ends the selection first (registered later, so it wins).
+    BackHandler(enabled = selection?.active == true) { selection?.clear() }
+    // Moving to another folder ends a selection.
+    LaunchedEffect(currentNavState.node.path) { selection?.clear() }
+
+    val folderTitleCallback = rememberUpdatedState(onFolderTitleChanged)
+    val currentFolderTitle = currentNavState.node.name.takeIf { currentNavState.depth > 0 }
+    LaunchedEffect(currentFolderTitle) { folderTitleCallback.value?.invoke(currentFolderTitle) }
+    DisposableEffect(Unit) { onDispose { folderTitleCallback.value?.invoke(null) } }
 
     SideEffect {
         if (!currentNavState.node.isLeaf) {
@@ -211,6 +322,8 @@ fun FolderBrowserScreen(
         modifier = modifier.fillMaxSize(),
     ) { navState ->
         val node = navState.node
+        // "Select all" covers the tracks listed on this level (not its subfolders').
+        SelectionScopeEffect(key = node.path, songs = node.directSongs)
         if (node.isLeaf) {
             // Leaf folder: Render with full-screen artwork and blur wash, identical to album detail view
             DrillDownSongList(
@@ -222,13 +335,15 @@ fun FolderBrowserScreen(
                 fullScreenArtwork = true,
                 currentSong = currentSong,
                 isPlaying = isPlaying,
-                onSongClick = onSongClick,
-                onSongLongPress = onSongLongPress,
+                selectedIds = selection?.ids ?: emptySet(),
+                onSongClick = pickOrPlay,
+                onSongLongPress = pick,
+                onSongMore = { menuSong = it },
                 onSongSwipe = onSongSwipe,
                 onShuffle = onShuffle,
                 onBack = popBack,
                 contentPadding = contentPadding,
-                songDropdownMenu = songDropdownMenu,
+                songDropdownMenu = rowMenu,
                 onArtworkPaletteChanged = onArtworkPaletteChanged,
             )
         } else {
@@ -254,14 +369,25 @@ fun FolderBrowserScreen(
                     top = contentPadding.calculateTopPadding() + 8.dp,
                     bottom = contentPadding.calculateBottomPadding() + 16.dp,
                 ),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                // No arrangement spacing: rows of a group sit a hairline apart
+                // and headers carry their own padding.
+                verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
+                // The tab's logo, at the Folders root only (deeper levels have a back button there).
+                if (navState.depth == 0) {
+                    item(key = "tab_logo") {
+                        TabLogoHeader(
+                            listTopPadding = contentPadding.calculateTopPadding() + 8.dp,
+                            horizontalInset = 16.dp,
+                        )
+                    }
+                }
                 // Breadcrumbs & Header
                 item(key = "header") {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp),
+                            .padding(top = 4.dp, bottom = 12.dp),
                     ) {
                         // Breadcrumbs
                         val breadcrumbSegments = remember(node.relativePath, tree.name) {
@@ -404,33 +530,48 @@ fun FolderBrowserScreen(
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                            modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 8.dp),
                         )
                     }
 
-                    items(node.subfolders, key = { it.path }) { subfolder ->
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable {
-                                    pathStack.add(subfolder.path)
-                                },
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                        ) {
+                    // One rounded container for the whole set, rows split by
+                    // thin gaps (Material 3 Expressive grouped list).
+                    val folderCount = node.subfolders.size
+                    itemsIndexed(node.subfolders, key = { _, folder -> folder.path }) { index, subfolder ->
+                            // Long-press a folder to pick every track under it at once.
+                            val groupKey = "folder:${subfolder.path}"
+                            val folderPicked = selection != null && groupKey in selection.groupKeys
+                            val selecting = selection?.active == true
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    .padding(bottom = if (index < folderCount - 1) ExpressiveGroupDefaults.Gap else 0.dp)
+                                    .expressiveItem(index, folderCount)
+                                    .background(
+                                        androidx.compose.animation.animateColorAsState(
+                                            if (folderPicked) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+                                            label = "folderPicked",
+                                        ).value,
+                                    )
+                                    .combinedClickable(
+                                        onClick = {
+                                            if (selecting) selection?.toggleGroup(groupKey, subfolder.allSongs)
+                                            else pathStack.add(subfolder.path)
+                                        },
+                                        onLongClick = if (selection != null) {
+                                            { selection.toggleGroup(groupKey, subfolder.allSongs) }
+                                        } else null,
+                                    )
+                                    .padding(horizontal = 16.dp, vertical = 14.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 FolderArtworkThumbnail(
                                     coverSongs = subfolder.coverSongs,
-                                    modifier = Modifier.size(52.dp),
-                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.size(64.dp),
+                                    shape = RoundedCornerShape(14.dp),
                                 )
 
-                                Spacer(Modifier.width(14.dp))
+                                Spacer(Modifier.width(16.dp))
 
                                 Column(
                                     modifier = Modifier.weight(1f),
@@ -454,14 +595,17 @@ fun FolderBrowserScreen(
                                     )
                                 }
 
-                                Icon(
-                                    imageVector = Icons.Rounded.ChevronRight,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                    modifier = Modifier.size(20.dp),
-                                )
+                                if (selecting) {
+                                    SelectionMark(selected = folderPicked)
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.ChevronRight,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(24.dp),
+                                    )
+                                }
                             }
-                        }
                     }
                 }
 
@@ -473,9 +617,10 @@ fun FolderBrowserScreen(
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
+                            modifier = Modifier.padding(start = 8.dp, top = 20.dp, bottom = 8.dp),
                         )
                     }
+                    val trackCount = node.directSongs.size
 
                     // The row's index comes with the item: asking the list for
                     // it (`directSongs.indexOf(song)`) ran a linear scan inside
@@ -483,14 +628,21 @@ fun FolderBrowserScreen(
                     // exactly why scrolling the top folder (the whole library)
                     // dropped frames and let the nav bar's fold lag the finger.
                     itemsIndexed(node.directSongs, key = { _, song -> song.videoId }) { index, song ->
+                        val groupColor = ExpressiveGroupDefaults.containerColor()
                         SongRow(
                             song = song,
+                            modifier = Modifier
+                                .padding(bottom = if (index < trackCount - 1) ExpressiveGroupDefaults.Gap else 0.dp)
+                                .expressiveItem(index, trackCount, groupColor),
+                            rowBackground = groupColor,
                             isCurrent = currentSong?.videoId == song.videoId,
                             isPlaying = isPlaying,
-                            onClick = { onSongClick(node.directSongs, index) },
-                            onLongPress = { onSongLongPress(song) },
+                            selected = selection != null && song in selection,
+                            onClick = { pickOrPlay(node.directSongs, index) },
+                            onLongPress = { pick(song) },
+                            onMore = { menuSong = song },
                             onSwipeToQueue = { onSongSwipe(song) },
-                            dropdownMenu = songDropdownMenu?.let { menu -> { menu(song) } },
+                            dropdownMenu = { rowMenu(song) },
                         )
                     }
                 }

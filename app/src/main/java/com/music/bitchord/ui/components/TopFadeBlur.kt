@@ -44,6 +44,9 @@ import dev.chrisbanes.haze.materials.HazeMaterials
  */
 private val FADE_RUN = 32.dp
 
+/** How far below the status bar the fade runs out. */
+private val STATUS_FADE_RUN = 14.dp
+
 /**
  * How much blur the fade reaches at its outer edge — short of all of it.
  *
@@ -111,7 +114,10 @@ fun TopFadeBlur(
     // nothing left to do.
     if (reduceDynamicBlur) return
 
-    val height = topBarHeight() + FADE_RUN
+    // Only the status bar area: the floating top controls are their own glass
+    // and must sit over the bare page, not over this fade (no glass inside a
+    // band). The fade is just enough to keep the clock and battery readable.
+    val height = topSafeInset() + STATUS_FADE_RUN
     Box(
         modifier = modifier
             .fillMaxWidth()

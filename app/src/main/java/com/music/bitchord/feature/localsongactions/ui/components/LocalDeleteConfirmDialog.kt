@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.localsongactions.ui.components
 
+import com.music.bitchord.ui.components.GlassAlertDialog
 import android.app.Activity
 import android.net.Uri
 import android.os.Build
@@ -106,7 +107,7 @@ fun LocalDeleteConfirmDialog(
     }
 
     if (showConfirmDialog) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = onDismissRequest,
             icon = {
                 Icon(

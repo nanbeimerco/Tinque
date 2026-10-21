@@ -11,6 +11,11 @@
  */
 package com.music.bitchord.ui.components.floatingtabbar
 
+import com.music.bitchord.ui.components.clearGlow
+import com.music.bitchord.ui.components.clearSpecular
+import com.music.bitchord.ui.components.backdrop.effects.clearRefractionIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.ui.components.backdrop.effects.opticalLens
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -581,6 +586,8 @@ internal fun GlassSelectionPill(
 ) {
     val page = LocalAppBackdrop.current
     val shape = remember { RoundedCornerShape(percent = 50) }
+    val renderStyle by com.music.bitchord.data.settings.AppSettings.glassRenderStyle.collectAsStateWithLifecycle()
+    val clearStyle = renderStyle == com.music.bitchord.data.settings.GlassRenderStyle.CLEAR
     val backdrop = remember(page, barGlass, tabRow, fillColor) {
         SelectionPillBackdrop(page, barGlass, tabRow) {
             fillColor.copy(alpha = fillColor.alpha * (1f - motion.material))
@@ -592,16 +599,33 @@ internal fun GlassSelectionPill(
             shape = { shape },
             effects = {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    lens(
-                        refractionHeight = LENS_HEIGHT.toPx() * motion.glassPresence,
-                        refractionAmount = LENS_AMOUNT.toPx() * motion.material,
-                        chromaticAberration = true,
-                    )
+                    if (clearStyle) {
+                        // Mornye's pill: a clear lens (no blur) with the optical rim.
+                        // Mornye's held pill: a clear lens (no blur), depth 0.18
+                        // over an 18 px band, a thin colour fringe and the rim.
+                        val p = motion.material
+                        opticalLens(
+                            band = 18.dp.toPx(),
+                            refractionIndex = clearRefractionIndex(18f, 0.18f * p),
+                            travel = 70.dp.toPx() * motion.glassPresence,
+                            dispersion = 1.32.dp.toPx() * p,
+                            dispersionMin = 0.66.dp.toPx(),
+                            specular = clearSpecular(dark = true, density = density, scale = 1f, strength = p),
+                            glow = clearGlow(density = density, scale = 1f, strength = p),
+                        )
+                    } else {
+                        lens(
+                            refractionHeight = LENS_HEIGHT.toPx() * motion.glassPresence,
+                            refractionAmount = LENS_AMOUNT.toPx() * motion.material,
+                            chromaticAberration = true,
+                        )
+                    }
                 }
             },
             highlight = {
                 val alpha = motion.material * rimOf(motion.glassPresence)
-                if (alpha > 0f) Highlight.Default.copy(alpha = alpha) else null
+                // Mornye's pill has only the lens's own rim.
+                if (alpha > 0f && !clearStyle) Highlight.Default.copy(alpha = alpha) else null
             },
             shadow = {
                 val alpha = motion.material * rimOf(motion.glassPresence)

@@ -39,6 +39,103 @@ object BitChordIcons {
         }.build()
     }
 
+    // ---- Now Playing transport ----
+    //
+    // Filled shapes whose corners come from a wide round-joined stroke drawn
+    // over the fill: the stroke's half-width is the corner radius. Overlaps
+    // between sub-shapes are harmless — the vector is rendered to one cached
+    // bitmap and tinted as a whole.
+
+    /** A plump play triangle with heavily rounded vertices. */
+    val TransportPlay: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_transport_play",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                fill = stroke,
+                stroke = stroke,
+                strokeLineWidth = 4.6f,
+                strokeLineCap = StrokeCap.Round,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(7.4f, 5.6f)
+                lineTo(18.8f, 12f)
+                lineTo(7.4f, 18.4f)
+                close()
+            }
+        }.build()
+    }
+
+    /**
+     * Two very thick bars with a narrow gap and only slightly rounded
+     * corners — straight edges remain top and bottom, so from a distance it
+     * reads as one near-square block.
+     */
+    val TransportPause: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_transport_pause",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            val r = 1.3f
+            // Bars 5.4 wide with a 2.6 gap (was 6.5 / 2.2).
+            for ((left, right) in listOf(5.3f to 10.7f, 13.3f to 18.7f)) {
+                path(
+                    fill = stroke,
+                    stroke = stroke,
+                    strokeLineWidth = r * 2,
+                    strokeLineCap = StrokeCap.Round,
+                    strokeLineJoin = StrokeJoin.Round,
+                ) {
+                    moveTo(left + r, 4f + r)
+                    lineTo(right - r, 4f + r)
+                    lineTo(right - r, 20f - r)
+                    lineTo(left + r, 20f - r)
+                    close()
+                }
+            }
+        }.build()
+    }
+
+    /**
+     * Skip forward: two triangles, the rear one's tip driven deep into the
+     * back of the front one, so the pair is one wide silhouette.
+     */
+    val TransportNext: ImageVector by lazy { skipIcon("bc_transport_next", mirrored = false) }
+
+    /** Skip back: [TransportNext] mirrored. */
+    val TransportPrevious: ImageVector by lazy { skipIcon("bc_transport_previous", mirrored = true) }
+
+    private fun skipIcon(name: String, mirrored: Boolean): ImageVector {
+        fun x(v: Float) = if (mirrored) 24f - v else v
+        return ImageVector.Builder(
+            name = name,
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            // The round-joined 2.6 stroke spreads each shape 1.3 outward, so the
+            // visible overlap is the coordinate overlap + 2.6. Rear tip 10.9 and
+            // front base 12.9 leave ~0.6 of visible overlap: the rear tip just
+            // touches into the front triangle. Both triangles are 9.4 wide.
+            for ((base, tip) in listOf(1.5f to 10.9f, 12.9f to 22.3f)) {
+                path(
+                    fill = stroke,
+                    stroke = stroke,
+                    strokeLineWidth = 2.6f,
+                    strokeLineCap = StrokeCap.Round,
+                    strokeLineJoin = StrokeJoin.Round,
+                ) {
+                    moveTo(x(base), 5.4f)
+                    lineTo(x(tip), 12f)
+                    lineTo(x(base), 18.6f)
+                    close()
+                }
+            }
+        }.build()
+    }
+
     val Search: ImageVector by lazy {
         ImageVector.Builder(
             name = "bc_search",

@@ -40,13 +40,16 @@ fun LibraryFavoritesItem(
     onClick: () -> Unit,
     onPlay: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Overrides for when the row sits inside a grouped (Expressive) container. */
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp),
+    containerColor: Color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
 ) {
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(shape)
             .clickable(onClick = onClick),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+        color = containerColor,
     ) {
         Row(
             modifier = Modifier

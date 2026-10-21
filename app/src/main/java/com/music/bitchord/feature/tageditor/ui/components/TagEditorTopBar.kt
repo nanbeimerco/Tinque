@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.tageditor.ui.components
 
+import com.music.bitchord.ui.components.GlassDropdownMenu
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -55,7 +56,7 @@ fun TagEditorTopBar(
                     )
                 }
 
-                DropdownMenu(
+                GlassDropdownMenu(
                     expanded = menuOpen,
                     onDismissRequest = { menuOpen = false },
                 ) {

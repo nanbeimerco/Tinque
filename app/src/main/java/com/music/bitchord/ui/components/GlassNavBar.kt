@@ -9,6 +9,7 @@
 
 package com.music.bitchord.ui.components
 
+import com.music.bitchord.ui.icons.BitChordIcons
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
@@ -108,6 +109,9 @@ fun GlassNavBar(
     pull: MiniPlayerPull? = null,
     useGlass: Boolean = false,
     modifier: Modifier = Modifier,
+    /** The queue's neighbours, previewed while swiping the mini player. */
+    previousSong: Song? = null,
+    nextSong: Song? = null,
 ) {
     val pillShape = remember { RoundedCornerShape(percent = 50) }
     val isDark = isSystemInDarkTheme()
@@ -137,8 +141,12 @@ fun GlassNavBar(
         MaterialTheme.colorScheme.onSurfaceVariant
     }
     val milkyPillAlpha = (0.14f + liquidGlassOpacity * 0.25f).coerceIn(0.15f, 0.40f)
+    val renderStyle by AppSettings.glassRenderStyle.collectAsStateWithLifecycle()
     val indicatorColor = when {
         !useGlass -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+        // Mornye's resting pill: a faint wash, not a milky capsule.
+        renderStyle == com.music.bitchord.data.settings.GlassRenderStyle.CLEAR ->
+            if (isArtworkTheme || isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f)
         isArtworkTheme || isDark -> Color.White.copy(alpha = milkyPillAlpha)
         else -> Color.Black.copy(alpha = 0.12f)
     }
@@ -150,7 +158,7 @@ fun GlassNavBar(
     // A factory, not a value. Each surface gets its own glass or clean background modifier.
     val surfaceModifier: @Composable () -> Modifier = remember(useGlass, pillShape, borderColor) {
         if (useGlass) {
-            { Modifier.liquidGlass(shape = pillShape) }
+            { Modifier.liquidGlass(shape = pillShape, role = GlassRole.Player) }
         } else {
             {
                 Modifier
@@ -168,7 +176,9 @@ fun GlassNavBar(
             .padding(horizontal = PAGE_GUTTER)
             .padding(bottom = 2.dp)
             .fillMaxWidth(),
-        tabBarContentModifier = surfaceModifier,
+        tabBarContentModifier = if (useGlass) {
+            { Modifier.liquidGlass(shape = pillShape, role = GlassRole.TabBar) }
+        } else surfaceModifier,
         inlineAccessory = song?.let { current ->
             { accessoryModifier, _ ->
                 GlassNowPlaying(
@@ -185,6 +195,8 @@ fun GlassNavBar(
                     dock = dock,
                     pull = pull,
                     useGlass = useGlass,
+                    previousSong = previousSong,
+                    nextSong = nextSong,
                     modifier = accessoryModifier.then(surfaceModifier()),
                 )
             }
@@ -205,6 +217,8 @@ fun GlassNavBar(
                     dock = dock,
                     pull = pull,
                     useGlass = useGlass,
+                    previousSong = previousSong,
+                    nextSong = nextSong,
                     modifier = accessoryModifier.fillMaxWidth().then(surfaceModifier()),
                 )
             }
@@ -317,9 +331,13 @@ private fun GlassNowPlaying(
     dock: PlayerDock?,
     pull: MiniPlayerPull?,
     useGlass: Boolean = false,
+    previousSong: Song? = null,
+    nextSong: Song? = null,
     modifier: Modifier = Modifier,
 ) {
-    val showPreviousButton by AppSettings.miniPlayerPreviousButton.collectAsStateWithLifecycle()
+    val previousButtonSetting by AppSettings.miniPlayerPreviousButton.collectAsStateWithLifecycle()
+    val playPauseOnly by AppSettings.miniPlayerPlayPauseOnly.collectAsStateWithLifecycle()
+    val showPreviousButton = previousButtonSetting && !playPauseOnly
     val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val keepOriginalArtworkAspectRatio by AppSettings.keepOriginalArtworkAspectRatio.collectAsStateWithLifecycle()
     val preserveSleeveArtworkShape = keepOriginalArtworkAspectRatio && !fullBleedArt
@@ -335,13 +353,18 @@ private fun GlassNowPlaying(
 
     val artSize = if (isInline) 32.dp else 40.dp
     val glyphSlot = if (isInline) 32.dp else 40.dp
-    val glyphSize = if (isInline) 24.dp else 32.dp
+    // Same proportions as the full player (skip 46 : play 66 ≈ 0.7), so
+    // play/pause reads as the main control here too.
+    val skipGlyphSize = if (isInline) 17.dp else 21.dp
+    val playGlyphSize = if (isInline) 24.dp else 30.dp
 
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .miniPlayerGestures(
                 pull = pull,
+                // Track changes are the artwork/title area's own swipe (with preview).
+                horizontalSwipe = false,
                 onNext = {
                     haptics.play(Haptic.SkipNext)
                     onNext()
@@ -371,40 +394,61 @@ private fun GlassNowPlaying(
                     vertical = if (isInline) 4.dp else 8.dp,
                 ),
         ) {
-            AsyncImage(
-                model = song.artworkAt(ROW_ART_PX),
-                contentDescription = null,
-                contentScale = miniArtContentScale,
-                modifier = Modifier
-                    .size(artSize)
-                    .playerDockArt(dock = dock, corner = if (isInline) 6.dp else 8.dp)
-                    .clip(RoundedCornerShape(if (isInline) 6.dp else 8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
-            Spacer(Modifier.width(if (isInline) 8.dp else 10.dp))
-            if (isInline) {
-                Text(
-                    text = song.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = contentColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                Column(Modifier.weight(1f)) {
-                    ExplicitSongTitle(
-                        song = song,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = contentColor,
+            MiniPlayerTrackSwipe(
+                current = song,
+                previous = previousSong,
+                next = nextSong,
+                onPrevious = onPrevious,
+                onNext = onNext,
+                modifier = Modifier.weight(1f),
+                startBleed = if (isInline) 8.dp else 12.dp,
+            ) { shownSong, isCurrent ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AsyncImage(
+                        model = shownSong.artworkAt(ROW_ART_PX),
+                        contentDescription = null,
+                        contentScale = miniArtContentScale,
+                        modifier = Modifier
+                            .size(artSize)
+                            .then(
+                                // Only the playing track is the dock's shared element.
+                                if (isCurrent) Modifier.playerDockArt(dock = dock, corner = if (isInline) 6.dp else 8.dp)
+                                else Modifier,
+                            )
+                            .clip(RoundedCornerShape(if (isInline) 6.dp else 8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
                     )
-                    Text(
-                        text = song.artist,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (useGlass) contentColor.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Spacer(Modifier.width(if (isInline) 8.dp else 10.dp))
+                    if (isInline) {
+                        val titleStyle = MaterialTheme.typography.titleMedium.centeredLine()
+                        Text(
+                            text = shownSong.title,
+                            style = titleStyle,
+                            color = contentColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f).fixedLineHeight(titleStyle),
+                        )
+                    } else {
+                        Column(Modifier.weight(1f)) {
+                            val titleStyle = MaterialTheme.typography.titleMedium.centeredLine()
+                            val artistStyle = MaterialTheme.typography.bodyMedium.centeredLine()
+                            ExplicitSongTitle(
+                                song = shownSong,
+                                style = titleStyle,
+                                color = contentColor,
+                                modifier = Modifier.fixedLineHeight(titleStyle),
+                            )
+                            Text(
+                                modifier = Modifier.fixedLineHeight(artistStyle),
+                                text = shownSong.artist,
+                                style = artistStyle,
+                                color = if (useGlass) contentColor.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
             }
             if (showPreviousButton) {
@@ -416,12 +460,14 @@ private fun GlassNowPlaying(
                     modifier = Modifier.size(glyphSlot),
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.SkipPrevious,
+                        imageVector = BitChordIcons.TransportPrevious,
                         contentDescription = stringResource(R.string.widget_previous),
                         tint = contentColor,
-                        modifier = Modifier.size(glyphSize),
+                        modifier = Modifier.size(skipGlyphSize),
                     )
                 }
+                // Same gap as before Next, so play/pause sits in the middle.
+                Spacer(Modifier.width(8.dp))
             }
             if (isLoading) {
                 Box(Modifier.size(glyphSlot), contentAlignment = Alignment.Center) {
@@ -440,14 +486,14 @@ private fun GlassNowPlaying(
                     modifier = Modifier.size(glyphSlot),
                 ) {
                     Icon(
-                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        imageVector = if (isPlaying) BitChordIcons.TransportPause else BitChordIcons.TransportPlay,
                         contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
                         tint = contentColor,
-                        modifier = Modifier.size(glyphSize),
+                        modifier = Modifier.size(playGlyphSize),
                     )
                 }
             }
-            if (!isInline) {
+            if (!isInline && !playPauseOnly) {
                 Spacer(Modifier.width(8.dp))
                 IconButton(
                     onClick = {
@@ -457,10 +503,10 @@ private fun GlassNowPlaying(
                     modifier = Modifier.size(glyphSlot),
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.SkipNext,
+                        imageVector = BitChordIcons.TransportNext,
                         contentDescription = stringResource(R.string.widget_next),
                         tint = contentColor,
-                        modifier = Modifier.size(glyphSize),
+                        modifier = Modifier.size(skipGlyphSize),
                     )
                 }
             }

@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.tageditor.ui.components
 
+import com.music.bitchord.ui.components.GlassAlertDialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -45,7 +46,7 @@ fun TagEditorGenreDialog(
         else STANDARD_GENRES.filter { it.contains(search, ignoreCase = true) }
     }
 
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = onDismissRequest,
         shape = RoundedCornerShape(24.dp),
         title = {

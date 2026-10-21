@@ -1,5 +1,9 @@
 package com.music.bitchord.feature.library.ui
 
+import com.music.bitchord.feature.localsongactions.ui.components.LocalDeleteConfirmDialog
+import com.music.bitchord.ui.components.SelectionScopeEffect
+import com.music.bitchord.ui.components.LocalSongSelection
+import com.music.bitchord.ui.components.GlassAlertDialog
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
@@ -90,6 +94,7 @@ import kotlinx.coroutines.launch
 import com.music.bitchord.feature.localmusic.ui.components.DrillDownSongList
 import com.music.bitchord.feature.localmusic.ui.components.rememberPlaylistCoverPicker
 import com.music.bitchord.ui.components.FastScroller
+import com.music.bitchord.ui.components.depthTransition
 import com.music.bitchord.ui.components.SectionIndexer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -186,6 +191,11 @@ fun LibraryScreen(
     modifier: Modifier = Modifier,
     onPlayNext: ((Song) -> Unit)? = null,
     onAddToQueue: ((Song) -> Unit)? = null,
+    // The ⋮ menu's actions that belong to the activity (other pages, editors).
+    onGoToAlbum: ((String, String?) -> Unit)? = null,
+    onGoToArtist: ((String) -> Unit)? = null,
+    onOpenTagEditor: ((Song) -> Unit)? = null,
+    onOpenDetails: ((Song) -> Unit)? = null,
     onDeleteSong: ((Song) -> Unit)? = null,
     onSongTagsOrLyricsSaved: ((Song) -> Unit)? = null,
     songDropdownMenu: (@Composable (Song) -> Unit)? = null,
@@ -193,6 +203,10 @@ fun LibraryScreen(
     onInitialFilterApplied: () -> Unit = {},
     onArtworkPaletteChanged: ((ArtworkPalette?) -> Unit)? = null,
     onCollectionNavigationChanged: ((Boolean, (() -> Unit)?) -> Unit)? = null,
+    /** Bumped when the Library tab is tapped again while showing: back to the top, "All". */
+    resetToTopSignal: Int = 0,
+    /** Whether the large "Library" title has scrolled away — drives the top bar's title capsule. */
+    onTitleScrolledAway: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current.applicationContext
     val playlists by LocalPlaylistStore.playlists.collectAsStateWithLifecycle()
@@ -204,6 +218,7 @@ fun LibraryScreen(
     val playStatsRevision by LocalPlayStatsStore.revision.collectAsStateWithLifecycle()
     var recentlyPlayedSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
     var mostPlayedSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
+    var playCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     val choosePlaylistCover = rememberPlaylistCoverPicker { playlistId, uri ->
         LocalPlaylistStore.setPlaylistCover(playlistId, uri)
     }
@@ -214,6 +229,7 @@ fun LibraryScreen(
                 song to LocalPlayStatsStore.getStats(context, song.localUri ?: song.videoId)
             }.filter { (_, stats) -> stats.playedCount > 0 }
         }
+        playCounts = ranked.associate { (song, stats) -> (song.localUri ?: song.videoId) to stats.playedCount }
         recentlyPlayedSongs = ranked
             .sortedByDescending { it.second.lastPlayedTimestamp }
             .map { it.first }
@@ -230,15 +246,44 @@ fun LibraryScreen(
     var playlistToRename by remember { mutableStateOf<LocalPlaylist?>(null) }
 
     // Drill down navigation inside Library (e.g. for Favorites or specific Playlist)
-    var drillDownLabel by remember { mutableStateOf<String?>(null) }
-    var drillDownSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
-    var drillDownArt by remember { mutableStateOf<String?>(null) }
-    var drillDownPlaylistId by remember { mutableStateOf<String?>(null) }
+    // Saved, so leaving for another tab and coming back reopens the same
+    // playlist / Favorites. The song list itself is not saved; it is rebuilt
+    // from the stores on the way back in.
+    var drillDownLabel by rememberSaveable { mutableStateOf<String?>(null) }
+    var drillDownArt by rememberSaveable { mutableStateOf<String?>(null) }
+    var drillDownPlaylistId by rememberSaveable { mutableStateOf<String?>(null) }
+    var drillDownSongs by remember {
+        mutableStateOf(
+            when {
+                drillDownLabel == null -> emptyList()
+                drillDownPlaylistId != null -> LocalPlaylistStore.getPlaylist(drillDownPlaylistId!!)
+                    ?.let { resolvePlaylistSongs(it, songs) }
+                    .orEmpty()
+                else -> songs.filter { s -> (s.localUri ?: s.videoId) in favoriteIds || s.videoId in favoriteIds }
+            },
+        )
+    }
+    // Songs may still be loading on the first frame back; fill in once they arrive.
+    LaunchedEffect(songs.isEmpty()) {
+        if (drillDownLabel != null && drillDownSongs.isEmpty() && songs.isNotEmpty()) {
+            drillDownSongs = drillDownPlaylistId
+                ?.let { id -> LocalPlaylistStore.getPlaylist(id)?.let { resolvePlaylistSongs(it, songs) } }
+                ?: if (drillDownPlaylistId == null) {
+                    songs.filter { s -> (s.localUri ?: s.videoId) in favoriteIds || s.videoId in favoriteIds }
+                } else emptyList()
+        }
+    }
     var playlistReorderEnabled by rememberSaveable { mutableStateOf(false) }
     var playlistSelectionMode by rememberSaveable { mutableStateOf(false) }
     var selectedPlaylistSongIds by rememberSaveable { mutableStateOf(emptySet<String>()) }
     var showDeleteFromPlaylistDialog by remember { mutableStateOf(false) }
     var activeMenuSong by remember { mutableStateOf<Song?>(null) }
+    // The ⋮ menu (the Songs tab's, everywhere in the Library) and its sheets.
+    var menuPlaylistSongs by remember { mutableStateOf<List<Song>?>(null) }
+    var menuDeleteSong by remember { mutableStateOf<Song?>(null) }
+    // Long-press picks tracks, as on the Songs tab (a playlist keeps its own
+    // selection, which can also reorder and bulk-edit).
+    val selection = LocalSongSelection.current
     var showAddSelectedToPlaylist by remember { mutableStateOf(false) }
     var showBulkTagEditor by remember { mutableStateOf(false) }
     var bulkArtist by remember { mutableStateOf("") }
@@ -423,13 +468,47 @@ fun LibraryScreen(
         selectedPlaylistSongIds = emptySet()
     }
 
+    // Tab re-tap: close any drill-down, return to "All" and the top of the list.
+    var lastResetSignal by rememberSaveable { mutableStateOf(resetToTopSignal) }
+    LaunchedEffect(resetToTopSignal) {
+        if (resetToTopSignal != lastResetSignal) {
+            lastResetSignal = resetToTopSignal
+            leaveDrillDown()
+            selectedFilter = LibraryFilter.ALL
+            // Non-suspending: the list may not be laid out (e.g. a drill-down is showing).
+            collectionListState.requestScrollToItem(0)
+            collectionGridState.requestScrollToItem(0)
+        }
+    }
+
+    // Report when the large title has scrolled out of view (main page only).
+    val titleThresholdPx = with(androidx.compose.ui.platform.LocalDensity.current) { 48.dp.toPx() }
+    val titleScrolledAway by remember(titleThresholdPx, inDrillDown, inHistoryView) {
+        androidx.compose.runtime.derivedStateOf {
+            !inDrillDown && !inHistoryView && (
+                collectionListState.firstVisibleItemIndex > 0 ||
+                    collectionListState.firstVisibleItemScrollOffset > titleThresholdPx ||
+                    collectionGridState.firstVisibleItemIndex > 0 ||
+                    collectionGridState.firstVisibleItemScrollOffset > titleThresholdPx
+                )
+        }
+    }
+    val titleCallback = rememberUpdatedState(onTitleScrolledAway)
+    LaunchedEffect(titleScrolledAway) { titleCallback.value(titleScrolledAway) }
+    DisposableEffect(Unit) { onDispose { titleCallback.value(false) } }
+
+    // Drill-downs and the full Recently / Most played lists are sub-pages: the
+    // top bar shows a back button for them.
+    val inSubPage = inDrillDown || inHistoryView
     val collectionNavigationCallback = rememberUpdatedState(onCollectionNavigationChanged)
-    val currentCollectionBackHandler = rememberUpdatedState(leaveDrillDown)
+    val currentCollectionBackHandler = rememberUpdatedState<() -> Unit>({
+        if (inDrillDown) leaveDrillDown() else { selectedFilter = LibraryFilter.ALL }
+    })
     val collectionBackHandler = remember { { currentCollectionBackHandler.value() } }
-    LaunchedEffect(inDrillDown) {
+    LaunchedEffect(inSubPage) {
         collectionNavigationCallback.value?.invoke(
-            inDrillDown,
-            collectionBackHandler.takeIf { inDrillDown },
+            inSubPage,
+            collectionBackHandler.takeIf { inSubPage },
         )
     }
     DisposableEffect(Unit) {
@@ -438,6 +517,74 @@ fun LibraryScreen(
 
     BackHandler(enabled = inDrillDown || inHistoryView) {
         if (inDrillDown) leaveDrillDown() else selectedFilter = LibraryFilter.ALL
+    }
+
+    val libraryMenu: @Composable (Song, String?) -> Unit = { song, playlistId ->
+        LocalSongDropdownMenu(
+            expanded = (activeMenuSong?.let { it.localUri ?: it.videoId } == (song.localUri ?: song.videoId)),
+            onDismissRequest = { activeMenuSong = null },
+            song = song,
+            onQueueNext = {
+                activeMenuSong = null
+                onPlayNext?.invoke(song) ?: onSongSwipe(song)
+            },
+            onAddToQueue = {
+                activeMenuSong = null
+                onAddToQueue?.invoke(song) ?: onSongSwipe(song)
+            },
+            onAddToPlaylist = {
+                activeMenuSong = null
+                menuPlaylistSongs = listOf(song)
+            },
+            onRemoveFromPlaylist = if (playlistId != null) {
+                {
+                    activeMenuSong = null
+                    val songId = song.localUri ?: song.videoId
+                    LocalPlaylistStore.removeSongFromPlaylist(playlistId, songId)
+                    drillDownSongs = drillDownSongs.filterNot { (it.localUri ?: it.videoId) == songId }
+                    Toast.makeText(context, R.string.remove_from_playlist, Toast.LENGTH_SHORT).show()
+                }
+            } else null,
+            onGoToAlbum = onGoToAlbum?.let { go -> { album -> activeMenuSong = null; go(album, song.thumbnailUrl) } },
+            onGoToArtist = onGoToArtist?.let { go -> { artist -> activeMenuSong = null; go(artist) } },
+            onGoToFolder = null,
+            onTagEditor = {
+                activeMenuSong = null
+                onOpenTagEditor?.invoke(song) ?: onSongLongPress(song)
+            },
+            onShare = {
+                activeMenuSong = null
+                LocalSongActionsHelper.shareSong(context, song)
+            },
+            onDeleteFromDevice = {
+                activeMenuSong = null
+                menuDeleteSong = song
+            },
+            onDetails = {
+                activeMenuSong = null
+                onOpenDetails?.invoke(song) ?: onSongLongPress(song)
+            },
+        )
+    }
+    val openMenu: (Song) -> Unit = { song -> activeMenuSong = song }
+    val pickOrPlay: (List<Song>, Int) -> Unit = { list, index ->
+        if (selection?.active == true) selection.toggle(list[index]) else onSongClick(list, index)
+    }
+    val pick: (Song) -> Unit = { song -> if (selection != null) selection.toggle(song) else onSongLongPress(song) }
+    // Moving to another page of the Library ends a selection.
+    LaunchedEffect(drillDownLabel, selectedFilter) { selection?.clear() }
+    menuPlaylistSongs?.let { picked ->
+        LocalAddToPlaylistSheet(songs = picked, onDismissRequest = { menuPlaylistSongs = null })
+    }
+    menuDeleteSong?.let { song ->
+        LocalDeleteConfirmDialog(
+            song = song,
+            onDismissRequest = { menuDeleteSong = null },
+            onDeleted = {
+                menuDeleteSong = null
+                onDeleteSong?.invoke(song)
+            },
+        )
     }
 
     // Filter favorite songs matching persisted favorite IDs
@@ -455,14 +602,10 @@ fun LibraryScreen(
                 LibraryFilter.MOST_PLAYED -> "history:most"
                 else -> "library_main"
             },
+            // Library top = 0; a playlist, Favorites, or a full Recently / Most
+            // played list = 1.
             transitionSpec = {
-                if (targetState.startsWith("drill:")) {
-                    (slideInHorizontally { it } + fadeIn()) togetherWith
-                        (slideOutHorizontally { -it / 3 } + fadeOut())
-                } else {
-                    (slideInHorizontally { -it / 3 } + fadeIn()) togetherWith
-                        (slideOutHorizontally { it } + fadeOut())
-                }
+                depthTransition { state -> if (state == "library_main") 0 else 1 }
             },
             label = "library_content_transition",
             modifier = Modifier.fillMaxSize(),
@@ -515,10 +658,12 @@ fun LibraryScreen(
                             )
                         }
                     } else null,
-                    selectedIds = selectedPlaylistSongIds,
+                    selectedIds = if (drillDownPlaylistId != null) selectedPlaylistSongIds else selection?.ids ?: emptySet(),
                     currentSong = currentSong,
                     isPlaying = isPlaying,
-                    onSongClick = { list, idx -> onSongClick(list, idx) },
+                    onSongClick = { list, idx ->
+                        if (drillDownPlaylistId == null) pickOrPlay(list, idx) else onSongClick(list, idx)
+                    },
                     onSongLongPress = { song ->
                         if (drillDownPlaylistId != null) {
                             val key = song.localUri ?: song.videoId
@@ -530,14 +675,12 @@ fun LibraryScreen(
                                 togglePlaylistSongSelection(song)
                             }
                         } else {
-                            onSongLongPress(song)
+                            pick(song)
                         }
                     },
                     // Selection changes the row tap and long-press behavior,
                     // but the trailing details/actions button stays available.
-                    onSongMore = if (drillDownPlaylistId != null) {
-                        { song -> activeMenuSong = song }
-                    } else onSongLongPress,
+                    onSongMore = openMenu,
                     onSongSwipe = onSongSwipe,
                     onShuffle = onShuffle,
                     onMore = null,
@@ -563,76 +706,20 @@ fun LibraryScreen(
                     },
                     onBack = leaveDrillDown,
                     contentPadding = contentPadding,
-                    songDropdownMenu = if (drillDownPlaylistId != null) {
-                        { song ->
-                            val playlistId = drillDownPlaylistId
-                            LocalSongDropdownMenu(
-                                expanded = (activeMenuSong?.let { it.localUri ?: it.videoId } == (song.localUri ?: song.videoId)),
-                                onDismissRequest = { activeMenuSong = null },
-                                song = song,
-                                onQueueNext = {
-                                    activeMenuSong = null
-                                    onPlayNext?.invoke(song) ?: onSongSwipe(song)
-                                    Toast.makeText(context, "Queued next", Toast.LENGTH_SHORT).show()
-                                },
-                                onAddToQueue = {
-                                    activeMenuSong = null
-                                    onAddToQueue?.invoke(song) ?: onSongSwipe(song)
-                                    Toast.makeText(context, "Added to playing queue", Toast.LENGTH_SHORT).show()
-                                },
-                                onAddToPlaylist = {
-                                    activeMenuSong = null
-                                    selectedPlaylistSongIds = setOf(song.localUri ?: song.videoId)
-                                    showAddSelectedToPlaylist = true
-                                },
-                                onRemoveFromPlaylist = if (playlistId != null) {
-                                    {
-                                        activeMenuSong = null
-                                        val songId = song.localUri ?: song.videoId
-                                        LocalPlaylistStore.removeSongFromPlaylist(playlistId, songId)
-                                        drillDownSongs = drillDownSongs.filterNot { (it.localUri ?: it.videoId) == songId }
-                                        Toast.makeText(context, R.string.remove_from_playlist, Toast.LENGTH_SHORT).show()
-                                    }
-                                } else null,
-                                onTagEditor = {
-                                    activeMenuSong = null
-                                    onSongLongPress(song)
-                                },
-                                onShare = {
-                                    activeMenuSong = null
-                                    LocalSongActionsHelper.shareSong(context, song)
-                                },
-                                onDeleteFromDevice = {
-                                    activeMenuSong = null
-                                    onDeleteSong?.invoke(song)
-                                },
-                                onDetails = {
-                                    activeMenuSong = null
-                                    onSongLongPress(song)
-                                },
-                            )
-                        }
-                    } else songDropdownMenu,
+                    songDropdownMenu = { song -> libraryMenu(song, drillDownPlaylistId) },
                     onArtworkPaletteChanged = onArtworkPaletteChanged,
                 )
+                if (drillDownPlaylistId == null) SelectionScopeEffect(key = key, songs = drillDownSongs)
             } else if (key.startsWith("history:")) {
                 val isRecent = key == "history:recent"
                 val historySongs = if (isRecent) recentlyPlayedSongs else mostPlayedSongs
+                // A sub-page now (back button in the top bar), so no filter
+                // header here: the list's own title says what it is.
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(top = contentPadding.calculateTopPadding()),
                 ) {
-                    LibraryHeaderBar(
-                        selectedFilter = selectedFilter,
-                        onFilterSelect = { selectedFilter = it },
-                        viewType = libraryViewType,
-                        onToggleViewType = {
-                            val next = if (libraryViewType == LibraryViewType.GRID) LibraryViewType.LIST else LibraryViewType.GRID
-                            AppSettings.setLibraryPlaylistsViewType(next)
-                        },
-                        onCreatePlaylist = { showCreateDialog = true },
-                    )
                     if (historySongs.isEmpty()) {
                         Box(modifier = Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
                             Text(
@@ -641,6 +728,7 @@ fun LibraryScreen(
                             )
                         }
                     } else {
+                        SelectionScopeEffect(key = key, songs = historySongs)
                         DrillDownSongList(
                             label = stringResource(if (isRecent) R.string.recently_played else R.string.most_played),
                             artworkUrl = null,
@@ -653,35 +741,34 @@ fun LibraryScreen(
                             },
                             currentSong = currentSong,
                             isPlaying = isPlaying,
-                            onSongClick = onSongClick,
-                            onSongLongPress = onSongLongPress,
-                            onSongMore = onSongLongPress,
+                            selectedIds = selection?.ids ?: emptySet(),
+                            onSongClick = pickOrPlay,
+                            onSongLongPress = pick,
+                            onSongMore = openMenu,
                             onSongSwipe = onSongSwipe,
                             onShuffle = onShuffle,
                             showArtworkInList = showPlaylistSongArtwork,
                             onBack = { selectedFilter = LibraryFilter.ALL },
                             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
-                            songDropdownMenu = songDropdownMenu,
+                            songDropdownMenu = { song -> libraryMenu(song, null) },
                             modifier = Modifier.weight(1f),
                         )
                     }
                 }
             } else {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = contentPadding.calculateTopPadding()),
-                ) {
-                    LibraryHeaderBar(
-                        selectedFilter = selectedFilter,
-                        onFilterSelect = { selectedFilter = it },
-                        viewType = libraryViewType,
-                        onToggleViewType = {
-                            val next = if (libraryViewType == LibraryViewType.GRID) LibraryViewType.LIST else LibraryViewType.GRID
-                            AppSettings.setLibraryPlaylistsViewType(next)
-                        },
-                        onCreatePlaylist = { showCreateDialog = true },
-                    )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // Large title + filters: the first item of the list, scrolling with it.
+                    val header: @Composable () -> Unit = {
+                        LibraryHeaderBar(
+                            selectedFilter = selectedFilter,
+                            onFilterSelect = { selectedFilter = it },
+                            viewType = libraryViewType,
+                            onToggleViewType = {
+                                val next = if (libraryViewType == LibraryViewType.GRID) LibraryViewType.LIST else LibraryViewType.GRID
+                                AppSettings.setLibraryPlaylistsViewType(next)
+                            },
+                        )
+                    }
 
                     val onFavoritesClick = {
                         drillDownPlaylistId = null
@@ -713,8 +800,10 @@ fun LibraryScreen(
                         }
                     }
 
-                    if (libraryViewType == LibraryViewType.GRID) {
+                    // Grid applies to the Playlists filter only; "All" is always the sectioned list.
+                    if (libraryViewType == LibraryViewType.GRID && selectedFilter == LibraryFilter.PLAYLISTS) {
                         LibraryGridContent(
+                            header = header,
                             filter = selectedFilter,
                             favoriteSongCount = favoriteSongs.size,
                             playlists = playlists,
@@ -729,14 +818,25 @@ fun LibraryScreen(
                             onMovePlaylist = { playlist, offset -> LocalPlaylistStore.movePlaylist(playlist.id, offset) },
                             onCreatePlaylist = { showCreateDialog = true },
                             librarySongs = songs,
-                            contentPadding = PaddingValues(
-                                top = 0.dp,
-                                bottom = contentPadding.calculateBottomPadding(),
-                            ),
+                            contentPadding = contentPadding,
                             state = collectionGridState,
                         )
                     } else {
                         LibraryListContent(
+                            header = header,
+                            recentlyPlayed = recentlyPlayedSongs,
+                            mostPlayed = mostPlayedSongs,
+                            playCountOf = { song -> playCounts[song.localUri ?: song.videoId] ?: 0 },
+                            onShowAllRecent = { selectedFilter = LibraryFilter.RECENTLY_PLAYED },
+                            onShowAllMost = { selectedFilter = LibraryFilter.MOST_PLAYED },
+                            currentSong = currentSong,
+                            isPlaying = isPlaying,
+                            onSongClick = pickOrPlay,
+                            onSongLongPress = pick,
+                            onSongMore = openMenu,
+                            songMenu = { song -> libraryMenu(song, null) },
+                            selectedIds = selection?.ids ?: emptySet(),
+                            onSongSwipe = onSongSwipe,
                             filter = selectedFilter,
                             favoriteSongCount = favoriteSongs.size,
                             playlists = playlists,
@@ -751,29 +851,23 @@ fun LibraryScreen(
                             onMovePlaylist = { playlist, offset -> LocalPlaylistStore.movePlaylist(playlist.id, offset) },
                             onCreatePlaylist = { showCreateDialog = true },
                             librarySongs = songs,
-                            contentPadding = PaddingValues(
-                                top = 0.dp,
-                                bottom = contentPadding.calculateBottomPadding(),
-                            ),
+                            contentPadding = contentPadding,
                             state = collectionListState,
                         )
                     }
                 }
             }
         }
-        val showFavoriteCollection = selectedFilter == LibraryFilter.ALL || selectedFilter == LibraryFilter.FAVORITES
-        val showPlaylistCollections = selectedFilter == LibraryFilter.ALL || selectedFilter == LibraryFilter.PLAYLISTS
-        val favoriteLabel = stringResource(R.string.favorites)
+        // Only the Playlists filter is a long single list worth a fast scroller;
+        // "All" is a handful of short sections. Index 0 is the page header.
         val createPlaylistLabel = stringResource(R.string.new_playlist)
-        val listCollectionLabels = buildList {
-            if (showFavoriteCollection) add(favoriteLabel)
-            if (showPlaylistCollections) addAll(playlists.map { it.name })
-        }
+        val listCollectionLabels = playlists.map { it.name }
         val gridCollectionLabels = buildList {
+            add("")
             addAll(listCollectionLabels)
-            if (showPlaylistCollections) add(createPlaylistLabel)
+            add(createPlaylistLabel)
         }
-        if (!inDrillDown && !inHistoryView && listCollectionLabels.isNotEmpty()) {
+        if (!inDrillDown && !inHistoryView && selectedFilter == LibraryFilter.PLAYLISTS && listCollectionLabels.isNotEmpty()) {
             if (libraryViewType == LibraryViewType.GRID) {
                 FastScroller(
                     gridState = collectionGridState,
@@ -792,7 +886,8 @@ fun LibraryScreen(
                 FastScroller(
                     listState = collectionListState,
                     itemCount = listCollectionLabels.size,
-                    headerCount = 1,
+                    // Page header + the "Playlists" section title.
+                    headerCount = 2,
                     sectionNameForIndex = { index ->
                         SectionIndexer.getSectionName(listCollectionLabels.getOrNull(index))
                     },
@@ -844,7 +939,7 @@ fun LibraryScreen(
     }
 
     if (showBulkTagEditor) {
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { showBulkTagEditor = false },
             title = { Text(stringResource(R.string.bulk_tag_edit)) },
             text = {
@@ -886,7 +981,7 @@ fun LibraryScreen(
     if (showDeleteFromPlaylistDialog && drillDownPlaylistId != null) {
         val targetPlaylistId = drillDownPlaylistId!!
         val count = selectedPlaylistSongIds.size
-        AlertDialog(
+        GlassAlertDialog(
             onDismissRequest = { showDeleteFromPlaylistDialog = false },
             title = { Text(stringResource(R.string.remove_from_playlist)) },
             text = {

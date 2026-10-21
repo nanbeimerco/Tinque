@@ -8,10 +8,13 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +25,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -34,6 +38,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -44,6 +50,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -88,8 +97,25 @@ val TopBarContentGap = 12.dp
  * opens on a band of empty space.
  */
 @Composable
-fun topBarHeight(): Dp =
-    WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + TopBarContentHeight
+fun topBarHeight(): Dp = topSafeInset() + TopBarContentHeight
+
+/**
+ * How far below the top edge floating controls must start.
+ *
+ * The status bar inset alone is 0 while the bar is hidden (quiet mode, or
+ * "show status bar" off), which pushed the buttons against the screen edge
+ * and the camera hole. So it is the larger of the status bar and the display
+ * cutout, and never less than [MinTopSafeInset].
+ */
+@Composable
+fun topSafeInset(): Dp {
+    val statusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val cutout = WindowInsets.displayCutout.asPaddingValues().calculateTopPadding()
+    return maxOf(statusBar, cutout, MinTopSafeInset)
+}
+
+/** The least room left above floating top controls, even with no status bar or cutout. */
+val MinTopSafeInset = 16.dp
 
 /**
  * Where page content should start: clear of the bar, plus [TopBarContentGap].
@@ -128,116 +154,196 @@ fun FrostedTopBar(
     artworkTint: Color? = null,
     /** Draws only floating navigation/actions over collection artwork. */
     floatingOnly: Boolean = false,
+    /**
+     * Whether the page under the bar is being recorded for the glass to
+     * sample. Only then can the round buttons use the full refracting glass;
+     * otherwise they fall back to the lightweight tint.
+     */
+    glassBackdrop: Boolean = false,
+    /** The start button's glyph: back, or a close while picking tracks. */
+    backIcon: ImageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+    backDescription: String? = null,
 ) {
-    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
-    val titleAlpha by animateFloatAsState(
-        targetValue = if (alwaysShowTitle || scrolled) 1f else 0f,
-        animationSpec = tween(220),
-        label = "topBarTitleAlpha",
-    )
-    // Only the solid bar wants a hairline under it. A faded one has no edge for
-    // the line to mark, and drawing it there would be inventing the very seam
-    // the fade exists to remove.
-    val dividerColor by animateColorAsState(
-        targetValue = MaterialTheme.colorScheme.outline.copy(
-            alpha = if (!floatingOnly && scrolled && reduceDynamicBlur) 0.6f else 0f,
-        ),
-        animationSpec = tween(220),
-        label = "topBarDivider",
-    )
-
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .then(
-                when {
-                    floatingOnly -> Modifier.background(Color.Transparent)
-                    artworkTint != null && reduceDynamicBlur -> Modifier.background(artworkTint)
-                    artworkTint != null -> Modifier.background(Color.Transparent)
-                    reduceDynamicBlur -> Modifier.background(MaterialTheme.colorScheme.surface)
-                    else -> Modifier.background(MaterialTheme.colorScheme.background.copy(alpha = 0.92f))
-                },
-            ),
-    ) {
+    // Design rule: Liquid Glass only floats directly over moving content —
+    // never inside a fixed band, where it would have nothing to refract. So
+    // the bar paints no backdrop at all: the buttons and the title capsule are
+    // each their own glass, floating over the page.
+    Column(modifier = modifier.fillMaxWidth()) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .statusBarsPadding()
+                .padding(top = topSafeInset())
                 .height(TopBarContentHeight),
         ) {
-            if (!floatingOnly) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        // Reserve room for the back button and the actions so a
-                        // long title truncates instead of running under them.
-                        .padding(horizontal = 96.dp)
-                        .fillMaxWidth()
-                        .graphicsLayer { alpha = titleAlpha },
-                )
+            CompositionLocalProvider(LocalTopBarGlassBackdrop provides glassBackdrop) {
+            // Pages with a large in-page title show the capsule only once that
+            // title has scrolled away; others show it all the time.
+            androidx.compose.animation.AnimatedVisibility(
+                visible = !floatingOnly && (alwaysShowTitle || scrolled),
+                enter = fadeIn(tween(200)) + scaleIn(tween(200), initialScale = 0.92f),
+                exit = fadeOut(tween(160)) + scaleOut(tween(160), targetScale = 0.92f),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    // Room for the back button and up to two actions.
+                    .padding(horizontal = 112.dp),
+            ) {
+                TopBarTitleCapsule(title)
             }
-            // On a pushed page the back affordance is always visible, since
-            // there is no large in-list header to fall back on.
             if (onBack != null) {
-                IconButton(
+                TopBarGlassButton(
                     onClick = onBack,
+                    icon = backIcon,
+                    contentDescription = backDescription ?: stringResource(R.string.back),
                     modifier = Modifier
                         .align(Alignment.CenterStart)
-                        .padding(start = 4.dp)
-                        .then(if (floatingOnly) Modifier.background(Color.Black.copy(alpha = 0.42f), CircleShape) else Modifier),
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = stringResource(R.string.back),
-                        tint = if (floatingOnly) Color.White else MaterialTheme.colorScheme.onSurface,
-                    )
-                }
-            } else if (!floatingOnly) {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.ic_logo),
-                        contentDescription = null,
-                        colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
-                        modifier = Modifier.height(18.dp),
-                    )
-                }
+                        .padding(start = 12.dp),
+                )
             }
             Row(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .padding(end = 4.dp)
-                    .then(
-                        if (floatingOnly) {
-                            Modifier.background(Color.Black.copy(alpha = 0.42f), CircleShape)
-                                .padding(horizontal = 2.dp)
-                        } else Modifier,
-                    ),
+                    .padding(end = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 actions()
             }
+            }
         }
-        // The divider and the loader line share the bar's bottom edge; the box
-        // only grows to the line's height while a refresh is actually showing.
+        // The loader line sits under the controls; the box only grows to the
+        // line's height while a refresh is actually showing.
         Box(Modifier.fillMaxWidth()) {
-            HorizontalDivider(thickness = 0.5.dp, color = dividerColor)
             RefreshLine(
                 refreshing = refreshing,
                 pullFraction = pullFraction,
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
+    }
+}
+
+/** Set by [FrostedTopBar] for the buttons inside it — see its `glassBackdrop`. */
+val LocalTopBarGlassBackdrop = staticCompositionLocalOf { false }
+
+/**
+ * The app logo for a tab's top-left corner, placed as the first item of the
+ * tab's own list so it scrolls away with the content (unlike back / settings,
+ * which float in place).
+ *
+ * It takes no height in the list: it draws itself up in the top bar's row
+ * (the space above [listTopPadding]), so at rest it sits exactly where the
+ * logo always was, beside the title capsule and the settings button.
+ *
+ * @param listTopPadding the list's top content padding — how far below the
+ * list's top edge its first item starts.
+ */
+@Composable
+fun TabLogoHeader(
+    listTopPadding: Dp,
+    modifier: Modifier = Modifier,
+    /** The list's own start padding, undone so the logo lines up with every other tab's. */
+    horizontalInset: Dp = 0.dp,
+) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val rise = with(density) { (listTopPadding - topSafeInset()).roundToPx() }
+    val shift = with(density) { horizontalInset.roundToPx() }
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .layout { measurable, constraints ->
+                val placeable = measurable.measure(constraints.copy(minHeight = 0))
+                // Zero height in the list; drawn up in the bar row.
+                layout(constraints.maxWidth, 0) { placeable.place(-shift, -rise) }
+            },
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(TopBarContentHeight),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Image(
+                painter = painterResource(R.drawable.ic_logo),
+                contentDescription = null,
+                colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
+                modifier = Modifier
+                    .padding(start = 20.dp)
+                    .height(18.dp),
+            )
+        }
+    }
+}
+
+/** Diameter of the round glass behind each top-bar button. */
+val TopBarGlassButtonSize = 42.dp
+
+/** The glass behind floating top controls, full refraction when the page is being recorded. */
+@Composable
+private fun topBarGlass(shape: androidx.compose.foundation.shape.CornerBasedShape): Modifier {
+    val glassEnabled = LocalLiquidGlassEnabled.current && isGlassSupported()
+    return if (LocalTopBarGlassBackdrop.current && glassEnabled) {
+        Modifier.liquidGlass(shape = shape)
+    } else {
+        Modifier.lightweightLiquidGlass(
+            shape = shape,
+            fallbackColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        )
+    }
+}
+
+/** The page name in a small floating glass capsule, centred between the buttons. */
+@Composable
+fun TopBarTitleCapsule(title: String, modifier: Modifier = Modifier) {
+    val glassEnabled = LocalLiquidGlassEnabled.current && isGlassSupported()
+    val capsule = androidx.compose.foundation.shape.RoundedCornerShape(percent = 50)
+    Box(
+        modifier = modifier
+            .height(TopBarGlassButtonSize)
+            .then(topBarGlass(capsule))
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            color = if (glassEnabled) glassContentColor() else MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+/**
+ * A top-bar button on its own round Liquid Glass — the same material as the
+ * floating bottom bar. Used for back, settings and every other bar action so
+ * they look the same on a plain page, over artwork, and on a pushed album or
+ * folder.
+ */
+@Composable
+fun TopBarGlassButton(
+    onClick: () -> Unit,
+    icon: ImageVector,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+) {
+    val glassEnabled = LocalLiquidGlassEnabled.current && isGlassSupported()
+    val tint = if (glassEnabled) glassContentColor() else MaterialTheme.colorScheme.onSurface
+    val glass = topBarGlass(CircleShape)
+    Box(
+        modifier = modifier
+            .size(TopBarGlassButtonSize)
+            .then(glass)
+            .clip(CircleShape)
+            .clickable(onClick = onClick, role = Role.Button),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(22.dp),
+        )
     }
 }
 

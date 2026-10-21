@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.localsongactions.ui.components
 
+import com.music.bitchord.ui.components.GlassModalBottomSheet
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -118,7 +119,7 @@ fun LocalSongActionsSheet(
         if (split.isEmpty() && song.artist.isNotBlank()) listOf(song.artist) else split
     }
 
-    ModalBottomSheet(
+    GlassModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
         shape = sheetShape,

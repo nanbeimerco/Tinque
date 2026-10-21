@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.components
 
 import com.music.bitchord.R
+import com.music.bitchord.ui.icons.BitChordIcons
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
@@ -79,6 +80,13 @@ private val GLYPH_SLOT = 40.dp
  */
 private val GLYPH_SIZE = 32.dp
 
+/**
+ * Transport glyph sizes, in the full player's proportions (skip 46 : play 66
+ * ≈ 0.7), so play/pause reads as the main control here too.
+ */
+private val SKIP_GLYPH_SIZE = 21.dp
+private val PLAY_GLYPH_SIZE = 30.dp
+
 /** The spinner that stands in for the play glyph, kept in proportion to it. */
 private val SPINNER_SIZE = 22.dp
 
@@ -140,10 +148,15 @@ fun MiniPlayer(
     dock: PlayerDock? = null,
     pull: MiniPlayerPull? = null,
     modifier: Modifier = Modifier,
+    /** The queue's neighbours, previewed while swiping the artwork/title area. */
+    previousSong: Song? = null,
+    nextSong: Song? = null,
 ) {
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val useArtworkColor by AppSettings.miniPlayerArtworkColor.collectAsStateWithLifecycle()
-    val showPreviousButton by AppSettings.miniPlayerPreviousButton.collectAsStateWithLifecycle()
+    val previousButtonSetting by AppSettings.miniPlayerPreviousButton.collectAsStateWithLifecycle()
+    val playPauseOnly by AppSettings.miniPlayerPlayPauseOnly.collectAsStateWithLifecycle()
+    val showPreviousButton = previousButtonSetting && !playPauseOnly
     val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val keepOriginalArtworkAspectRatio by AppSettings.keepOriginalArtworkAspectRatio.collectAsStateWithLifecycle()
     val preserveSleeveArtworkShape = keepOriginalArtworkAspectRatio && !fullBleedArt
@@ -172,6 +185,8 @@ fun MiniPlayer(
             pull = pull,
             onNext = onNext,
             onPrevious = onPrevious,
+            // Track changes are the artwork/title area's own swipe (with preview).
+            horizontalSwipe = false,
         )
     } else {
         Modifier
@@ -243,31 +258,47 @@ fun MiniPlayer(
                 ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AsyncImage(
-                model = song.artworkAt(ROW_ART_PX),
-                contentDescription = null,
-                contentScale = miniArtContentScale,
-                modifier = Modifier
-                    .size(40.dp)
-                    .playerDockArt(dock = effectiveDock, corner = ART_CORNER)
-                    .clip(RoundedCornerShape(ART_CORNER))
-                    .thumbnailBorder(RoundedCornerShape(ART_CORNER))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                ExplicitSongTitle(
-                    song = song,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = primaryContentColor,
-                )
-                Text(
-                    text = song.artist,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = secondaryContentColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            MiniPlayerTrackSwipe(
+                current = song,
+                previous = previousSong,
+                next = nextSong,
+                onPrevious = onPrevious,
+                onNext = onNext,
+                modifier = Modifier.weight(1f),
+                startBleed = ROW_PADDING_HORIZONTAL,
+            ) { shownSong, isCurrent ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AsyncImage(
+                        model = shownSong.artworkAt(ROW_ART_PX),
+                        contentDescription = null,
+                        contentScale = miniArtContentScale,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .then(if (isCurrent) Modifier.playerDockArt(dock = effectiveDock, corner = ART_CORNER) else Modifier)
+                            .clip(RoundedCornerShape(ART_CORNER))
+                            .thumbnailBorder(RoundedCornerShape(ART_CORNER))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        val titleStyle = MaterialTheme.typography.titleMedium.centeredLine()
+                        val artistStyle = MaterialTheme.typography.bodyMedium.centeredLine()
+                        ExplicitSongTitle(
+                            song = shownSong,
+                            style = titleStyle,
+                            color = primaryContentColor,
+                            modifier = Modifier.fixedLineHeight(titleStyle),
+                        )
+                        Text(
+                            modifier = Modifier.fixedLineHeight(artistStyle),
+                            text = shownSong.artist,
+                            style = artistStyle,
+                            color = secondaryContentColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
             if (showPreviousButton) {
                 IconButton(
@@ -278,12 +309,14 @@ fun MiniPlayer(
                     modifier = Modifier.size(GLYPH_SLOT),
                 ) {
                     Icon(
-                        Icons.Rounded.SkipPrevious,
+                        BitChordIcons.TransportPrevious,
                         contentDescription = stringResource(R.string.widget_previous),
                         tint = primaryContentColor,
-                        modifier = Modifier.size(GLYPH_SIZE),
+                        modifier = Modifier.size(SKIP_GLYPH_SIZE),
                     )
                 }
+                // Same gap as before Next, so play/pause sits in the middle.
+                Spacer(Modifier.width(TRANSPORT_GAP))
             }
             if (isLoading) {
                 Box(Modifier.size(GLYPH_SLOT), contentAlignment = Alignment.Center) {
@@ -302,13 +335,14 @@ fun MiniPlayer(
                     modifier = Modifier.size(GLYPH_SLOT),
                 ) {
                     Icon(
-                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        imageVector = if (isPlaying) BitChordIcons.TransportPause else BitChordIcons.TransportPlay,
                         contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
                         tint = primaryContentColor,
-                        modifier = Modifier.size(GLYPH_SIZE),
+                        modifier = Modifier.size(PLAY_GLYPH_SIZE),
                     )
                 }
             }
+            if (!playPauseOnly) {
             Spacer(Modifier.width(TRANSPORT_GAP))
             IconButton(
                 onClick = {
@@ -318,11 +352,12 @@ fun MiniPlayer(
                 modifier = Modifier.size(GLYPH_SLOT),
             ) {
                 Icon(
-                    Icons.Rounded.SkipNext,
+                    BitChordIcons.TransportNext,
                     contentDescription = stringResource(R.string.widget_next),
                     tint = primaryContentColor,
-                    modifier = Modifier.size(GLYPH_SIZE),
+                    modifier = Modifier.size(SKIP_GLYPH_SIZE),
                 )
+            }
             }
         }
     }

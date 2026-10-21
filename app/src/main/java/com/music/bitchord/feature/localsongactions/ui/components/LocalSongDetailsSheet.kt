@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.localsongactions.ui.components
 
+import com.music.bitchord.ui.components.GlassModalBottomSheet
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -90,7 +91,7 @@ fun LocalSongDetailsSheet(
         isLoading = false
     }
 
-    ModalBottomSheet(
+    GlassModalBottomSheet(
         onDismissRequest = onDismissRequest,
         sheetState = sheetState,
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),

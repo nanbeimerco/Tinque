@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.localmusic.ui.components
 
+import com.music.bitchord.ui.components.GlassDropdownMenu
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -63,6 +64,9 @@ fun LocalPlaylistItem(
     onMoveDown: () -> Unit = {},
     librarySongs: List<Song> = emptyList(),
     modifier: Modifier = Modifier,
+    /** Overrides for when the row sits inside a grouped (Expressive) container. */
+    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp),
+    containerColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val exportM3u = rememberM3uExportAction(playlist, librarySongs)
@@ -70,12 +74,12 @@ fun LocalPlaylistItem(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(shape)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = { menuOpen = true },
             ),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+        color = containerColor,
     ) {
         Row(
             modifier = Modifier
@@ -140,7 +144,7 @@ fun LocalPlaylistItem(
                     )
                 }
 
-                DropdownMenu(
+                GlassDropdownMenu(
                     expanded = menuOpen,
                     onDismissRequest = { menuOpen = false },
                 ) {

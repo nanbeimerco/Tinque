@@ -70,7 +70,7 @@ fun BackdropEffectScope.lens(
 // Vendored change: support for io.github.kyant0:shapes' RoundedRectangularShape was
 // dropped so the vendored sources have no external dependency; this app only passes
 // CornerBasedShape here.
-private val BackdropEffectScope.cornerRadii: FloatArray?
+internal val BackdropEffectScope.cornerRadii: FloatArray?
     get() = when (val shape = shape) {
         is AbsoluteRoundedCornerShape -> {
             val size = size

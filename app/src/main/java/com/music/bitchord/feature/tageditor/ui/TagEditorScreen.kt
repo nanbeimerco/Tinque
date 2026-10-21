@@ -48,6 +48,8 @@ fun TagEditorScreen(
     viewModel: TagEditorViewModel = viewModel(),
     onTagsSaved: (() -> Unit)? = null,
 ) {
+    // Its own window: give the sheets and menus opened in it their glass.
+    com.music.bitchord.ui.components.GlassWindowScope {
     val isDarkTheme = MaterialTheme.colorScheme.background.luminance() < 0.5f
     SystemBarIcons(dark = !isDarkTheme)
 
@@ -214,5 +216,6 @@ fun TagEditorScreen(
                 viewModel.updateTags(tags.copy(genre = updated))
             },
         )
+    }
     }
 }

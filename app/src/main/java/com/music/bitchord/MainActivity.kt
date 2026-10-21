@@ -1,5 +1,20 @@
 package com.music.bitchord
 
+import com.music.bitchord.ui.components.GlassAlertDialog
+import com.music.bitchord.ui.components.GlassModalBottomSheet
+import com.music.bitchord.ui.components.LocalGlassSheets
+import com.music.bitchord.ui.components.GlassSheetHost
+import com.music.bitchord.ui.components.GlassSheetController
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.material.icons.rounded.Deselect
+import androidx.compose.material.icons.rounded.SelectAll
+import com.music.bitchord.ui.components.SelectionActionToolbar
+import com.music.bitchord.ui.components.LocalSongSelection
+import com.music.bitchord.ui.components.SongSelection
 import android.Manifest
 import android.content.Intent
 import android.content.pm.ActivityInfo
@@ -224,8 +239,13 @@ import com.music.bitchord.ui.components.GlassNavBar
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarInlineBehavior
 import com.music.bitchord.ui.components.floatingtabbar.rememberFloatingTabBarScrollConnection
 import com.music.bitchord.ui.components.FrostedTopBar
+import com.music.bitchord.ui.components.TopBarGlassButton
 import com.music.bitchord.ui.components.LastfmLoginAlert
 import com.music.bitchord.ui.components.LocalAppBackdrop
+import com.music.bitchord.ui.components.GlassMenuController
+import com.music.bitchord.ui.components.GlassMenuHost
+import com.music.bitchord.ui.components.LocalGlassMenu
+import com.music.bitchord.feature.localsongactions.ui.components.LocalEditLyricsAction
 import com.music.bitchord.ui.components.LocalLiquidGlassEnabled
 import com.music.bitchord.ui.components.backdrop.backdrops.LayerBackdrop
 import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
@@ -370,10 +390,14 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 val appBackdrop = rememberLayerBackdrop(onDraw = paintBackdrop)
+                val glassMenuController = remember { GlassMenuController() }
+                val glassSheetController = remember { GlassSheetController() }
                 CompositionLocalProvider(
                     LocalOverscrollFactory provides iosOverscrollFactory,
                     LocalLiquidGlassEnabled provides liquidGlassEnabled,
                     LocalAppBackdrop provides appBackdrop,
+                    LocalGlassMenu provides glassMenuController,
+                    LocalGlassSheets provides glassSheetController,
                 ) {
                 // The window's width, measured rather than asked for.
                 //
@@ -633,6 +657,16 @@ private fun BitChordApp(
         menuFromPlayer = false
         songActions = song
     }
+    // Tracks picked by long-press on the library pages; see [SongSelection].
+    val songSelection = remember { SongSelection() }
+    // The selection toolbar's "Add to playlist", for several tracks at once.
+    var selectionPlaylistSongs by remember { mutableStateOf<List<Song>?>(null) }
+    // The ⋮ menu's "Edit lyrics": straight into the editor the long-press sheet opens.
+    val openLyricsEditor: (Song) -> Unit = { song ->
+        pendingPlayerQuickAction = PlayerQuickAction.EDIT_LYRICS
+        menuFromPlayer = false
+        songActions = song
+    }
     // Whether the player's album/artist lookup (below, for the current track)
     // is still in flight — read by the long-press sheet so it can show a
     // loading row instead of the two just being absent while it waits.
@@ -655,6 +689,13 @@ private fun BitChordApp(
     // which SearchScreen uses as a signal to focus the input field.
     var searchFocusTrigger by remember { mutableIntStateOf(0) }
     var libraryFilterRequest by remember { mutableStateOf<LibraryFilter?>(null) }
+    var libraryResetSignal by remember { mutableIntStateOf(0) }
+    // Pages with their own large title report when it has scrolled out of
+    // view; the top bar shows its title capsule only then.
+    var settingsTitleAway by remember { mutableStateOf(false) }
+    var libraryTitleAway by remember { mutableStateOf(false) }
+    // The open folder's name while below the Folders root, else null.
+    var folderTitle by remember { mutableStateOf<String?>(null) }
     // Invalidates an in-flight radio lookup when a later play request wins.
     var playRequestGeneration by remember { mutableIntStateOf(0) }
     // Single-flight playback job to cancel previous in-flight requests on rapid taps
@@ -1984,6 +2025,13 @@ private fun BitChordApp(
         // the feed, the frosted bars, the tab row — becomes the left half of
         // a row, and the player is the right. Off a tablet the row has the
         // one child it always had and changes nothing.
+        val pageStateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+        // Leaving the page ends a selection, the way back does.
+        LaunchedEffect(selectedTab, detail?.browseId, showSettings, showReplay) { songSelection.clear() }
+        CompositionLocalProvider(
+            LocalEditLyricsAction provides openLyricsEditor,
+            LocalSongSelection provides songSelection,
+        ) {
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 AnimatedContent(
@@ -2020,6 +2068,10 @@ private fun BitChordApp(
                         ),
                     label = "content",
                 ) { key ->
+                    // Each tab/page keeps its saved state (scroll position, opened
+                    // playlist, filter…) while another one is showing, so coming
+                    // back to a tab lands where it was left.
+                    pageStateHolder.SaveableStateProvider(key) {
                     val onCollectionNavigationChanged: (Boolean, (() -> Unit)?) -> Unit = { isOpen, backHandler ->
                         val routeKey = key.toString()
                         if (isOpen && backHandler != null) {
@@ -2083,6 +2135,7 @@ private fun BitChordApp(
                             onPreloadArtworkNow = { viewModel.preloadLocalArtwork() },
                             onPlayCueSheet = { cueSongs -> play(cueSongs, 0) },
                             contentPadding = listPadding,
+                            onTitleScrolledAway = { settingsTitleAway = it },
                         )
                     } else if (page != null && page.browseId.isDeviceFolder()) {
                         // Local Music and Downloads — both the tabbed Songs / Artists /
@@ -2442,12 +2495,26 @@ private fun BitChordApp(
                                 contentPadding = listPadding,
                                 onPlayNext = playNext,
                                 onAddToQueue = addToQueue,
+                                onGoToAlbum = { album, art -> openLocalAlbum(album, art) },
+                                onGoToArtist = { artist -> openLocalArtist(artist, null) },
+                                onOpenTagEditor = { song ->
+                                    pendingPlayerQuickAction = PlayerQuickAction.TAG_EDITOR
+                                    menuFromPlayer = false
+                                    songActions = song
+                                },
+                                onOpenDetails = { song ->
+                                    pendingPlayerQuickAction = PlayerQuickAction.DETAILS
+                                    menuFromPlayer = false
+                                    songActions = song
+                                },
                                 onDeleteSong = { viewModel.loadLocalMusic() },
                                 onSongTagsOrLyricsSaved = { viewModel.reloadLyrics(it) },
                                 initialFilterRequest = libraryFilterRequest,
                                 onInitialFilterApplied = { libraryFilterRequest = null },
                                 onArtworkPaletteChanged = onLocalArtworkPaletteChanged,
                                 onCollectionNavigationChanged = onCollectionNavigationChanged,
+                                resetToTopSignal = libraryResetSignal,
+                                onTitleScrolledAway = { libraryTitleAway = it },
                             )
                         }
                         TAB_SEARCH -> if (!hasStoragePermission) {
@@ -2514,9 +2581,26 @@ private fun BitChordApp(
                                 onInitialPathConsumed = { targetFolderDrillDown = null },
                                 onArtworkPaletteChanged = onLocalArtworkPaletteChanged,
                                 onNavigationChanged = onCollectionNavigationChanged,
+                                onFolderTitleChanged = { folderTitle = it },
+                                onPlayNext = playNext,
+                                onAddToQueue = addToQueue,
+                                onGoToAlbum = { album, art -> openLocalAlbum(album, art) },
+                                onGoToArtist = { artist -> openLocalArtist(artist, null) },
+                                onTagEditor = { song ->
+                                    pendingPlayerQuickAction = PlayerQuickAction.TAG_EDITOR
+                                    menuFromPlayer = false
+                                    songActions = song
+                                },
+                                onDetails = { song ->
+                                    pendingPlayerQuickAction = PlayerQuickAction.DETAILS
+                                    menuFromPlayer = false
+                                    songActions = song
+                                },
+                                onDeleteSong = { viewModel.loadLocalMusic() },
                             )
                         }
                         else -> Box(modifier = Modifier.fillMaxSize())
+                    }
                     }
                 }
 
@@ -2531,12 +2615,11 @@ private fun BitChordApp(
                 // screen rather than pushed onto detailStack, so include the
                 // back handler reported by that screen. Root category pages do
                 // not report one and keep their labels visible.
+                // Only a full-screen-artwork page hides the title capsule (its own
+                // big title sits on the art). Intermediate levels — a folder of
+                // folders, an artist's album list — keep it.
                 val hideCollectionHeaderNow = hideCollectionTopBar && !showSettings && !showReplay &&
-                    ((detail != null && !isLocalDetail) || localCollectionBackHandler != null)
-                val isAlbumOrPlaylistArtworkDetail = isLocalCollectionArtworkVisible ||
-                    (detail != null && !isLocalDetail && detail.type in setOf(BrowseType.ALBUM, BrowseType.PLAYLIST))
-                val hideFloatingCollectionControlsNow =
-                    hideFloatingCollectionControls && hideCollectionHeaderNow && isAlbumOrPlaylistArtworkDetail
+                    ((detail != null && !isLocalDetail) || isLocalCollectionArtworkVisible)
                 if (!hideCollectionHeaderNow) {
                     TopFadeBlur(
                         hazeState = hazeState,
@@ -2559,20 +2642,29 @@ private fun BitChordApp(
                 }
 
                 val showCollectionSortAction = detail != null && !isLocalDetail && detail.type != BrowseType.ARTIST
-                if (!hideFloatingCollectionControlsNow || showCollectionSortAction) {
+                // Back and settings stay on screen everywhere — including opened
+                // albums and folders — each on its own round glass.
+                run {
+                    val selecting = songSelection.active
                     FrostedTopBar(
                         title = when {
+                            selecting -> stringResource(R.string.selection_count, songSelection.count)
                             showSettings -> stringResource(R.string.settings)
                             showReplay -> stringResource(R.string.replay)
                             detail != null -> detail.title
+                            // Inside a folder: that folder's name (the breadcrumbs scroll away).
+                            selectedTab == TAB_FOLDERS && folderTitle != null -> folderTitle!!
                             else -> allTabs.getOrElse(selectedTab) { allTabs.first() }.label
                         },
                         scrolled = when {
-                            showSettings -> true
+                            showSettings -> settingsTitleAway
                             showReplay -> replayScrolled
                             detail != null -> detailScrolled
                             else -> scrolled || selectedTab == TAB_SEARCH
                         },
+                        // Replay carries its own large title, so the capsule waits
+                        // until it has scrolled away. Tabs and Settings always show it.
+                        alwaysShowTitle = !showReplay || selecting,
                         refreshing = isRefreshingLocalMusic,
                         pullFraction = { 0f },
                         artworkTint = when {
@@ -2580,8 +2672,12 @@ private fun BitChordApp(
                             isDetailVisible -> detailPalette.wash
                             else -> null
                         },
-                        floatingOnly = hideCollectionHeaderNow,
-                        onBack = if (hideFloatingCollectionControlsNow) null else when {
+                        floatingOnly = hideCollectionHeaderNow && !selecting,
+                        glassBackdrop = glassSamplesBackdrop && useCollapsibleNavBar,
+                        backIcon = if (selecting) Icons.Rounded.Close else Icons.AutoMirrored.Rounded.ArrowBack,
+                        backDescription = if (selecting) stringResource(R.string.end_selection) else null,
+                        onBack = when {
+                            selecting -> ({ songSelection.clear() })
                             showSettings -> ({ showSettings = false })
                             showReplay -> ({ showReplay = false })
                             localCollectionBackHandler != null -> localCollectionBackHandler
@@ -2590,25 +2686,29 @@ private fun BitChordApp(
                         },
                         modifier = Modifier.align(Alignment.TopCenter),
                         actions = {
-                            if (!showSettings) {
+                            if (selecting) {
+                                // "Select all" on this page; again to clear it.
+                                if (songSelection.scope.songs.isNotEmpty()) {
+                                    val all = songSelection.allInScopeSelected
+                                    TopBarGlassButton(
+                                        onClick = { songSelection.toggleAll() },
+                                        icon = if (all) Icons.Rounded.Deselect else Icons.Rounded.SelectAll,
+                                        contentDescription = stringResource(if (all) R.string.deselect_all else R.string.select_all),
+                                    )
+                                }
+                            } else if (!showSettings) {
                                 if (showCollectionSortAction) {
-                                    IconButton(onClick = { songSortMenuOpen = true }) {
-                                        Icon(
-                                            Icons.Rounded.Sort,
-                                            contentDescription = stringResource(R.string.sort_songs),
-                                            tint = if (hideCollectionHeaderNow) Color.White else MaterialTheme.colorScheme.onSurface,
-                                        )
-                                    }
+                                    TopBarGlassButton(
+                                        onClick = { songSortMenuOpen = true },
+                                        icon = Icons.Rounded.Sort,
+                                        contentDescription = stringResource(R.string.sort_songs),
+                                    )
                                 }
-                                if (!hideFloatingCollectionControlsNow) {
-                                    IconButton(onClick = { showSettings = true }) {
-                                        Icon(
-                                            Icons.Rounded.Settings,
-                                            contentDescription = stringResource(R.string.settings),
-                                            tint = if (hideCollectionHeaderNow) Color.White else MaterialTheme.colorScheme.onSurface,
-                                        )
-                                    }
-                                }
+                                TopBarGlassButton(
+                                    onClick = { showSettings = true },
+                                    icon = Icons.Rounded.Settings,
+                                    contentDescription = stringResource(R.string.settings),
+                                )
                             }
                         },
                     )
@@ -2645,6 +2745,9 @@ private fun BitChordApp(
                         if (index == TAB_FOLDERS && selectedTab == TAB_FOLDERS) {
                             targetFolderDrillDown = null
                         }
+                        if (index == TAB_LIBRARY && selectedTab == TAB_LIBRARY) {
+                            libraryResetSignal++
+                        }
                         selectedTab = index
                     }
                 }
@@ -2658,6 +2761,16 @@ private fun BitChordApp(
                 )
 
                 CompositionLocalProvider(LocalPlayerDock provides playerDock) {
+                    // The queue's neighbours, for the mini player's swipe preview.
+                    // Wraps around when the player says there is somewhere to go
+                    // past an end (repeat-all).
+                    val (queuePrevious, queueNext) = remember(player.queue, player.queueIndex, player.hasPrevious, player.hasNext) {
+                        val q = player.queue
+                        val i = player.queueIndex
+                        val prev = if (player.hasPrevious) q.getOrNull(i - 1) ?: q.lastOrNull()?.takeIf { q.size > 1 } else null
+                        val next = if (player.hasNext) q.getOrNull(i + 1) ?: q.firstOrNull()?.takeIf { q.size > 1 } else null
+                        prev to next
+                    }
                     if (useCollapsibleNavBar) {
                         // Collapsible floating bar replaces the two stacked bars with a
                         // unified component: now playing controls dock into the tab bar,
@@ -2684,6 +2797,8 @@ private fun BitChordApp(
                             dock = playerDock,
                             pull = playerSheetMotion.takeIf { !reducePlayerMotion },
                             useGlass = glassActive,
+                            previousSong = queuePrevious,
+                            nextSong = queueNext,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
                                 .widthIn(max = FLOATING_BAR_MAX_WIDTH)
@@ -2728,6 +2843,8 @@ private fun BitChordApp(
                                 dock = playerDock,
                                 pull = playerSheetMotion.takeIf { !reducePlayerMotion },
                                 modifier = Modifier.fillMaxWidth(),
+                                previousSong = queuePrevious,
+                                nextSong = queueNext,
                             )
                         }
                         FloatingBottomBar(
@@ -2737,6 +2854,45 @@ private fun BitChordApp(
                             onTabSelected = onTabSelected,
                         )
                     }
+                }
+                // The selection's actions, floating over the bottom bars.
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = songSelection.active,
+                    enter = slideInVertically(spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)) { it } + fadeIn(),
+                    exit = slideOutVertically(tween(180)) { it } + fadeOut(tween(140)),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .offset {
+                            IntOffset(0, -(floatingBarsHeight.intValue + 10.dp.roundToPx()))
+                        },
+                ) {
+                    SelectionActionToolbar(
+                        selection = songSelection,
+                        glassBackdrop = glassSamplesBackdrop && useCollapsibleNavBar,
+                        onPlayNext = playSongsNext,
+                        onAddToQueue = addSongsToQueue,
+                        onAddToPlaylist = { picked -> selectionPlaylistSongs = picked },
+                    )
+                }
+                selectionPlaylistSongs?.let { picked ->
+                    LocalAddToPlaylistSheet(
+                        songs = picked,
+                        onDismissRequest = { selectionPlaylistSongs = null },
+                    )
+                }
+                // Floating glass sheets and dialogs (add to playlist, new playlist).
+                LocalGlassSheets.current?.let { sheets ->
+                    GlassSheetHost(
+                        controller = sheets,
+                        glassBackdrop = glassSamplesBackdrop && useCollapsibleNavBar,
+                    )
+                }
+                // ⋮ menus (and anything else asking for a glass menu), over everything on the page.
+                LocalGlassMenu.current?.let { menus ->
+                    GlassMenuHost(
+                        controller = menus,
+                        glassBackdrop = glassSamplesBackdrop && useCollapsibleNavBar,
+                    )
                 }
             }
 
@@ -2750,6 +2906,7 @@ private fun BitChordApp(
                     content = { current -> nowPlaying(current, true) },
                 )
             }
+        }
         }
 
         // ---- Now Playing ----
@@ -2911,6 +3068,12 @@ private fun BitChordApp(
 
         // ---- Album / playlist detail ----
         // ---- Long-press track actions ----
+        // Opened over the player (its own window), glass in the app's window
+        // would sit hidden behind it: Material's surfaces there.
+        val songActionsOverPlayer = menuFromPlayer || showNowPlaying
+        CompositionLocalProvider(
+            LocalGlassSheets provides if (songActionsOverPlayer) null else LocalGlassSheets.current,
+        ) {
         songActions?.let { originalSong ->
             val resolvedSong = if (originalSong.localUri != null || !originalSong.localPath.isNullOrBlank()) {
                 localSongs.firstOrNull { local ->
@@ -3034,13 +3197,20 @@ private fun BitChordApp(
                     },
                 )
             } else if (showAddToPlaylist) {
-                LocalAddToPlaylistSheet(
-                    songs = listOf(song),
-                    onDismissRequest = {
-                        showAddToPlaylist = false
-                        songActions = null
-                    },
-                )
+                // Over the open player (its own window) a glass sheet in the
+                // app's window would be hidden behind it, so use Material's there.
+                val overPlayer = menuFromPlayer || showNowPlaying
+                CompositionLocalProvider(
+                    LocalGlassSheets provides if (overPlayer) null else LocalGlassSheets.current,
+                ) {
+                    LocalAddToPlaylistSheet(
+                        songs = listOf(song),
+                        onDismissRequest = {
+                            showAddToPlaylist = false
+                            songActions = null
+                        },
+                    )
+                }
             } else if (showArtistPicker) {
                 val artists = remember(song.artist) {
                     val split = com.music.bitchord.feature.artistimage.util.ArtistSplitter.split(song.artist)
@@ -3127,6 +3297,7 @@ private fun BitChordApp(
                 )
             }
         }
+        }
 
         // ---- Download manager ----
         // The batch view of what the top-bar indicator is counting. Dismissing
@@ -3139,7 +3310,7 @@ private fun BitChordApp(
                 DownloadSession.markSeen()
             }
             BackHandler(onBack = closeDownloadManager)
-            ModalBottomSheet(
+            GlassModalBottomSheet(
                 onDismissRequest = closeDownloadManager,
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
@@ -3170,7 +3341,7 @@ private fun BitChordApp(
                 playlistTarget = null
                 creatingPlaylist = false
             }
-            ModalBottomSheet(
+            GlassModalBottomSheet(
                 onDismissRequest = dismiss,
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
@@ -3230,7 +3401,7 @@ private fun BitChordApp(
             val remote = target.browseId?.startsWith("local:") == false
             val pinnedPlaylists by AppSettings.pinnedPlaylists.collectAsStateWithLifecycle()
             val pinnableId = target.browseId?.takeIf { target.type == BrowseType.PLAYLIST }
-            ModalBottomSheet(
+            GlassModalBottomSheet(
                 onDismissRequest = { browseActions = null },
                 containerColor = MaterialTheme.colorScheme.background,
             ) {
@@ -3363,7 +3534,7 @@ private fun BitChordApp(
         }
 
         if (localArtworkPreload.isRunning || localArtworkPreload.isComplete || localArtworkPreload.errorMessage != null) {
-            AlertDialog(
+            GlassAlertDialog(
                 onDismissRequest = { viewModel.dismissLocalArtworkPreload() },
                 title = {
                     Text(

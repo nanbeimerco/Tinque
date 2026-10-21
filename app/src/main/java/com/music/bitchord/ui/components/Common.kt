@@ -1,5 +1,11 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -453,14 +459,33 @@ private fun SongRowContent(
         targetValue = if (isCurrent) activeTint else MaterialTheme.colorScheme.onBackground,
         label = "song row title",
     )
+    val selectionActive = LocalSongSelection.current?.active == true
     val activeBackground by animateColorAsState(
-        targetValue = if (isCurrent || selected) activeTint.copy(alpha = 0.14f) else Color.Transparent,
+        targetValue = if (isCurrent && !selected) activeTint.copy(alpha = 0.14f) else Color.Transparent,
         label = "song row background",
+    )
+    // A picked row sits in its own rounded container (M3 Expressive selected
+    // list item), inset from the edges. Drawn, not laid out, so picking a row
+    // never nudges its contents.
+    val pickedColor by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
+        label = "song row selected",
     )
     Row(
         modifier = modifier
             .fillMaxWidth()
             .background(activeBackground)
+            .drawBehind {
+                if (pickedColor.alpha > 0f) {
+                    val inset = 6.dp.toPx()
+                    drawRoundRect(
+                        color = pickedColor,
+                        topLeft = Offset(inset, 1.dp.toPx()),
+                        size = Size(size.width - inset * 2, size.height - 2.dp.toPx()),
+                        cornerRadius = CornerRadius(16.dp.toPx()),
+                    )
+                }
+            }
             .debouncedCombinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -469,7 +494,9 @@ private fun SongRowContent(
             // Same 52dp the artwork would take, so a numbered list and an
             // illustrated one share a left edge and a divider inset.
             Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
-                if (isCurrent) {
+                if (selectionActive) {
+                    SelectionMark(selected = selected)
+                } else if (isCurrent) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
                         contentDescription = stringResource(R.string.now_playing),
@@ -485,15 +512,30 @@ private fun SongRowContent(
                 }
             }
         } else {
-            AsyncImage(
-                model = song.artworkAt(ROW_ART_PX),
-                contentDescription = null,
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .thumbnailBorder(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-            )
+            val artScale = selectionArtScale(selected)
+            Box(Modifier.size(52.dp)) {
+                AsyncImage(
+                    model = song.artworkAt(ROW_ART_PX),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(52.dp)
+                        .graphicsLayer {
+                            scaleX = artScale
+                            scaleY = artScale
+                        }
+                        .clip(RoundedCornerShape(8.dp))
+                        .thumbnailBorder(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                )
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = selectionActive,
+                    enter = androidx.compose.animation.scaleIn() + androidx.compose.animation.fadeIn(),
+                    exit = androidx.compose.animation.scaleOut() + androidx.compose.animation.fadeOut(),
+                    modifier = Modifier.align(Alignment.BottomEnd).offset(x = 4.dp, y = 4.dp),
+                ) {
+                    SelectionMark(selected = selected, size = 20.dp)
+                }
+            }
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -517,15 +559,6 @@ private fun SongRowContent(
         if (downloadedTint != null) {
             DownloadedBadge(song.videoId, downloadedTint)
         }
-        if (selected) {
-            Spacer(Modifier.width(8.dp))
-            Icon(
-                Icons.Rounded.CheckCircle,
-                contentDescription = stringResource(R.string.selected),
-                tint = activeTint,
-                modifier = Modifier.size(20.dp),
-            )
-        }
         if (isCurrent && trackNumber == null) {
             Spacer(Modifier.width(8.dp))
             Icon(
@@ -544,17 +577,24 @@ private fun SongRowContent(
             )
         }
         // Same sheet the long-press opens, for anyone who doesn't think to hold.
+        // While picking tracks the ⋮ fades out but keeps its place, so the
+        // duration beside it never shifts; a tap on the row picks it then.
         if (onMore != null || dropdownMenu != null) {
+            val moreAlpha by androidx.compose.animation.core.animateFloatAsState(
+                if (selectionActive) 0f else 1f,
+                label = "song row more",
+            )
             Box(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(CircleShape)
-                    .clickable { onMore?.invoke() },
+                    .graphicsLayer { alpha = moreAlpha }
+                    .clickable(enabled = !selectionActive) { onMore?.invoke() },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     Icons.Rounded.MoreVert,
-                    contentDescription = stringResource(R.string.more),
+                    contentDescription = if (selectionActive) null else stringResource(R.string.more),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )

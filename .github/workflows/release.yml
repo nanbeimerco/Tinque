@@ -78,21 +78,21 @@ jobs:
           for f in app/build/outputs/apk/standard/release/app-standard-*.apk; do
             [ -f "$f" ] || continue
             base=$(basename "$f" | sed -E 's/app-standard-(.*)-release(-unsigned)?\.apk/\1/')
-            cp "$f" "release-apks/MusicBeat-${TAG}-standard-${base}.apk"
+            cp "$f" "release-apks/Tinque-${TAG}-standard-${base}.apk"
           done
 
           # OnePlus / OPPO Whitelisted: QQ Music flavor (com.tencent.qqmusic)
           for f in app/build/outputs/apk/qqmusic/release/app-qqmusic-*.apk; do
             [ -f "$f" ] || continue
             base=$(basename "$f" | sed -E 's/app-qqmusic-(.*)-release(-unsigned)?\.apk/\1/')
-            cp "$f" "release-apks/MusicBeat-${TAG}-oneplus-qqmusic-${base}.apk"
+            cp "$f" "release-apks/Tinque-${TAG}-oneplus-qqmusic-${base}.apk"
           done
 
           # OnePlus / OPPO Whitelisted: Kugou flavor (com.kugou.android)
           for f in app/build/outputs/apk/kugou/release/app-kugou-*.apk; do
             [ -f "$f" ] || continue
             base=$(basename "$f" | sed -E 's/app-kugou-(.*)-release(-unsigned)?\.apk/\1/')
-            cp "$f" "release-apks/MusicBeat-${TAG}-oneplus-kugou-${base}.apk"
+            cp "$f" "release-apks/Tinque-${TAG}-oneplus-kugou-${base}.apk"
           done
 
           ls -lh release-apks/
@@ -101,9 +101,9 @@ jobs:
         id: release_notes
         run: |
           cat << 'EOF' > release_notes.md
-          ## 🎵 MusicBeat Release
+          ## 🎵 Tinque Release
 
-          MusicBeat is a modern, privacy-respecting local & streaming music player with lossless audio, word-synced lyrics, and native hardware equalizer integration.
+          Tinque is a modern, privacy-respecting local & streaming music player with lossless audio, word-synced lyrics, and native hardware equalizer integration.
 
           Forked with credit and gratitude from [kushagrasinghx/BitChord](https://github.com/kushagrasinghx/BitChord).
 
@@ -125,7 +125,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: MusicBeat ${{ env.RELEASE_TAG }}
+          name: Tinque ${{ env.RELEASE_TAG }}
           body_path: release_notes.md
           files: release-apks/*.apk
           draft: false

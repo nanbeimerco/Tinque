@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.lyricseditor.ui.components
 
+import com.music.bitchord.ui.components.GlassAlertDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -66,7 +67,7 @@ fun LyricsDownloadDialog(
 
     val canSearch = title.isNotBlank() || artist.isNotBlank()
 
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = onDismissRequest,
         shape = RoundedCornerShape(24.dp),
         title = {

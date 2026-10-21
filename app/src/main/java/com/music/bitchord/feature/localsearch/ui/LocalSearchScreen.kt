@@ -43,6 +43,10 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import com.music.bitchord.ui.components.TabLogoHeader
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -146,8 +150,12 @@ fun LocalSearchScreen(
         }
     }
 
+    // `requestScrollToItem`, never the suspending `scrollToItem`: the latter
+    // waits for the list's first layout, and the results list is only composed
+    // once there ARE results — so awaiting it here could hang forever and leave
+    // the screen stuck on "No results".
     LaunchedEffect(useYoutubeMusic, selectedFilter, submittedYoutubeQuery) {
-        listState.scrollToItem(0)
+        listState.requestScrollToItem(0)
     }
 
     // Searching every local song (and grouping albums, artists and folders for
@@ -158,10 +166,14 @@ fun LocalSearchScreen(
     // main thread just to compare Compose effect keys.
     val songsIdentity = System.identityHashCode(songs)
     var searchResults by remember { mutableStateOf<List<LocalSearchResult>>(emptyList()) }
+    // The query the current [searchResults] were computed for. While it lags
+    // the typed query a search is still running, and "No results" must wait.
+    var resultsQuery by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(query, selectedFilter, songsIdentity, folderHierarchy, useYoutubeMusic) {
         if (query.isBlank() || useYoutubeMusic) {
             searchResults = emptyList()
-            listState.scrollToItem(0)
+            resultsQuery = query
+            listState.requestScrollToItem(0)
         } else {
             delay(140)
             val currentQuery = query
@@ -171,10 +183,13 @@ fun LocalSearchScreen(
             val results = withContext(Dispatchers.Default) {
                 LocalSearchUseCase.search(currentQuery, currentFilter, currentSongs, currentHierarchy)
             }
-            listState.scrollToItem(0)
+            // Results first, then a non-suspending scroll request (see above).
             searchResults = results
+            resultsQuery = currentQuery
+            listState.requestScrollToItem(0)
         }
     }
+    val searchPending = query.isNotBlank() && !useYoutubeMusic && resultsQuery != query
 
     val matchedSongs = remember(searchResults) {
         searchResults.filterIsInstance<LocalSearchResult.Track>().map { it.song }
@@ -245,6 +260,20 @@ fun LocalSearchScreen(
                     .fillMaxSize()
                     .padding(top = contentPadding.calculateTopPadding()),
             ) {
+                // The tab's logo. The search box stays put, so the logo cannot
+                // scroll with a list here; it slides up and fades as soon as
+                // the results / history list scrolls, and returns at the top.
+                val listAtTop by remember {
+                    derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 8 }
+                }
+                val logoShown by animateFloatAsState(if (listAtTop) 1f else 0f, label = "searchLogo")
+                TabLogoHeader(
+                    listTopPadding = contentPadding.calculateTopPadding(),
+                    modifier = Modifier.graphicsLayer {
+                        alpha = logoShown
+                        translationY = -(1f - logoShown) * 24.dp.toPx()
+                    },
+                )
                 // Search Input Header
                 LocalSearchField(
                     query = query,
@@ -441,6 +470,9 @@ fun LocalSearchScreen(
                         listState = listState,
                         modifier = Modifier.weight(1f),
                     )
+                } else if (searchResults.isEmpty() && searchPending) {
+                    // Still searching: say nothing rather than a premature "No results".
+                    Box(Modifier.weight(1f).fillMaxWidth())
                 } else if (searchResults.isEmpty()) {
                     Box(
                         modifier = Modifier

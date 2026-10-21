@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.localmusic.ui.components
 
+import com.music.bitchord.ui.components.GlassModalBottomSheet
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,7 +53,7 @@ fun BlacklistedFoldersSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ModalBottomSheet(
+    GlassModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         modifier = modifier,

@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.library.ui.components
 
+import com.music.bitchord.ui.components.GlassDropdownMenu
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -166,7 +167,7 @@ fun LibraryPlaylistCard(
                         )
                     }
 
-                    DropdownMenu(
+                    GlassDropdownMenu(
                         expanded = menuOpen,
                         onDismissRequest = { menuOpen = false },
                     ) {

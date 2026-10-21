@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.localmusic.ui.components
 
+import com.music.bitchord.ui.components.GlassAlertDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -50,7 +51,7 @@ fun AllFilesPermissionDialog(
     modifier: Modifier = Modifier,
     onBasicAudioFallback: (() -> Unit)? = null,
 ) {
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = onDismissRequest,
         shape = RoundedCornerShape(28.dp),
         containerColor = MaterialTheme.colorScheme.surface,

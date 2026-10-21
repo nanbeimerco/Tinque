@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.localmusic.ui.components
 
+import com.music.bitchord.ui.components.GlassDropdownMenu
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -130,7 +131,7 @@ fun LocalFolderItem(
                     )
                 }
 
-                DropdownMenu(
+                GlassDropdownMenu(
                     expanded = menuOpen,
                     onDismissRequest = { menuOpen = false },
                 ) {

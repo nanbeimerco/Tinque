@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.lyricseditor.ui.components
 
+import com.music.bitchord.ui.components.GlassDropdownMenu
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -183,7 +184,7 @@ fun LyricsEditorBottomBar(
                         )
                     }
 
-                    DropdownMenu(
+                    GlassDropdownMenu(
                         expanded = menuExpanded,
                         onDismissRequest = { menuExpanded = false },
                         shape = RoundedCornerShape(18.dp),

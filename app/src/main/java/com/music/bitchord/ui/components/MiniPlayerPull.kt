@@ -77,12 +77,19 @@ internal fun Modifier.miniPlayerGestures(
     onPrevious: () -> Unit,
     locked: Boolean = false,
     onBlocked: () -> Unit = {},
+    /**
+     * Whether a sideways drag anywhere on the bar changes track. Off where the
+     * artwork/title area has its own swipe with a preview
+     * ([MiniPlayerTrackSwipe]), so a drag over the buttons does nothing.
+     */
+    horizontalSwipe: Boolean = true,
 ): Modifier {
     val currentPull by rememberUpdatedState(pull)
     val currentOnNext by rememberUpdatedState(onNext)
     val currentOnPrevious by rememberUpdatedState(onPrevious)
     val currentLocked by rememberUpdatedState(locked)
     val currentOnBlocked by rememberUpdatedState(onBlocked)
+    val currentHorizontalSwipe by rememberUpdatedState(horizontalSwipe)
     return pointerInput(Unit) {
         val trackThreshold = TRACK_SWIPE_THRESHOLD.toPx()
         val maxVelocity = viewConfiguration.maximumFlingVelocity
@@ -106,6 +113,7 @@ internal fun Modifier.miniPlayerGestures(
                 }
                 vertical = isUpwardPull
                 if (vertical && currentPull == null) return@awaitEachGesture
+                if (!vertical && !currentHorizontalSwipe) return@awaitEachGesture
                 change.consume()
                 start = change
             }

@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,8 +57,9 @@ fun ArtistViewAndSortControls(
         if (showViewToggle) {
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(36.dp)
                     .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     .clickable {
                         haptics.play(Haptic.Select)
                         onViewTypeToggle()
@@ -79,8 +81,9 @@ fun ArtistViewAndSortControls(
             Box {
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(36.dp)
                         .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                         .clickable { sortMenuOpen = true },
                     contentAlignment = Alignment.Center,
                 ) {
@@ -92,7 +95,7 @@ fun ArtistViewAndSortControls(
                     )
                 }
 
-                DropdownMenu(
+                GlassDropdownMenu(
                     expanded = sortMenuOpen,
                     onDismissRequest = { sortMenuOpen = false },
                 ) {
