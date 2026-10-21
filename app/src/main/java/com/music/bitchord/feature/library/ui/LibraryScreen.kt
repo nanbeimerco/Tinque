@@ -278,6 +278,10 @@ fun LibraryScreen(
     var selectedPlaylistSongIds by rememberSaveable { mutableStateOf(emptySet<String>()) }
     var showDeleteFromPlaylistDialog by remember { mutableStateOf(false) }
     var activeMenuSong by remember { mutableStateOf<Song?>(null) }
+    // Which list the open menu belongs to. The same song can sit in both Recently
+    // and Most played; keyed by the song alone, both rows' menus opened together
+    // and fought over the one floating menu, often leaving it on the other row.
+    var activeMenuSection by remember { mutableStateOf<String?>(null) }
     // The ⋮ menu (the Songs tab's, everywhere in the Library) and its sheets.
     var menuPlaylistSongs by remember { mutableStateOf<List<Song>?>(null) }
     var menuDeleteSong by remember { mutableStateOf<Song?>(null) }
@@ -519,9 +523,10 @@ fun LibraryScreen(
         if (inDrillDown) leaveDrillDown() else selectedFilter = LibraryFilter.ALL
     }
 
-    val libraryMenu: @Composable (Song, String?) -> Unit = { song, playlistId ->
+    val libraryMenu: @Composable (Song, String?, String?) -> Unit = { song, playlistId, section ->
         LocalSongDropdownMenu(
-            expanded = (activeMenuSong?.let { it.localUri ?: it.videoId } == (song.localUri ?: song.videoId)),
+            expanded = activeMenuSection == section &&
+                (activeMenuSong?.let { it.localUri ?: it.videoId } == (song.localUri ?: song.videoId)),
             onDismissRequest = { activeMenuSong = null },
             song = song,
             onQueueNext = {
@@ -566,7 +571,8 @@ fun LibraryScreen(
             },
         )
     }
-    val openMenu: (Song) -> Unit = { song -> activeMenuSong = song }
+    val openMenu: (Song) -> Unit = { song -> activeMenuSection = null; activeMenuSong = song }
+    val openSectionMenu: (Song, String?) -> Unit = { song, section -> activeMenuSection = section; activeMenuSong = song }
     val pickOrPlay: (List<Song>, Int) -> Unit = { list, index ->
         if (selection?.active == true) selection.toggle(list[index]) else onSongClick(list, index)
     }
@@ -706,7 +712,7 @@ fun LibraryScreen(
                     },
                     onBack = leaveDrillDown,
                     contentPadding = contentPadding,
-                    songDropdownMenu = { song -> libraryMenu(song, drillDownPlaylistId) },
+                    songDropdownMenu = { song -> libraryMenu(song, drillDownPlaylistId, null) },
                     onArtworkPaletteChanged = onArtworkPaletteChanged,
                 )
                 if (drillDownPlaylistId == null) SelectionScopeEffect(key = key, songs = drillDownSongs)
@@ -750,7 +756,7 @@ fun LibraryScreen(
                             showArtworkInList = showPlaylistSongArtwork,
                             onBack = { selectedFilter = LibraryFilter.ALL },
                             contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
-                            songDropdownMenu = { song -> libraryMenu(song, null) },
+                            songDropdownMenu = { song -> libraryMenu(song, null, null) },
                             modifier = Modifier.weight(1f),
                         )
                     }
@@ -833,8 +839,8 @@ fun LibraryScreen(
                             isPlaying = isPlaying,
                             onSongClick = pickOrPlay,
                             onSongLongPress = pick,
-                            onSongMore = openMenu,
-                            songMenu = { song -> libraryMenu(song, null) },
+                            onSongMore = openSectionMenu,
+                            songMenu = { song, section -> libraryMenu(song, null, section) },
                             selectedIds = selection?.ids ?: emptySet(),
                             onSongSwipe = onSongSwipe,
                             filter = selectedFilter,

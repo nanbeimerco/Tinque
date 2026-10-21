@@ -2536,6 +2536,23 @@ private fun BitChordApp(
                                     QueueShuffle.enableForNextQueue()
                                     play(songs, songs.indices.random())
                                 },
+                                onPlayNext = playNext,
+                                onAddToQueue = addToQueue,
+                                onGoToAlbum = { album, art -> openLocalAlbum(album, art) },
+                                onGoToArtist = { artist -> openLocalArtist(artist, null) },
+                                onTagEditor = { song ->
+                                    pendingPlayerQuickAction = PlayerQuickAction.TAG_EDITOR
+                                    menuFromPlayer = false
+                                    songActions = song
+                                },
+                                onDetails = { song ->
+                                    pendingPlayerQuickAction = PlayerQuickAction.DETAILS
+                                    menuFromPlayer = false
+                                    songActions = song
+                                },
+                                onDeleteSong = { viewModel.loadLocalMusic() },
+                                onArtworkPaletteChanged = onLocalArtworkPaletteChanged,
+                                onNavigationChanged = onCollectionNavigationChanged,
                                 focusTrigger = searchFocusTrigger,
                                 recentSearches = searchHistory,
                                 onRecordSearch = viewModel::recordSearch,

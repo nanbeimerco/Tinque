@@ -1244,4 +1244,6 @@
     <string name="font_error_type">Choose a .ttf or .otf file</string>
     <string name="font_error_open">Couldn\'t open the file</string>
     <string name="font_error_typeface">Couldn\'t load this as a font</string>
+    <string name="beta_player_layout">Beta player layout</string>
+    <string name="beta_player_layout_subtitle">Gathers the controls at the bottom, shows bigger artwork, and shows lyrics inside the player</string>
 </resources>

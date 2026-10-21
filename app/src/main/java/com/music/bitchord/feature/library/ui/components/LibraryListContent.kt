@@ -81,9 +81,9 @@ fun LibraryListContent(
     onSongClick: (List<Song>, Int) -> Unit = { _, _ -> },
     onSongLongPress: (Song) -> Unit = {},
     /** A row's ⋮: opens [songMenu] for that song. */
-    onSongMore: ((Song) -> Unit)? = null,
+    onSongMore: ((Song, String?) -> Unit)? = null,
     /** The ⋮ menu, drawn inside the row's button (the Songs tab's menu). */
-    songMenu: (@Composable (Song) -> Unit)? = null,
+    songMenu: (@Composable (Song, String?) -> Unit)? = null,
     /** Picked tracks while selecting, for the rows' selected look. */
     selectedIds: Set<String> = emptySet(),
     onSongSwipe: (Song) -> Unit = {},
@@ -202,8 +202,8 @@ private fun LazyListScope.historySection(
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
-    onSongMore: ((Song) -> Unit)? = null,
-    songMenu: (@Composable (Song) -> Unit)? = null,
+    onSongMore: ((Song, String?) -> Unit)? = null,
+    songMenu: (@Composable (Song, String?) -> Unit)? = null,
     selectedIds: Set<String> = emptySet(),
 ) {
     if (songs.isEmpty()) return
@@ -237,9 +237,9 @@ private fun LazyListScope.historySection(
             selected = song.videoId in selectedIds,
             onClick = { onSongClick(songs, index) },
             onLongPress = { onSongLongPress(song) },
-            onMore = onSongMore?.let { more -> { more(song) } },
+            onMore = onSongMore?.let { more -> { more(song, key) } },
             onSwipeToQueue = { onSongSwipe(song) },
-            dropdownMenu = songMenu?.let { menu -> { menu(song) } },
+            dropdownMenu = songMenu?.let { menu -> { menu(song, key) } },
         )
     }
 }

@@ -100,6 +100,7 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.ViewStream
 import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.VolumeOff
+import androidx.compose.material.icons.rounded.Science
 import androidx.compose.material.icons.rounded.Waves
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -390,6 +391,7 @@ fun SettingsScreen(
     val replayGenres by AppSettings.replayGenres.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
+    val betaPlayerLayout by AppSettings.betaPlayerLayout.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
@@ -697,6 +699,12 @@ fun SettingsScreen(
             listOf("volume", "slider", "bar", "音量", "スライダー"),
             hideVolumeBar,
         ) { AppSettings.setHideVolumeBar(!hideVolumeBar) },
+        SettingsSearchEntry(
+            stringResource(R.string.beta_player_layout),
+            stringResource(R.string.beta_player_layout_subtitle),
+            listOf("beta", "player", "layout", "lyrics", "ベータ", "プレイヤー", "レイアウト", "歌詞"),
+            betaPlayerLayout,
+        ) { AppSettings.setBetaPlayerLayout(!betaPlayerLayout) },
         SettingsSearchEntry(
             stringResource(R.string.show_nerd_stats),
             stringResource(R.string.show_nerd_stats_subtitle),
@@ -3586,6 +3594,23 @@ fun SettingsScreen(
                     )
                 },
                 onClick = { AppSettings.setHideVolumeBar(!hideVolumeBar) },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.Science,
+                title = stringResource(R.string.beta_player_layout),
+                subtitle = stringResource(R.string.beta_player_layout_subtitle),
+                trailing = {
+                    Switch(
+                        checked = betaPlayerLayout,
+                        onCheckedChange = AppSettings::setBetaPlayerLayout,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setBetaPlayerLayout(!betaPlayerLayout) },
             )
         }
 

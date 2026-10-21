@@ -54,6 +54,8 @@ fun LocalSearchResultRow(
     onArtistClick: (LocalSearchResult.Artist) -> Unit,
     onFolderClick: (LocalSearchResult.Folder) -> Unit,
     onFolderLongPress: ((LocalSearchResult.Folder) -> Unit)? = null,
+    onSongMore: ((Song) -> Unit)? = null,
+    songMenu: (@Composable (Song) -> Unit)? = null,
     selected: Boolean = false,
     currentSong: Song? = null,
     isPlaying: Boolean = false,
@@ -70,7 +72,8 @@ fun LocalSearchResultRow(
                 selected = selected,
                 onClick = { onSongClick(song) },
                 onLongPress = { onSongLongPress(song) },
-                onMore = { onSongLongPress(song) },
+                onMore = onSongMore?.let { more -> { more(song) } },
+                dropdownMenu = songMenu?.let { menu -> { menu(song) } },
                 onSwipeToQueue = { onSongSwipe(song) },
                 modifier = modifier,
             )

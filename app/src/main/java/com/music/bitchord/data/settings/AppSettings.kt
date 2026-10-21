@@ -523,6 +523,8 @@ object AppSettings {
 
     /** Hides the volume slider on the main player, leaving the rest of the layout to reflow. */
     val hideVolumeBar = MutableStateFlow(false)
+    /** Beta player layout: controls gathered at the foot, lyrics shown inside the player. */
+    val betaPlayerLayout = MutableStateFlow(false)
 
     /** Swiping a song row plays it next instead of adding it to the end of the queue. */
     val swipeToPlayNext = MutableStateFlow(false)
@@ -1121,6 +1123,7 @@ object AppSettings {
         )
         stopOnTaskRemoved.value = prefs.getBoolean(KEY_STOP_ON_TASK_REMOVED, false)
         hideVolumeBar.value = prefs.getBoolean(KEY_HIDE_VOLUME_BAR, false)
+        betaPlayerLayout.value = prefs.getBoolean(KEY_BETA_PLAYER_LAYOUT, false)
         swipeToPlayNext.value = prefs.getBoolean(KEY_SWIPE_TO_PLAY_NEXT, false)
         dontRepeatSuggestions.value = prefs.getBoolean(KEY_DONT_REPEAT_SUGGESTIONS, false)
         reduceDynamicBlur.value = prefs.getBoolean(KEY_REDUCE_BLUR, false)
@@ -1740,6 +1743,11 @@ object AppSettings {
     fun setStopOnTaskRemoved(value: Boolean) {
         stopOnTaskRemoved.value = value
         prefs.edit().putBoolean(KEY_STOP_ON_TASK_REMOVED, value).apply()
+    }
+
+    fun setBetaPlayerLayout(value: Boolean) {
+        betaPlayerLayout.value = value
+        prefs.edit().putBoolean(KEY_BETA_PLAYER_LAYOUT, value).apply()
     }
 
     fun setHideVolumeBar(value: Boolean) {
@@ -3036,6 +3044,7 @@ object AppSettings {
     private const val KEY_PERFORMANCE_REFRESH_RATE = "performance_refresh_rate"
     private const val KEY_STOP_ON_TASK_REMOVED = "stop_on_task_removed"
     private const val KEY_HIDE_VOLUME_BAR = "hide_volume_bar"
+    private const val KEY_BETA_PLAYER_LAYOUT = "beta_player_layout"
     private const val KEY_SWIPE_TO_PLAY_NEXT = "swipe_to_play_next"
     private const val KEY_DONT_REPEAT_SUGGESTIONS = "dont_repeat_suggestions"
     private const val KEY_REDUCE_BLUR = "reduce_dynamic_blur"

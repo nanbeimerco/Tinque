@@ -51,6 +51,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
@@ -95,6 +97,15 @@ fun LocalSearchScreen(
     onArtistClick: ((String, List<Song>) -> Unit)? = null,
     onFolderClick: ((String, List<Song>) -> Unit)? = null,
     onShuffle: ((List<Song>) -> Unit)? = null,
+    onPlayNext: ((Song) -> Unit)? = null,
+    onAddToQueue: ((Song) -> Unit)? = null,
+    onGoToAlbum: ((String, String?) -> Unit)? = null,
+    onGoToArtist: ((String) -> Unit)? = null,
+    onTagEditor: ((Song) -> Unit)? = null,
+    onDetails: ((Song) -> Unit)? = null,
+    onDeleteSong: ((Song) -> Unit)? = null,
+    onArtworkPaletteChanged: ((com.music.bitchord.ui.theme.ArtworkPalette?) -> Unit)? = null,
+    onNavigationChanged: ((Boolean, (() -> Unit)?) -> Unit)? = null,
     focusTrigger: Int = 0,
     recentSearches: List<String> = emptyList(),
     onRecordSearch: (String) -> Unit = {},
@@ -129,7 +140,14 @@ fun LocalSearchScreen(
     var drillDownSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
     var drillDownArt by remember { mutableStateOf<String?>(null) }
     var isDrillDownArtist by rememberSaveable { mutableStateOf(false) }
-    var selectedSongIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // Long-press picks tracks with the app-wide selection (floating header and
+    // toolbar), and ⋮ opens the track menu, exactly as on the Songs tab.
+    val selection = com.music.bitchord.ui.components.LocalSongSelection.current
+    val selectedSongIds: Set<String> = selection?.ids ?: emptySet()
+    var menuSong by remember { mutableStateOf<Song?>(null) }
+    var deleteSong by remember { mutableStateOf<Song?>(null) }
+    var isDrillDownAlbum by rememberSaveable { mutableStateOf(false) }
+    val fullScreenCollectionArtwork by AppSettings.fullScreenCollectionArtwork.collectAsStateWithLifecycle()
     var songsForPlaylist by remember { mutableStateOf<List<Song>?>(null) }
 
     val inDrillDown = drillDownLabel != null
@@ -138,11 +156,29 @@ fun LocalSearchScreen(
         drillDownSongs = emptyList()
         drillDownArt = null
         isDrillDownArtist = false
+        isDrillDownAlbum = false
+        isDrillDownAlbum = false
     }
 
-    BackHandler(enabled = selectedSongIds.isNotEmpty() || inDrillDown) {
-        if (selectedSongIds.isNotEmpty()) selectedSongIds = emptySet() else leaveDrillDown()
+    BackHandler(enabled = inDrillDown) { leaveDrillDown() }
+
+    // An album opened from here gets the Albums tab's full-screen cover; the
+    // app bar then carries its back button and takes its colours.
+    val fullScreenDrill = inDrillDown && isDrillDownAlbum && fullScreenCollectionArtwork
+    val navigationCallback = rememberUpdatedState(onNavigationChanged)
+    val paletteCallback = rememberUpdatedState(onArtworkPaletteChanged)
+    LaunchedEffect(fullScreenDrill) {
+        navigationCallback.value?.invoke(fullScreenDrill, if (fullScreenDrill) ({ leaveDrillDown() }) else null)
+        if (!fullScreenDrill) paletteCallback.value?.invoke(null)
     }
+    DisposableEffect(Unit) {
+        onDispose {
+            navigationCallback.value?.invoke(false, null)
+            paletteCallback.value?.invoke(null)
+        }
+    }
+    // Moving between the results and an opened album ends a selection.
+    LaunchedEffect(drillDownLabel) { selection?.clear() }
 
     LaunchedEffect(focusTrigger) {
         if (focusTrigger > 0) {
@@ -194,6 +230,39 @@ fun LocalSearchScreen(
     val matchedSongs = remember(searchResults) {
         searchResults.filterIsInstance<LocalSearchResult.Track>().map { it.song }
     }
+    com.music.bitchord.ui.components.SelectionScopeEffect(
+        key = if (inDrillDown) "drill:$drillDownLabel" else "results:$resultsQuery:$selectedFilter",
+        songs = if (inDrillDown) drillDownSongs else matchedSongs,
+    )
+    val ownMenu: @Composable (Song) -> Unit = { song ->
+        com.music.bitchord.feature.localsongactions.ui.components.LocalSongDropdownMenu(
+            expanded = menuSong?.videoId == song.videoId,
+            onDismissRequest = { menuSong = null },
+            song = song,
+            onQueueNext = { onPlayNext?.invoke(song) ?: onSongSwipe(song) },
+            onAddToQueue = { onAddToQueue?.invoke(song) ?: onSongSwipe(song) },
+            onAddToPlaylist = { songsForPlaylist = listOf(song) },
+            onGoToAlbum = onGoToAlbum?.let { go -> { album -> go(album, song.thumbnailUrl) } },
+            onGoToArtist = onGoToArtist,
+            onGoToFolder = null,
+            onTagEditor = { onTagEditor?.invoke(song) ?: onSongLongPress(song) },
+            onShare = {
+                com.music.bitchord.feature.localsongactions.ui.LocalSongActionsHelper.shareSong(context, song)
+            },
+            onDeleteFromDevice = { deleteSong = song },
+            onDetails = { onDetails?.invoke(song) ?: onSongLongPress(song) },
+        )
+    }
+    deleteSong?.let { song ->
+        com.music.bitchord.feature.localsongactions.ui.components.LocalDeleteConfirmDialog(
+            song = song,
+            onDismissRequest = { deleteSong = null },
+            onDeleted = {
+                deleteSong = null
+                onDeleteSong?.invoke(song)
+            },
+        )
+    }
     val showSearchHistory = query.isBlank() ||
         (useYoutubeMusic && submittedYoutubeQuery.isNullOrBlank())
 
@@ -213,36 +282,27 @@ fun LocalSearchScreen(
     ) { target ->
         if (target == "drill") {
             Column(Modifier.fillMaxSize()) {
-                if (selectedSongIds.isNotEmpty()) {
-                    SearchSelectionBar(
-                        count = selectedSongIds.size,
-                        onAdd = {
-                            songsForPlaylist = drillDownSongs.filter { it.videoId in selectedSongIds }
-                            selectedSongIds = emptySet()
-                        },
-                        onCancel = { selectedSongIds = emptySet() },
-                    )
-                }
                 DrillDownSongList(
                 label = drillDownLabel ?: "",
                 artworkUrl = drillDownArt,
                 songs = drillDownSongs,
                 isArtist = isDrillDownArtist,
+                fullScreenArtwork = isDrillDownAlbum && fullScreenCollectionArtwork,
+                onArtworkPaletteChanged = if (isDrillDownAlbum) onArtworkPaletteChanged else null,
                 selectedIds = selectedSongIds,
                 currentSong = currentSong,
                 isPlaying = isPlaying,
                 onSongClick = { list, index ->
                     val song = list.getOrNull(index) ?: return@DrillDownSongList
-                    if (selectedSongIds.isNotEmpty()) {
-                        selectedSongIds = if (song.videoId in selectedSongIds) selectedSongIds - song.videoId
-                        else selectedSongIds + song.videoId
+                    if (selection?.active == true) {
+                        if (selection != null) selection.toggle(song) else onSongLongPress(song)
                     } else onSongClick(list, index)
                 },
                 onSongLongPress = { song ->
-                    selectedSongIds = if (song.videoId in selectedSongIds) selectedSongIds - song.videoId
-                    else selectedSongIds + song.videoId
+                    if (selection != null) selection.toggle(song) else onSongLongPress(song)
                 },
-                onSongMore = onSongLongPress,
+                onSongMore = { menuSong = it },
+                songDropdownMenu = ownMenu,
                 onSongSwipe = onSongSwipe,
                 onShuffle = onShuffle ?: { songsToShuffle ->
                     if (songsToShuffle.isNotEmpty()) {
@@ -325,16 +385,6 @@ fun LocalSearchScreen(
                     )
                 }
 
-                if (selectedSongIds.isNotEmpty()) {
-                    SearchSelectionBar(
-                        count = selectedSongIds.size,
-                        onAdd = {
-                            songsForPlaylist = songs.filter { it.videoId in selectedSongIds }
-                            selectedSongIds = emptySet()
-                        },
-                        onCancel = { selectedSongIds = emptySet() },
-                    )
-                }
 
                 // Content
                 if (showSearchHistory) {
@@ -547,6 +597,7 @@ fun LocalSearchScreen(
                                             drillDownSongs = artist.songs
                                             drillDownArt = artist.thumbnailUrl
                                             isDrillDownArtist = true
+                                            isDrillDownAlbum = false
                                         }
                                     },
                                     onFolderClick = {},
@@ -580,6 +631,7 @@ fun LocalSearchScreen(
                                             drillDownSongs = album.songs
                                             drillDownArt = album.thumbnailUrl
                                             isDrillDownArtist = false
+                                            isDrillDownAlbum = true
                                         }
                                     },
                                     onArtistClick = {},
@@ -603,9 +655,8 @@ fun LocalSearchScreen(
                                 LocalSearchResultRow(
                                     result = track,
                                     onSongClick = { song ->
-                                        if (selectedSongIds.isNotEmpty()) {
-                                            selectedSongIds = if (song.videoId in selectedSongIds) selectedSongIds - song.videoId
-                                            else selectedSongIds + song.videoId
+                                        if (selection?.active == true) {
+                                            if (selection != null) selection.toggle(song) else onSongLongPress(song)
                                             return@LocalSearchResultRow
                                         }
                                         onRecordSearch(query.trim())
@@ -613,10 +664,11 @@ fun LocalSearchScreen(
                                         onSongClick(matchedSongs, index)
                                     },
                                     onSongLongPress = { song ->
-                                        selectedSongIds = if (song.videoId in selectedSongIds) selectedSongIds - song.videoId
-                                        else selectedSongIds + song.videoId
+                                        if (selection != null) selection.toggle(song) else onSongLongPress(song)
                                     },
                                     onSongSwipe = onSongSwipe,
+                                    onSongMore = { menuSong = it },
+                                    songMenu = ownMenu,
                                     onAlbumClick = {},
                                     onArtistClick = {},
                                     onFolderClick = {},
@@ -653,6 +705,7 @@ fun LocalSearchScreen(
                                             drillDownSongs = folder.songs
                                             drillDownArt = null
                                             isDrillDownArtist = false
+                                            isDrillDownAlbum = false
                                         }
                                     },
                                     onFolderLongPress = { songsForPlaylist = it.songs },
@@ -678,9 +731,8 @@ fun LocalSearchScreen(
                             LocalSearchResultRow(
                                 result = result,
                                 onSongClick = { song ->
-                                    if (selectedSongIds.isNotEmpty()) {
-                                        selectedSongIds = if (song.videoId in selectedSongIds) selectedSongIds - song.videoId
-                                        else selectedSongIds + song.videoId
+                                    if (selection?.active == true) {
+                                        if (selection != null) selection.toggle(song) else onSongLongPress(song)
                                         return@LocalSearchResultRow
                                     }
                                     onRecordSearch(query.trim())
@@ -688,10 +740,11 @@ fun LocalSearchScreen(
                                     onSongClick(matchedSongs, index)
                                 },
                                 onSongLongPress = { song ->
-                                    selectedSongIds = if (song.videoId in selectedSongIds) selectedSongIds - song.videoId
-                                    else selectedSongIds + song.videoId
+                                    if (selection != null) selection.toggle(song) else onSongLongPress(song)
                                 },
                                 onSongSwipe = onSongSwipe,
+                                onSongMore = { menuSong = it },
+                                songMenu = ownMenu,
                                 onAlbumClick = { album ->
                                     onRecordSearch(query.trim())
                                     if (onAlbumClick != null) {
@@ -701,6 +754,7 @@ fun LocalSearchScreen(
                                         drillDownSongs = album.songs
                                         drillDownArt = album.thumbnailUrl
                                         isDrillDownArtist = false
+                                        isDrillDownAlbum = true
                                     }
                                 },
                                 onArtistClick = { artist ->
@@ -712,6 +766,7 @@ fun LocalSearchScreen(
                                         drillDownSongs = artist.songs
                                         drillDownArt = artist.thumbnailUrl
                                         isDrillDownArtist = true
+                                        isDrillDownAlbum = false
                                     }
                                 },
                                 onFolderClick = { folder ->
@@ -723,6 +778,7 @@ fun LocalSearchScreen(
                                         drillDownSongs = folder.songs
                                         drillDownArt = null
                                         isDrillDownArtist = false
+                                        isDrillDownAlbum = false
                                     }
                                 },
                                 onFolderLongPress = { folder -> songsForPlaylist = folder.songs },

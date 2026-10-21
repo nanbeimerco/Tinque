@@ -174,6 +174,7 @@ import androidx.compose.ui.util.lerp
 import androidx.compose.ui.unit.lerp
 import com.music.bitchord.ui.player.LocalPlayerDock
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shadow
@@ -462,7 +463,23 @@ private val DOCKED_TOP_PAD = 12.dp
  * where it reads as room rather than as a hole. Past this it stops reading as one
  * group of controls, so the rest goes back to the artwork block.
  */
+// The beta layout grants none: its controls keep their natural gaps at the
+// foot of the screen, and the spare height goes above them instead.
 private val CONTROL_GAP_SPREAD_MAX = 48.dp
+
+/**
+ * Beta layout: the gap from the title row down to the scrubber, which the
+ * mini lyrics line used to fill. The scrubber's touch target adds a little
+ * more to what is seen.
+ */
+private val BETA_TITLE_SCRUBBER_GAP = 0.dp
+
+/**
+ * Beta layout: what the mini lyrics line took (36dp, plus the 18dp it sat
+ * below the title row), handed to the transport instead — half above it,
+ * half below. The title row stays where it was; the scrubber moves up.
+ */
+private val BETA_TRANSPORT_EXTRA = 27.dp
 /**
  * The spread [NowPlayingScreen] settled on the last time it was laid out.
  *
@@ -1041,6 +1058,9 @@ fun NowPlayingScreen(
     val showTrackDurationInsteadOfRemaining by AppSettings.showTrackDurationInsteadOfRemaining.collectAsStateWithLifecycle()
     val artworkTapOpensLyrics by AppSettings.artworkTapOpensLyrics.collectAsStateWithLifecycle()
     val lyricsReplaceArtworkOnly by AppSettings.lyricsReplaceArtworkOnly.collectAsStateWithLifecycle()
+    // Beta layout: controls gathered at the foot, no mini lyrics or volume bar,
+    // bigger artwork, and lyrics opened inside the player rather than as a page.
+    val betaLayout by AppSettings.betaPlayerLayout.collectAsStateWithLifecycle()
     val frostedQueueManager by AppSettings.frostedQueueManager.collectAsStateWithLifecycle()
     val frostedCompactLyrics by AppSettings.frostedCompactLyrics.collectAsStateWithLifecycle()
     val showPlayerLyricsStrip by AppSettings.showPlayerLyricsStrip.collectAsStateWithLifecycle()
@@ -1161,6 +1181,15 @@ fun NowPlayingScreen(
     var savedQueueManagerOpen by remember { mutableStateOf(false) }
     var quickSleepTimerOpen by remember { mutableStateOf(false) }
     var lyricsOpen by remember { mutableStateOf(false) }
+    // The classic lyrics page, and the beta layout's in-player lyrics. Only one
+    // of them answers to [lyricsOpen] at a time, chosen by the layout.
+    val classicLyrics = lyricsOpen && !betaLayout
+    val inPlayerLyrics = lyricsOpen && betaLayout
+    val inPlayerLyricsT by animateFloatAsState(
+        targetValue = if (inPlayerLyrics) 1f else 0f,
+        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+        label = "inPlayerLyrics",
+    )
     var lyricsLogsOpen by remember { mutableStateOf(false) }
     val showLyricsLogsEnabled by AppSettings.showLyricsLogs.collectAsStateWithLifecycle()
     LaunchedEffect(song.videoId) {
@@ -1169,7 +1198,7 @@ fun NowPlayingScreen(
     LaunchedEffect(song.videoId, lyricsUnavailable) {
         if (lyricsUnavailable) {
             delay(150L)
-            if (lyricsUnavailable && lyricsOpen) {
+            if (lyricsUnavailable && lyricsOpen && !betaLayout) {
                 lyricsOpen = false
                 lyricsLogsOpen = false
             }
@@ -1436,7 +1465,7 @@ fun NowPlayingScreen(
     // half of the artwork jumped, the other half glided after it, and the pair
     // read as a stutter rather than as either. One animation, both surfaces.
     val p by animateFloatAsState(
-        targetValue = if (queueOpen || (lyricsOpen && !lyricsReplaceArtworkOnly)) 1f else 0f,
+        targetValue = if (queueOpen || inPlayerLyrics || (classicLyrics && !lyricsReplaceArtworkOnly)) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "sleeveCollapse",
     )
@@ -1901,7 +1930,7 @@ fun NowPlayingScreen(
                     .weight(1f)
                     .widthIn(max = PLAYER_MAX_WIDTH)
                     .fillMaxWidth()
-                    .padding(top = ART_BOX_TOP_PAD, bottom = 18.dp),
+                    .padding(top = ART_BOX_TOP_PAD, bottom = if (betaLayout) BETA_TITLE_SCRUBBER_GAP else 18.dp),
             ) {
                 // The height this box would have if the controls at the foot of
                 // the screen were at their natural size. They aren't: they are
@@ -1919,15 +1948,18 @@ fun NowPlayingScreen(
                 // or coming back from the lyrics panel, where the strip is
                 // rebuilt from scratch) was pocketed for good. The gaps
                 // ratcheted open a little at a time and the sleeve paid for it.
-                val compactLyrics = lyricsOpen && lyricsReplaceArtworkOnly
-                val roomy = maxHeight + if (lyricsOpen && !compactLyrics) 0.dp else controlSpread
+                val compactLyrics = classicLyrics && lyricsReplaceArtworkOnly
+                val roomy = maxHeight + if (classicLyrics && !compactLyrics) 0.dp else controlSpread
                 // The sleeve is square, so it is bounded by whichever of the
                 // two axes runs out first: the player's width on a phone, or —
                 // on a tablet, where there is width to spare — the height left
                 // over once the credits row and the gap above it have had
                 // theirs. Sizing it off the width alone is what pushed the
                 // credits down across the scrubber on anything but a phone.
-                val wantArt = minOf(maxWidth, roomy - ART_TITLE_GAP - HEADER_HEIGHT)
+                val wantArt = minOf(
+                    maxWidth + if (betaLayout) ART_GUTTER_REACH * 2 else 0.dp,
+                    roomy - ART_TITLE_GAP - HEADER_HEIGHT,
+                )
                 // Held to what the box has actually got, for the single frame it
                 // takes the gaps below to catch up with a change in their own
                 // height: a sleeve a few dp under for one frame is a better
@@ -1965,10 +1997,10 @@ fun NowPlayingScreen(
                 // of settling — a full-amplitude standing oscillation, not the
                 // single-pixel shiver this rounding alone was built to absorb.
                 // See [granted] below for the fix.
-                if ((!lyricsOpen || compactLyrics) && p <= 0.001f) {
+                if ((!classicLyrics || compactLyrics) && p <= 0.001f) {
                     val target = with(density) {
                         val half = slack
-                            .coerceAtMost(CONTROL_GAP_SPREAD_MAX * 2)
+                            .coerceAtMost(if (betaLayout) 0.dp else CONTROL_GAP_SPREAD_MAX * 2)
                             .toPx()
                             .div(2f)
                             .roundToInt()
@@ -1997,10 +2029,10 @@ fun NowPlayingScreen(
                         }
                     }
                 }
-                // Artwork and the title row travel together as one block, so
-                // the pair sits centred while the queue is closed — in whatever
-                // the controls couldn't take, which on all but the tallest
-                // screens is nothing.
+                // The title row sits on top of the controls, and the artwork is
+                // centred in what is left above it. With the full-bleed banner the
+                // artwork stays at the top instead (the banner grows down from the
+                // screen edge) and the spare height opens between it and the title.
                 val sleeveAspectRatio = if (preserveSleeveArtworkShape) {
                     animatedArtworkAspectRatio.coerceIn(0.25f, 4f)
                 } else {
@@ -2010,22 +2042,28 @@ fun NowPlayingScreen(
                 // square footprint used by the old sleeve layout.
                 val expandedArtWidth = fullArt * minOf(1f, sleeveAspectRatio)
                 val expandedArtHeight = fullArt * minOf(1f, 1f / sleeveAspectRatio)
-                val groupTop = (maxHeight - expandedArtHeight - ART_TITLE_GAP - HEADER_HEIGHT)
-                    .coerceAtLeast(0.dp) / 2
+                val spare = (maxHeight - expandedArtHeight - ART_TITLE_GAP - HEADER_HEIGHT)
+                    .coerceAtLeast(0.dp)
+                val groupTop = if (betaLayout && heroMode) 0.dp else spare / 2
+                // Extra room between the artwork and the title row (beta only:
+                // the title row sits on the controls there).
+                val titleDrop = if (betaLayout) spare - groupTop else 0.dp
 
                 var settledArtWidth by remember { mutableStateOf(expandedArtWidth) }
                 var settledArtHeight by remember { mutableStateOf(expandedArtHeight) }
                 var settledGroupTop by remember { mutableStateOf(groupTop) }
+                var settledTitleDrop by remember { mutableStateOf(titleDrop) }
                 var settledArtStart by remember { mutableStateOf((maxWidth - expandedArtWidth) / 2) }
 
-                if (p <= 0.001f && (!lyricsOpen || compactLyrics)) {
+                if (p <= 0.001f && (!classicLyrics || compactLyrics)) {
                     settledArtWidth = expandedArtWidth
                     settledArtHeight = expandedArtHeight
                     settledGroupTop = groupTop
+                    settledTitleDrop = titleDrop
                     settledArtStart = (maxWidth - expandedArtWidth) / 2
                 }
 
-                val inTransition = p > 0.001f || (lyricsOpen && !compactLyrics)
+                val inTransition = p > 0.001f || (classicLyrics && !compactLyrics)
                 val targetArtWidth = settledArtWidth
                 val targetArtHeight = settledArtHeight
                 val targetGroupTop = settledGroupTop
@@ -2038,8 +2076,21 @@ fun NowPlayingScreen(
                 // player and has to be centred in it; collapsed, it belongs
                 // hard against the left edge with the credits beside it.
                 val artStart = lerp(targetArtStart, 0.dp, p)
-                val titleTop = lerp(targetGroupTop + targetArtHeight + ART_TITLE_GAP, 0.dp, p)
-                val titleStart = lerp(0.dp, THUMB_SIZE + 12.dp, p)
+                val titleExpandedTop = targetGroupTop + targetArtHeight + ART_TITLE_GAP + settledTitleDrop
+                // Classic: the title row glides up into the top strip with the
+                // sleeve. Beta: it fades out where it is and fades in up there.
+                val titleUp = betaLayout && p >= 0.5f
+                val titleTop = if (betaLayout) {
+                    if (titleUp) 0.dp else titleExpandedTop
+                } else {
+                    lerp(titleExpandedTop, 0.dp, p)
+                }
+                val titleStart = if (betaLayout) {
+                    if (titleUp) THUMB_SIZE + 12.dp else 0.dp
+                } else {
+                    lerp(0.dp, THUMB_SIZE + 12.dp, p)
+                }
+                val titleAlpha = if (betaLayout) abs(1f - 2f * p) else 1f
 
                 // How far down the *screen* the sleeve's bottom edge sits, which
                 // is where the full-bleed banner has to stop for the credits
@@ -2078,7 +2129,7 @@ fun NowPlayingScreen(
                 // from inside a layout. Writing the same answer back costs a
                 // comparison here and a whole frame if it is left to the snapshot
                 // to notice.
-                val bannerSettled = !lyricsOpen || heroHeight == 0.dp
+                val bannerSettled = !classicLyrics || heroHeight == 0.dp
                 if (bannerSettled && bannerBottom != heroHeight) {
                     SideEffect {
                         heroHeight = bannerBottom
@@ -2507,6 +2558,7 @@ fun NowPlayingScreen(
                         .offset(y = titleTop)
                         .padding(start = titleStart)
                         .height(HEADER_HEIGHT)
+                        .graphicsLayer { alpha = titleAlpha }
                         // Where the dismiss band ends — see its top on the
                         // artwork above. Taken from the row rather than added up
                         // from the sleeve so the gap between the two is inside
@@ -2515,10 +2567,33 @@ fun NowPlayingScreen(
                         .onGloballyPositioned { dismissBandBottom = it.boundsInRoot().bottom },
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val textScale = lerp(1f, 16f / 20f, p)
+                    val textScale = if (betaLayout) {
+                        if (p >= 0.5f) 16f / 20f else 1f
+                    } else {
+                        lerp(1f, 16f / 20f, p)
+                    }
                     Column(
                         Modifier
                             .weight(1f)
+                            // Beta: laid out 1/scale as wide, so once shrunk into the
+                            // top strip the credits still reach the buttons instead of
+                            // stopping a fifth of the way short of them.
+                            .then(
+                                if (betaLayout) {
+                                    Modifier.layout { measurable, constraints ->
+                                        val wide = (constraints.maxWidth / textScale).roundToInt()
+                                        val placeable = measurable.measure(
+                                            constraints.copy(minWidth = 0, maxWidth = wide),
+                                        )
+                                        layout(constraints.maxWidth, placeable.height) {
+                                            val x = if (centerPlayerTrackInfo) (constraints.maxWidth - placeable.width) / 2 else 0
+                                            placeable.place(x, 0)
+                                        }
+                                    }
+                                } else {
+                                    Modifier
+                                },
+                            )
                             .graphicsLayer {
                                 scaleX = textScale
                                 scaleY = textScale
@@ -2537,7 +2612,9 @@ fun NowPlayingScreen(
                         // a header over the queue or the lyrics they are a label
                         // on a list, and a label that crawls pulls the eye off
                         // whatever is being read below it.
-                        val scrolls = p < 0.01f
+                        // The beta layout lets them run up there too, rather than
+                        // leaving a long title cut off in the strip.
+                        val scrolls = p < 0.01f || (betaLayout && p > 0.99f)
                         MarqueeText(
                             text = song.title,
                             style = MaterialTheme.typography.titleLarge,
@@ -2672,7 +2749,7 @@ fun NowPlayingScreen(
                     )
                 }
 
-                if (lyricsOpen) {
+                if (classicLyrics) {
                     if (lyricsReplaceArtworkOnly) {
                         Box(
                             modifier = Modifier
@@ -2761,6 +2838,27 @@ fun NowPlayingScreen(
                     }
                 }
 
+                // Beta layout: the lyrics open in the same place as the queue.
+                // The sleeve and title shrink into the top strip, the controls
+                // stay where they are, and the lyrics run in the room between.
+                if (inPlayerLyrics || inPlayerLyricsT > 0.01f) {
+                    LyricsPanel(
+                        lines = lyrics.orEmpty(),
+                        trackKey = song.videoId,
+                        positionMs = positionMs,
+                        isPlaying = isPlaying,
+                        onSeekToLine = onSeek,
+                        lyricsUnavailable = lyricsUnavailable,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = HEADER_HEIGHT)
+                            .graphicsLayer {
+                                alpha = ((inPlayerLyricsT - 0.45f) / 0.55f).coerceIn(0f, 1f)
+                                translationY = (1f - inPlayerLyricsT) * 26.dp.toPx()
+                            },
+                    )
+                }
+
                 // Toggles and the queue arrive after the sleeve has finished
                 // travelling, and leave before it starts coming back.
                 if (!lyricsOpen && queueProgress > 0.01f) {
@@ -2806,9 +2904,9 @@ fun NowPlayingScreen(
             // fading it away behind the queue left this the one place in the
             // player where the current line simply vanished.
             //
-            val lyricsMode = lyricsOpen && !lyricsReplaceArtworkOnly
+            val lyricsMode = classicLyrics && !lyricsReplaceArtworkOnly
             val miniLyricsVisible = showPlayerLyricsStrip && (syncedLyricsEnabled || !lyrics.isNullOrEmpty())
-            if (miniLyricsVisible && (!lyricsMode || p < 1f)) {
+            if (miniLyricsVisible && !betaLayout && (!lyricsMode || p < 1f)) {
                 Box(
                     contentAlignment = Alignment.CenterStart,
                     modifier = Modifier
@@ -2899,9 +2997,20 @@ fun NowPlayingScreen(
             // Whether this collapse folds the controls away (full-screen lyrics,
             // or on the way back from them) or keeps them (the queue: the
             // volume folds, the transport moves down, the toggle row stays).
-            val rowFolds = lyricsMode || (p > 0f && !queueOpen && queueProgress < 0.01f)
-            // 0 → 1 as the queue opens.
-            val queueCompact = if (rowFolds) 0f else p
+            //
+            // Which panel the collapse is for is remembered, not read off the
+            // panels' own progress: the queue and the in-player lyrics finish
+            // their slide out a frame or two before the sleeve finishes coming
+            // back, and judging by their progress, those last frames looked like
+            // the way back from the lyrics page and folded the controls for a
+            // moment, a small jump under the scrubber on every close.
+            val foldingForLyricsPage = remember { mutableStateOf(false) }
+            if (lyricsMode && !foldingForLyricsPage.value) foldingForLyricsPage.value = true
+            if ((queueOpen || inPlayerLyrics) && foldingForLyricsPage.value) foldingForLyricsPage.value = false
+            val rowFolds = lyricsMode || (p > 0f && foldingForLyricsPage.value)
+            // 0 → 1 as the queue opens. Only the queue tightens the controls:
+            // the beta in-player lyrics leave every one of them where it was.
+            val queueCompact = if (rowFolds || betaLayout) 0f else queueProgress.coerceIn(0f, 1f)
             val racingLossless by NerdStats.racingLossless.collectAsStateWithLifecycle()
             val stillRacing = song.videoId in racingLossless
             Box(
@@ -3148,7 +3257,15 @@ fun NowPlayingScreen(
                         // which sit close enough together to read as one. Both of its own
                         // gaps take half the spread, so on a tall screen it holds the
                         // centre rather than drifting up under the seek bar.
-                        Spacer(Modifier.height(lerp(14.dp + controlSpread / 2, QUEUE_TRANSPORT_GAP, queueCompact)))
+                        Spacer(
+                            Modifier.height(
+                                lerp(
+                                    if (betaLayout) TRANSPORT_GAP_NO_VOLUME + BETA_TRANSPORT_EXTRA else 14.dp + controlSpread / 2,
+                                    QUEUE_TRANSPORT_GAP,
+                                    queueCompact,
+                                ),
+                            ),
+                        )
 
             // ---- Transport ----
             // With the queue open it stays, moved down to sit midway between
@@ -3244,7 +3361,12 @@ fun NowPlayingScreen(
                         }
                     },
             ) {
-            if (hideVolumeBar) {
+            if (betaLayout) {
+                // No volume bar in the beta layout. The transport sits midway
+                // between the scrubber and the toggle row: the timestamps' lift
+                // leaves that much more above it.
+                Spacer(Modifier.height(TRANSPORT_GAP_NO_VOLUME + TIMESTAMP_LIFT + BETA_TRANSPORT_EXTRA))
+            } else if (hideVolumeBar) {
                 Spacer(Modifier.height(24.dp + controlSpread / 2))
             } else {
                 Spacer(Modifier.height(18.dp + controlSpread / 2))
@@ -3436,9 +3558,12 @@ fun NowPlayingScreen(
                 ) {
                     // With the transport folded away, keep the row off the timestamps.
                     // Matches the gap above the transport, so it sits midway.
-                    if (!rowFolds) Spacer(Modifier.height(QUEUE_TRANSPORT_GAP * p))
+                    if (!rowFolds) Spacer(Modifier.height(QUEUE_TRANSPORT_GAP * queueCompact))
                     if (segments.isNotEmpty()) {
-                        PlayerToggleGroup(segments)
+                        PlayerToggleGroup(
+                            segments,
+                            inverted = betaLayout,
+                        )
                         Spacer(Modifier.height(18.dp))
                     }
                 }
@@ -5098,6 +5223,16 @@ private fun CircleGlyph(
  */
 private val QUEUE_TRANSPORT_GAP = 8.dp
 
+/** Gap above the transport, and (plus the timestamps' lift) below it, with no volume bar. */
+private val TRANSPORT_GAP_NO_VOLUME = 18.dp
+
+/**
+ * How far the expanded sleeve may reach past the player's side gutter on each
+ * side. The rest of the player keeps the full gutter; the artwork alone gets a
+ * little wider, and still keeps a comfortable margin to the screen edge.
+ */
+private val ART_GUTTER_REACH = 10.dp
+
 /** How far the timestamps are pulled up under the scrubber's touch target. */
 private val TIMESTAMP_LIFT = 9.dp
 
@@ -5213,6 +5348,10 @@ private val SEGMENT_GAP = 3.dp
 /** Same wash as the title row's [CircleGlyph], so the two read as one material. */
 private const val SEGMENT_FILL = 0.18f
 private const val SEGMENT_FILL_ON = 0.40f
+/** Beta: the translucent white capsule behind a segment that is on. */
+private const val SEGMENT_FILL_INVERTED = 0.70f
+/** Beta: the row's glyphs, a size up now that nothing sits behind them at rest. */
+private val SEGMENT_GLYPH_BETA = 26.dp
 private val SegmentEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 /**
@@ -5221,7 +5360,17 @@ private val SegmentEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
  * into a capsule and its wash deepens; pressing any segment squeezes it.
  */
 @Composable
-private fun PlayerToggleGroup(segments: List<ToggleSegment>) {
+private fun PlayerToggleGroup(
+    segments: List<ToggleSegment>,
+    /**
+     * Beta: no backing at rest, just the glyphs. A segment that turns on gets a
+     * translucent white capsule with its glyph cut out of it, so what was behind
+     * the glyph now shows through it. Neighbours that are on together read as
+     * one connected group: rounded only at the run's two ends.
+     */
+    inverted: Boolean = false,
+) {
+    val ons = segments.map { it.selected && it.enabled }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(SEGMENT_GAP),
@@ -5233,6 +5382,9 @@ private fun PlayerToggleGroup(segments: List<ToggleSegment>) {
                     segment = segment,
                     first = index == 0,
                     last = index == segments.lastIndex,
+                    inverted = inverted,
+                    prevOn = ons.getOrElse(index - 1) { false },
+                    nextOn = ons.getOrElse(index + 1) { false },
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -5245,6 +5397,9 @@ private fun PlayerToggleSegment(
     segment: ToggleSegment,
     first: Boolean,
     last: Boolean,
+    inverted: Boolean = false,
+    prevOn: Boolean = false,
+    nextOn: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
@@ -5257,19 +5412,38 @@ private fun PlayerToggleSegment(
     val round = SEGMENT_HEIGHT / 2
     val shapeSpec = tween<Dp>(durationMillis = 600, easing = SegmentEasing)
     val startCorner by animateDpAsState(
-        targetValue = if (on || first) round else SEGMENT_INNER_CORNER,
+        targetValue = when {
+            inverted -> if (on && prevOn) SEGMENT_INNER_CORNER else round
+            on || first -> round
+            else -> SEGMENT_INNER_CORNER
+        },
         animationSpec = shapeSpec,
         label = "segmentStart",
     )
     val endCorner by animateDpAsState(
-        targetValue = if (on || last) round else SEGMENT_INNER_CORNER,
+        targetValue = when {
+            inverted -> if (on && nextOn) SEGMENT_INNER_CORNER else round
+            on || last -> round
+            else -> SEGMENT_INNER_CORNER
+        },
         animationSpec = shapeSpec,
         label = "segmentEnd",
     )
     val fill by animateFloatAsState(
-        targetValue = if (on) SEGMENT_FILL_ON else SEGMENT_FILL,
+        targetValue = when {
+            inverted -> if (on) SEGMENT_FILL_INVERTED else 0f
+            on -> SEGMENT_FILL_ON
+            else -> SEGMENT_FILL
+        },
         animationSpec = tween(durationMillis = 350, easing = SegmentEasing),
         label = "segmentFill",
+    )
+    // Beta: how far the glyph has turned from white ink into a hole in the
+    // capsule behind it.
+    val cutOut by animateFloatAsState(
+        targetValue = if (inverted && on) 1f else 0f,
+        animationSpec = tween(durationMillis = 350, easing = SegmentEasing),
+        label = "segmentCutOut",
     )
     val squeeze by animateFloatAsState(
         targetValue = if (pressed) 0.9f else 1f,
@@ -5313,6 +5487,8 @@ private fun PlayerToggleSegment(
             .graphicsLayer {
                 scaleX = squeeze
                 scaleY = squeeze
+                // The capsule and the glyph cut out of it share one layer.
+                if (inverted) compositingStrategy = CompositingStrategy.Offscreen
             }
             .clip(shape)
             .background(Color.White.copy(alpha = fill))
@@ -5334,18 +5510,34 @@ private fun PlayerToggleSegment(
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = segment.icon,
-            contentDescription = null,
-            tint = Color.White.copy(alpha = if (segment.enabled) 1f else 0.30f),
-            modifier = Modifier
-                .size(22.dp)
-                .graphicsLayer {
-                    rotationZ = glyphTurn.value
-                    scaleX = glyphScale.value
-                    scaleY = glyphScale.value
-                },
-        )
+        val glyphSize = if (inverted) SEGMENT_GLYPH_BETA else 22.dp
+        val glyphMotion: GraphicsLayerScope.() -> Unit = {
+            rotationZ = glyphTurn.value
+            scaleX = glyphScale.value
+            scaleY = glyphScale.value
+        }
+        if (cutOut < 1f) {
+            Icon(
+                imageVector = segment.icon,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = if (segment.enabled) 1f - cutOut else 0.30f),
+                modifier = Modifier.size(glyphSize).graphicsLayer(glyphMotion),
+            )
+        }
+        if (cutOut > 0f) {
+            // Drawn as an eraser: wherever the glyph is, the capsule is not.
+            Icon(
+                imageVector = segment.icon,
+                contentDescription = null,
+                tint = Color.Black.copy(alpha = cutOut),
+                modifier = Modifier
+                    .size(glyphSize)
+                    .graphicsLayer {
+                        glyphMotion()
+                        blendMode = BlendMode.DstOut
+                    },
+            )
+        }
     }
 }
 
@@ -5430,13 +5622,22 @@ private fun MarqueeText(
             leading()
             Spacer(Modifier.width(6.dp))
         }
-        BoxWithConstraints(Modifier.weight(1f, fill = false).clipToBounds()) {
+        val offsetX = remember { Animatable(0f) }
+        var scrolls by remember { mutableStateOf(false) }
+        BoxWithConstraints(
+            Modifier
+                .weight(1f, fill = false)
+                .clipToBounds()
+                .marqueeFade(enabled = scrolls, offset = { offsetX.value }),
+        ) {
             val maxWidthPx = constraints.maxWidth
             val layout = remember(text, style, maxWidthPx) {
                 textMeasurer.measure(text = text, style = style, maxLines = 1, softWrap = false)
             }
             val overflowing = layout.size.width > maxWidthPx
             LaunchedEffect(overflowing) { onOverflowChange(overflowing) }
+            // Soft edges whenever the line is too long, moving or not.
+            SideEffect { scrolls = overflowing }
 
             // One whole copy plus the gap behind it: that is the distance at
             // which the second copy is sitting exactly where the first was.
@@ -5446,7 +5647,6 @@ private fun MarqueeText(
                 0
             }
 
-            val offsetX = remember { Animatable(0f) }
             LaunchedEffect(enabled, text, travelPx, startDelayMillis) {
                 offsetX.snapTo(0f)
                 if (!enabled || travelPx <= 0) return@LaunchedEffect
@@ -5482,6 +5682,40 @@ private fun MarqueeText(
         }
     }
 }
+
+/**
+ * Fades a scrolling line out at its edges instead of cutting it off. The right
+ * edge is always soft while the line can scroll; the left one grows in as the
+ * line starts to move, so text at rest starts crisp at its margin.
+ */
+private fun Modifier.marqueeFade(enabled: Boolean, offset: () -> Float): Modifier =
+    if (!enabled) this else this
+        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+        .drawWithContent {
+            drawContent()
+            val fade = MARQUEE_EDGE_FADE.toPx().coerceAtMost(size.width / 4f)
+            val left = (-offset()).coerceIn(0f, fade)
+            if (left > 0.5f) {
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(Color.Transparent, Color.Black),
+                        startX = 0f,
+                        endX = left,
+                    ),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(Color.Black, Color.Transparent),
+                    startX = size.width - fade,
+                    endX = size.width,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+
+private val MARQUEE_EDGE_FADE = 20.dp
 
 /** One copy of a marquee's line, laid out at its full width rather than clipped. */
 @Composable
