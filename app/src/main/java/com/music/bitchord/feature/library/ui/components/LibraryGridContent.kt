@@ -46,6 +46,8 @@ fun LibraryGridContent(
     header: @Composable () -> Unit = {},
 ) {
     val gridCols = rememberGridColumns(GridKind.LIBRARY)
+    val gridSpacing = com.music.bitchord.ui.components.gridSpacingFor(gridCols)
+    androidx.compose.runtime.CompositionLocalProvider(com.music.bitchord.ui.components.LocalGridSpacing provides gridSpacing) {
     LazyVerticalGrid(
         columns = ScaledGridCells(gridCols),
         state = state,
@@ -56,8 +58,8 @@ fun LibraryGridContent(
             top = contentPadding.calculateTopPadding(),
             bottom = contentPadding.calculateBottomPadding() + 80.dp,
         ),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(gridSpacing.horizontal),
+        verticalArrangement = Arrangement.spacedBy(gridSpacing.vertical),
     ) {
         item(key = "library_header", span = { GridItemSpan(maxLineSpan) }) {
             // Undo the grid's side padding so the header lines up with the list layout.
@@ -117,5 +119,6 @@ fun LibraryGridContent(
                 )
             }
         }
+    }
     }
 }

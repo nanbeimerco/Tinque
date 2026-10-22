@@ -129,6 +129,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.SideEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -274,6 +275,7 @@ import com.music.bitchord.feature.localsongactions.ui.LocalSongActionsHelper
 import com.music.bitchord.feature.localsongactions.ui.components.LocalAddToPlaylistSheet
 import com.music.bitchord.feature.localsongactions.ui.components.LocalArtistPickerSheet
 import com.music.bitchord.feature.localsongactions.ui.components.LocalSongActionsSheet
+import com.music.bitchord.feature.localsongactions.ui.components.PlayerActionsMenu
 import com.music.bitchord.feature.localsongactions.ui.components.LocalSongDetailsSheet
 import com.music.bitchord.feature.localsongactions.ui.components.AudioCutterSheet
 import com.music.bitchord.feature.tageditor.ui.TagEditorScreen
@@ -392,7 +394,32 @@ class MainActivity : AppCompatActivity() {
                 val appBackdrop = rememberLayerBackdrop(onDraw = paintBackdrop)
                 val glassMenuController = remember { GlassMenuController() }
                 val glassSheetController = remember { GlassSheetController() }
+                // Coloured glass: the playing song's artwork colour, read only
+                // while the setting is on.
+                val tintedGlass by AppSettings.tintedGlass.collectAsStateWithLifecycle()
+                val glassArtColor = if (tintedGlass && liquidGlassEnabled && player.song != null) {
+                    val read = rememberArtworkPalette(player.song?.artworkAt(PLAYER_ART_PX), dark = darkTheme).glass
+                    // Held while the next sleeve is being read, so the glass
+                    // fades from one song's colour to the next rather than
+                    // dropping to grey in between.
+                    var held by remember { mutableStateOf(androidx.compose.ui.graphics.Color.Unspecified) }
+                    if (read != androidx.compose.ui.graphics.Color.Unspecified && read != held) {
+                        SideEffect { held = read }
+                    }
+                    if (held == androidx.compose.ui.graphics.Color.Unspecified) {
+                        androidx.compose.ui.graphics.Color.Unspecified
+                    } else {
+                        androidx.compose.animation.animateColorAsState(
+                            targetValue = held,
+                            animationSpec = androidx.compose.animation.core.tween(600),
+                            label = "glassArtColor",
+                        ).value
+                    }
+                } else {
+                    androidx.compose.ui.graphics.Color.Unspecified
+                }
                 CompositionLocalProvider(
+                    com.music.bitchord.ui.components.LocalGlassArtColor provides glassArtColor,
                     LocalOverscrollFactory provides iosOverscrollFactory,
                     LocalLiquidGlassEnabled provides liquidGlassEnabled,
                     LocalAppBackdrop provides appBackdrop,
@@ -648,6 +675,10 @@ private fun BitChordApp(
      * question has to be answered by whoever opened the menu.
      */
     var menuFromPlayer by remember { mutableStateOf(false) }
+    // The player's ⋯ menu is a glass popup on the player's own glass host,
+    // opened by the button (see PlayerActionsMenu).
+    val playerGlassMenus = remember { com.music.bitchord.ui.components.GlassMenuController() }
+    var playerMenuAnchor by remember { mutableStateOf(androidx.compose.ui.geometry.Rect.Zero) }
     var pendingPlayerQuickAction by remember { mutableStateOf<PlayerQuickAction?>(null) }
     LaunchedEffect(songActions) {
         if (songActions == null) pendingPlayerQuickAction = null
@@ -1733,8 +1764,10 @@ private fun BitChordApp(
             ?.takeIf { (videoId, _) -> song.radioName == null && videoId == song.videoId }
             ?.let { (_, name) -> song.copy(radioName = name) }
             ?: song
+        com.music.bitchord.ui.components.GlassWindowScope(menus = playerGlassMenus) {
         NowPlayingScreen(
             song = displayedSong,
+            onMenuAnchor = { playerMenuAnchor = it },
             playerHaze = playerHazeState,
             windowWidth = windowWidth,
             isPlaying = player.isPlaying,
@@ -1937,7 +1970,7 @@ private fun BitChordApp(
                 if (albumName.isNotBlank()) {
                     openLocalAlbum(albumName, song.thumbnailUrl)
                 } else {
-                    Toast.makeText(context, "No album information", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(R.string.no_album_information), Toast.LENGTH_SHORT).show()
                 }
             },
             onOpenArtist = { _ ->
@@ -1950,7 +1983,7 @@ private fun BitChordApp(
                     if (artistName.isNotBlank()) {
                         openLocalArtist(artistName, null)
                     } else {
-                        Toast.makeText(context, "No artist information", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, context.getString(R.string.no_artist_information), Toast.LENGTH_SHORT).show()
                     }
                 }
             },
@@ -1967,6 +2000,7 @@ private fun BitChordApp(
                 }
             },
         )
+        }
     }
 
     Box(
@@ -2929,6 +2963,10 @@ private fun BitChordApp(
         // ---- Now Playing ----
         // Raised using PlayerSheetMotion and PlayerDock for smooth BitChord sleeve docking
         val playerRaised = !playerDocked && showNowPlaying && playerSong != null
+        // However the player went away, its menu goes with it.
+        LaunchedEffect(playerRaised, playerDocked) {
+            if (!playerRaised && !playerDocked && menuFromPlayer) songActions = null
+        }
         if (playerRaised) {
             val sheetDensity = LocalDensity.current
             val confirmSheetValue: (SheetValue) -> Boolean = { value ->
@@ -2953,6 +2991,16 @@ private fun BitChordApp(
                     initialValue = if (playerSheetMotion.holding) SheetValue.Expanded else SheetValue.Hidden,
                     confirmValueChange = confirmSheetValue,
                 )
+            }
+            // The player's ⋯ popup belongs to the player: it goes as soon as the
+            // sheet starts down, rather than being left open (with the tap
+            // catcher that closes it) to greet the next opening.
+            LaunchedEffect(nowPlayingSheetState) {
+                val threshold = with(sheetDensity) { 24.dp.toPx() }
+                snapshotFlow { runCatching { nowPlayingSheetState.requireOffset() }.getOrDefault(0f) }
+                    .collect { offset ->
+                        if (offset > threshold && menuFromPlayer && songActions != null) songActions = null
+                    }
             }
             DisposableEffect(nowPlayingSheetState) {
                 playerSheetMotion.sheet = nowPlayingSheetState
@@ -3253,67 +3301,142 @@ private fun BitChordApp(
                     },
                 )
             } else {
-                LocalSongActionsSheet(
-                    song = song,
-                    onDismissRequest = { songActions = null },
-                    onGoToAlbum = {
-                        songActions = null
-                        showNowPlaying = false
-                        val albumName = song.albumName?.trim().orEmpty()
-                        if (albumName.isNotBlank()) {
-                            openLocalAlbum(albumName, song.thumbnailUrl)
-                        } else {
-                            Toast.makeText(context, "No album information", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    onGoToArtist = {
-                        val artists = com.music.bitchord.feature.artistimage.util.ArtistSplitter.split(song.artist)
-                        if (artists.size > 1) {
-                            showArtistPicker = true
-                        } else {
+                if (menuFromPlayer) {
+                    PlayerActionsMenu(
+                        controller = playerGlassMenus,
+                        anchor = playerMenuAnchor,
+                        streamed = song.localUri == null && song.localPath.isNullOrBlank(),
+                        onExplainUnavailable = { res -> Toast.makeText(context, context.getString(res), Toast.LENGTH_SHORT).show() },
+                        song = song,
+                        onDismissRequest = { songActions = null },
+                        onGoToAlbum = {
                             songActions = null
                             showNowPlaying = false
-                            val artistName = (artists.firstOrNull() ?: song.artist).trim()
-                            if (artistName.isNotBlank()) {
-                                openLocalArtist(artistName, null)
+                            val albumName = song.albumName?.trim().orEmpty()
+                            if (albumName.isNotBlank()) {
+                                openLocalAlbum(albumName, song.thumbnailUrl)
                             } else {
-                                Toast.makeText(context, "No artist information", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, context.getString(R.string.no_album_information), Toast.LENGTH_SHORT).show()
                             }
-                        }
-                    },
-                    onAddToPlaylist = {
-                        showAddToPlaylist = true
-                    },
-                    onEqualizer = {
-                        songActions = null
-                        showEqualizerSheet = true
-                    },
-                    onPlaybackTuning = {
-                        songActions = null
-                        showPlaybackTuning = true
-                    },
-                    showPlayerActions = menuFromPlayer,
-                    onCastUnavailable = {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.chromecast_unavailable),
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    },
-                    onTagEditor = {
-                        showTagEditor = true
-                    },
-                    onEditLyrics = {
-                        showLyricsEditor = true
-                    },
-                    onDetails = {
-                        showDetailsSheet = true
-                    },
-                    onShareFile = {
-                        songActions = null
-                        LocalSongActionsHelper.shareSong(context, song)
-                    },
-                )
+                        },
+                        onGoToArtist = {
+                            val artists = com.music.bitchord.feature.artistimage.util.ArtistSplitter.split(song.artist)
+                            if (artists.size > 1) {
+                                showArtistPicker = true
+                            } else {
+                                songActions = null
+                                showNowPlaying = false
+                                val artistName = (artists.firstOrNull() ?: song.artist).trim()
+                                if (artistName.isNotBlank()) {
+                                    openLocalArtist(artistName, null)
+                                } else {
+                                    Toast.makeText(context, context.getString(R.string.no_artist_information), Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        onAddToPlaylist = {
+                            if (song.localUri == null && song.localPath.isNullOrBlank()) {
+                                // A streamed song cannot join the app's playlists
+                                // (they are lists of files); signed in, it goes to
+                                // the account's YouTube Music playlists instead.
+                                songActions = null
+                                playlistTarget = song
+                            } else {
+                                showAddToPlaylist = true
+                            }
+                        },
+                        onEqualizer = {
+                            songActions = null
+                            showEqualizerSheet = true
+                        },
+                        onPlaybackTuning = {
+                            songActions = null
+                            showPlaybackTuning = true
+                        },
+                        onCastUnavailable = {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.chromecast_unavailable),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        },
+                        onTagEditor = {
+                            showTagEditor = true
+                        },
+                        onEditLyrics = {
+                            showLyricsEditor = true
+                        },
+                        onDetails = {
+                            showDetailsSheet = true
+                        },
+                        onShareFile = {
+                            songActions = null
+                            LocalSongActionsHelper.shareSong(context, song)
+                        },
+                    )
+                } else {
+                    LocalSongActionsSheet(
+                        song = song,
+                        onDismissRequest = { songActions = null },
+                        onGoToAlbum = {
+                            songActions = null
+                            showNowPlaying = false
+                            val albumName = song.albumName?.trim().orEmpty()
+                            if (albumName.isNotBlank()) {
+                                openLocalAlbum(albumName, song.thumbnailUrl)
+                            } else {
+                                Toast.makeText(context, context.getString(R.string.no_album_information), Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        onGoToArtist = {
+                            val artists = com.music.bitchord.feature.artistimage.util.ArtistSplitter.split(song.artist)
+                            if (artists.size > 1) {
+                                showArtistPicker = true
+                            } else {
+                                songActions = null
+                                showNowPlaying = false
+                                val artistName = (artists.firstOrNull() ?: song.artist).trim()
+                                if (artistName.isNotBlank()) {
+                                    openLocalArtist(artistName, null)
+                                } else {
+                                    Toast.makeText(context, context.getString(R.string.no_artist_information), Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        onAddToPlaylist = {
+                            showAddToPlaylist = true
+                        },
+                        onEqualizer = {
+                            songActions = null
+                            showEqualizerSheet = true
+                        },
+                        onPlaybackTuning = {
+                            songActions = null
+                            showPlaybackTuning = true
+                        },
+                        showPlayerActions = menuFromPlayer,
+                        onCastUnavailable = {
+                            Toast.makeText(
+                                context,
+                                context.getString(R.string.chromecast_unavailable),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        },
+                        onTagEditor = {
+                            showTagEditor = true
+                        },
+                        onEditLyrics = {
+                            showLyricsEditor = true
+                        },
+                        onDetails = {
+                            showDetailsSheet = true
+                        },
+                        onShareFile = {
+                            songActions = null
+                            LocalSongActionsHelper.shareSong(context, song)
+                        },
+                    )
+                }
             }
         }
         }

@@ -66,6 +66,21 @@
     <plurals name="song_count_plural">
         <item quantity="other">%1$d曲</item>
     </plurals>
+    <plurals name="folder_count_plural">
+        <item quantity="other">%1$dフォルダ</item>
+    </plurals>
+    <string name="mini_lyrics_tap_hint">%1$s • タップで歌詞を表示</string>
+    <string name="mini_lyrics_available">歌詞があります • タップで表示</string>
+    <string name="tinted_glass">色付きガラス</string>
+    <string name="tinted_glass_subtitle">再生中の曲のアートの色をガラスに付けます</string>
+    <string name="tinted_glass_amount">色の量</string>
+    <string name="tinted_glass_amount_subtitle">ガラスに付けるアートの色の濃さ</string>
+    <string name="streamed_song_no_playlist">YouTube Music の曲はアプリのプレイリストに入れられません。ログインすると YouTube Music のプレイリストに追加できます</string>
+    <string name="streamed_song_no_file">端末にファイルがある曲だけで使えます</string>
+    <string name="like_needs_sign_in">ログインすると YouTube Music で高く評価できます</string>
+    <string name="search_filter_all">すべて</string>
+    <string name="no_album_information">アルバムの情報がありません</string>
+    <string name="no_artist_information">アーティストの情報がありません</string>
     <plurals name="artist_count">
         <item quantity="other">%1$d組のアーティスト</item>
     </plurals>

@@ -235,11 +235,17 @@ fun GlassMenuItem(
     destructive: Boolean = false,
     keepOpen: Boolean = false,
     emphasized: Boolean = false,
+    /** Off: drawn dimmed, and a tap only calls [onDisabledClick] (to say why). */
+    enabled: Boolean = true,
+    onDisabledClick: (() -> Unit)? = null,
+    /** A short value at the row's end (the sleep timer's time left). */
+    value: String? = null,
 ) {
     val dismiss = LocalGlassMenuDismiss.current
     val haptics = rememberHaptics()
     val palette = glassPalette()
-    val color = if (destructive) palette.destructive else palette.content
+    val color = (if (destructive) palette.destructive else palette.content)
+        .let { if (enabled) it else it.copy(alpha = 0.38f) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -247,6 +253,10 @@ fun GlassMenuItem(
             .heightIn(min = 48.dp)
             .clip16()
             .clickable {
+                if (!enabled) {
+                    onDisabledClick?.invoke()
+                    return@clickable
+                }
                 haptics.play(Haptic.Select)
                 if (!keepOpen) dismiss()
                 onClick()
@@ -266,6 +276,15 @@ fun GlassMenuItem(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (value != null) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                color = palette.secondary,
+                maxLines = 1,
+            )
+        }
         if (trailingIcon != null) {
             Spacer(Modifier.width(8.dp))
             Icon(trailingIcon, contentDescription = null, tint = color.copy(alpha = 0.7f), modifier = Modifier.size(20.dp))

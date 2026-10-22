@@ -21,10 +21,13 @@ object EnhancedLrc {
         val rows = lrc.lineSequence()
             .mapNotNull { line -> LINE.matchEntire(line.trim()) }
             .map { match ->
+                // A leading `v1:` / `bg:` says who sings the line, see [VoiceTags].
+                val (voice, body) = VoiceTags.split(match.groupValues[4])
                 Row(
                     timeMs = stamp(match.groupValues[1], match.groupValues[2], match.groupValues[3]),
-                    words = WORD.findAll(match.groupValues[4]).toList(),
-                    plain = match.groupValues[4].trim(),
+                    words = WORD.findAll(body).toList(),
+                    plain = body.trim(),
+                    voice = voice,
                 )
             }
             .sortedBy { it.timeMs }
@@ -33,15 +36,17 @@ object EnhancedLrc {
         // caller is better served parsing it as one.
         if (rows.none { it.words.isNotEmpty() }) return emptyList()
 
-        return rows.mapIndexedNotNull { index, row ->
+        val voiced = rows.mapIndexedNotNull { index, row ->
             if (row.words.isEmpty()) {
                 val text = decodeEntities(row.plain)
-                return@mapIndexedNotNull if (text.isEmpty()) null else LyricLine(row.timeMs, text)
+                return@mapIndexedNotNull if (text.isEmpty()) null else row.voice to LyricLine(row.timeMs, text)
             }
             // A word runs until the next one starts; the last runs until the
             // next line does. Without a next line — the closing word of the
             // song — give it a beat rather than zero, or its sweep never runs.
-            val lineEnd = rows.getOrNull(index + 1)?.timeMs
+            // A backing line (`bg:`) sings over this one, so it is not where
+            // this one stops: the next lead line is.
+            val lineEnd = rows.drop(index + 1).firstOrNull { it.voice != "bg" }?.timeMs
                 ?: (stamp(row.words.last()) + TAIL_MS)
 
             // Kept as written, spacing and all: a run with no space after it
@@ -53,15 +58,16 @@ object EnhancedLrc {
             }
             val words = wordsFromRuns(runs)
             if (words.isEmpty()) return@mapIndexedNotNull null
-            LyricLine(
+            row.voice to LyricLine(
                 timeMs = minOf(row.timeMs, words.first().startMs),
                 text = words.joinToString(" ") { it.text },
                 words = words,
             )
-        }.withInstrumentalGaps()
+        }
+        return VoiceTags.apply(voiced.map { it.second }, voiced.map { it.first }).withInstrumentalGaps()
     }
 
-    private class Row(val timeMs: Long, val words: List<MatchResult>, val plain: String)
+    private class Row(val timeMs: Long, val words: List<MatchResult>, val plain: String, val voice: String?)
 
     private fun stamp(match: MatchResult): Long =
         stamp(match.groupValues[1], match.groupValues[2], match.groupValues[3])

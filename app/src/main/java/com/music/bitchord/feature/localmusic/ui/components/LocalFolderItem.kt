@@ -109,12 +109,12 @@ fun LocalFolderItem(
                     } else {
                         MaterialTheme.colorScheme.onSurface
                     },
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
 
                 Text(
-                    text = "${folder.songCount} ${if (folder.songCount == 1) "track" else "tracks"} • ${folder.path}",
+                    text = androidx.compose.ui.res.pluralStringResource(com.music.bitchord.R.plurals.song_count_plural, folder.songCount, folder.songCount) + " • ${folder.path}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                     maxLines = 1,

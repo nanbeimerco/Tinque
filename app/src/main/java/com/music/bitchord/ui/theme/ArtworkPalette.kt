@@ -65,6 +65,12 @@ data class ArtworkPalette(
     val onBackground: Color,
     val onBackgroundVariant: Color,
     val divider: Color,
+    /**
+     * The tint for coloured glass: what the sleeve is mostly made of, a little
+     * more vivid, at a middle lightness so it reads on dark and light glass
+     * alike. Unspecified until the artwork has been read.
+     */
+    val glass: Color = Color.Unspecified,
 )
 
 /**
@@ -148,6 +154,9 @@ fun rememberArtworkPalette(
             target.onBackgroundVariant, spec, label = "tintOnVariant",
         ).value,
         divider = animateColorAsState(target.divider, spec, label = "tintDivider").value,
+        // Not animated here: the glass keeps the last song's colour while the
+        // next sleeve is read and fades across itself (see MainActivity).
+        glass = target.glass,
     )
 }
 
@@ -263,7 +272,16 @@ private fun Bitmap.bottomEdgeColor(): Color {
 /** How much of the artwork's height the edge colour is read from. */
 private const val EDGE_BAND = 0.18f
 
-private fun Seed.toPalette(dark: Boolean): ArtworkPalette = if (dark) {
+private fun Seed.toPalette(dark: Boolean): ArtworkPalette = toThemePalette(dark).copy(
+    // The dominant colour rather than the vibrant one: a small bright patch of
+    // the sleeve spread over every glass surface reads far louder than it is.
+    glass = dominant.withHsl(
+        saturation = { (it * 1.25f).coerceAtMost(0.85f) },
+        lightness = { it.coerceIn(0.35f, 0.60f) },
+    ),
+)
+
+private fun Seed.toThemePalette(dark: Boolean): ArtworkPalette = if (dark) {
     val accent = vibrant ?: Color(0xFFE0E0E0)
     ArtworkPalette(
         // Deep enough that white body text clears contrast on any sleeve, but

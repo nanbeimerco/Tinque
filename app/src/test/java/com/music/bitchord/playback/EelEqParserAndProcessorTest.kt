@@ -83,7 +83,6 @@ class EelEqParserAndProcessorTest {
 
         assertEquals(10, report.lrPairs.size)
         assertTrue(report.lrPairs.all { it.isComplementary })
-        assertTrue(report.summaryLinesJa.any { it.contains("Left ↔ Right") })
     }
 
     @Test

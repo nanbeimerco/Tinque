@@ -582,7 +582,7 @@ fun LocalSearchScreen(
                     if (selectedFilter == LocalSearchFilter.ALL) {
                         if (matchedArtists.isNotEmpty()) {
                             item(key = "section:artists") {
-                                SearchSectionHeader(title = "Artists", count = matchedArtists.size)
+                                SearchSectionHeader(title = androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.artists), count = matchedArtists.size)
                             }
                             items(matchedArtists, key = { "artist:${it.name}" }) { artist ->
                                 LocalSearchResultRow(
@@ -617,7 +617,7 @@ fun LocalSearchScreen(
 
                         if (matchedAlbums.isNotEmpty()) {
                             item(key = "section:albums") {
-                                SearchSectionHeader(title = "Albums", count = matchedAlbums.size)
+                                SearchSectionHeader(title = androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.albums), count = matchedAlbums.size)
                             }
                             items(matchedAlbums, key = { "album:${it.title}:${it.artist}" }) { album ->
                                 LocalSearchResultRow(
@@ -652,7 +652,7 @@ fun LocalSearchScreen(
 
                         if (matchedTracks.isNotEmpty()) {
                             item(key = "section:songs") {
-                                SearchSectionHeader(title = "Songs", count = matchedTracks.size)
+                                SearchSectionHeader(title = androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.songs), count = matchedTracks.size)
                             }
                             items(matchedTracks, key = { "song:${it.song.videoId}" }) { track ->
                                 LocalSearchResultRow(
@@ -689,7 +689,7 @@ fun LocalSearchScreen(
 
                         if (matchedFolders.isNotEmpty()) {
                             item(key = "section:folders") {
-                                SearchSectionHeader(title = "Folders", count = matchedFolders.size)
+                                SearchSectionHeader(title = androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.folders), count = matchedFolders.size)
                             }
                             items(matchedFolders, key = { "folder:${it.path}" }) { folder ->
                                 LocalSearchResultRow(

@@ -124,7 +124,7 @@ fun LibraryFavoritesCard(
             Spacer(modifier = Modifier.height(2.dp))
 
             Text(
-                text = "$songCount ${if (songCount == 1) "song" else "songs"}",
+                text = androidx.compose.ui.res.pluralStringResource(com.music.bitchord.R.plurals.song_count_plural, songCount, songCount),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,

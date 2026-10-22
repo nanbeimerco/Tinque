@@ -1235,6 +1235,8 @@ private fun SongsTab(
         val gridState = rememberLazyGridState()
         Box(modifier = Modifier.fillMaxSize()) {
             val gridCols = rememberGridColumns(GridKind.SONGS)
+            val gridSpacing = com.music.bitchord.ui.components.gridSpacingFor(gridCols)
+            androidx.compose.runtime.CompositionLocalProvider(com.music.bitchord.ui.components.LocalGridSpacing provides gridSpacing) {
             LazyVerticalGrid(
                 columns = ScaledGridCells(gridCols),
                 state = gridState,
@@ -1245,8 +1247,8 @@ private fun SongsTab(
                     top = contentPadding.calculateTopPadding() + 6.dp,
                     bottom = contentPadding.calculateBottomPadding() + 8.dp,
                 ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(gridSpacing.horizontal),
+                verticalArrangement = Arrangement.spacedBy(gridSpacing.vertical),
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     LogoThenHeader(showLogo, contentPadding.calculateTopPadding() + 6.dp, horizontalInset = PAGE_GUTTER) {
@@ -1275,6 +1277,7 @@ private fun SongsTab(
                         onLongPress = { onSongLongPress(song) },
                     )
                 }
+            }
             }
             FastScroller(
                 gridState = gridState,
@@ -1363,6 +1366,8 @@ private fun ArtistsTab(
         val gridState = rememberLazyGridState()
         Box(modifier = Modifier.fillMaxSize()) {
             val gridCols = rememberGridColumns(GridKind.ARTISTS)
+            val gridSpacing = com.music.bitchord.ui.components.gridSpacingFor(gridCols)
+            androidx.compose.runtime.CompositionLocalProvider(com.music.bitchord.ui.components.LocalGridSpacing provides gridSpacing) {
             LazyVerticalGrid(
                 columns = ScaledGridCells(gridCols),
                 state = gridState,
@@ -1373,8 +1378,8 @@ private fun ArtistsTab(
                     top = contentPadding.calculateTopPadding() + 6.dp,
                     bottom = contentPadding.calculateBottomPadding() + 8.dp,
                 ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(gridSpacing.horizontal),
+                verticalArrangement = Arrangement.spacedBy(gridSpacing.vertical),
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     LogoThenHeader(showLogo, contentPadding.calculateTopPadding() + 6.dp, horizontalInset = PAGE_GUTTER) {
@@ -1404,6 +1409,7 @@ private fun ArtistsTab(
                         onLongPress = onArtistLongPress?.let { { it(entry.name, entry.songs) } },
                     )
                 }
+            }
             }
             FastScroller(
                 gridState = gridState,
@@ -1561,9 +1567,9 @@ private fun ArtistGridCard(
     Column(
         modifier = modifier
             .then(cardCompact.measure)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(com.music.bitchord.ui.components.LocalGridSpacing.current.corner))
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
-            .padding(4.dp),
+            .padding(com.music.bitchord.ui.components.LocalGridSpacing.current.cardPadding),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
@@ -1718,6 +1724,8 @@ private fun AlbumsTab(
         val gridState = rememberLazyGridState()
         Box(modifier = Modifier.fillMaxSize()) {
             val gridCols = rememberGridColumns(GridKind.ALBUMS)
+            val gridSpacing = com.music.bitchord.ui.components.gridSpacingFor(gridCols)
+            androidx.compose.runtime.CompositionLocalProvider(com.music.bitchord.ui.components.LocalGridSpacing provides gridSpacing) {
             LazyVerticalGrid(
                 columns = ScaledGridCells(gridCols),
                 state = gridState,
@@ -1728,8 +1736,8 @@ private fun AlbumsTab(
                     top = contentPadding.calculateTopPadding() + 6.dp,
                     bottom = contentPadding.calculateBottomPadding() + 8.dp,
                 ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(gridSpacing.horizontal),
+                verticalArrangement = Arrangement.spacedBy(gridSpacing.vertical),
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     LogoThenHeader(showLogo, contentPadding.calculateTopPadding() + 6.dp, horizontalInset = PAGE_GUTTER) {
@@ -1765,6 +1773,7 @@ private fun AlbumsTab(
                         onLongPress = onAlbumLongPress?.let { { it(entry) } },
                     )
                 }
+            }
             }
             FastScroller(
                 gridState = gridState,
@@ -1843,13 +1852,13 @@ private fun AlbumGridCard(
     Column(
         modifier = modifier
             .then(cardCompact.measure)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(com.music.bitchord.ui.components.LocalGridSpacing.current.corner))
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
-            .padding(4.dp),
+            .padding(com.music.bitchord.ui.components.LocalGridSpacing.current.cardPadding),
     ) {
         val selectionActive = com.music.bitchord.ui.components.LocalSongSelection.current?.active == true
         val artScale = com.music.bitchord.ui.components.selectionArtScale(selected)
-        val shape = RoundedCornerShape(com.music.bitchord.ui.components.selectionArtCorner(selected, 16.dp))
+        val shape = RoundedCornerShape(com.music.bitchord.ui.components.selectionArtCorner(selected, com.music.bitchord.ui.components.LocalGridSpacing.current.corner))
         Box(
             modifier = Modifier
                 .fillMaxWidth()

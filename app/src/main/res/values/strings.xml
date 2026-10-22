@@ -74,6 +74,22 @@
         <item quantity="one">%1$d track</item>
         <item quantity="other">%1$d tracks</item>
     </plurals>
+    <plurals name="folder_count_plural">
+        <item quantity="one">%1$d folder</item>
+        <item quantity="other">%1$d folders</item>
+    </plurals>
+    <string name="mini_lyrics_tap_hint">%1$s • Tap for lyrics</string>
+    <string name="mini_lyrics_available">Lyrics available • Tap to view</string>
+    <string name="tinted_glass">Coloured glass</string>
+    <string name="tinted_glass_subtitle">Tint the glass with the playing song\'s artwork colour</string>
+    <string name="tinted_glass_amount">Colour amount</string>
+    <string name="tinted_glass_amount_subtitle">How strongly the artwork colour shows on the glass</string>
+    <string name="streamed_song_no_playlist">YouTube Music songs can\'t go into the app\'s playlists. Sign in to add them to your YouTube Music playlists</string>
+    <string name="streamed_song_no_file">This needs the song\'s file on the device</string>
+    <string name="like_needs_sign_in">Sign in to like songs on YouTube Music</string>
+    <string name="search_filter_all">All</string>
+    <string name="no_album_information">No album information</string>
+    <string name="no_artist_information">No artist information</string>
     <plurals name="artist_count">
         <item quantity="one">%1$d artist</item>
         <item quantity="other">%1$d artists</item>

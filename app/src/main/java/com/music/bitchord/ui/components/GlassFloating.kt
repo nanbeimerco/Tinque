@@ -323,8 +323,12 @@ fun GlassDropdownMenu(
  * as glass there too. The content is only recorded while one is open.
  */
 @Composable
-fun GlassWindowScope(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    val menus = remember { GlassMenuController() }
+fun GlassWindowScope(
+    modifier: Modifier = Modifier,
+    /** The menu host's controller, when the caller opens menus here from outside. */
+    menus: GlassMenuController = remember { GlassMenuController() },
+    content: @Composable () -> Unit,
+) {
     val sheets = remember { GlassSheetController() }
     val windowBackground = MaterialTheme.colorScheme.background
     val paint: ContentDrawScope.() -> Unit = remember(windowBackground) {

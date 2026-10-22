@@ -123,12 +123,12 @@ fun LocalPlaylistItem(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
 
                 Text(
-                    text = "${playlist.songIds.size} ${if (playlist.songIds.size == 1) "track" else "tracks"}",
+                    text = androidx.compose.ui.res.pluralStringResource(com.music.bitchord.R.plurals.song_count_plural, playlist.songIds.size, playlist.songIds.size),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

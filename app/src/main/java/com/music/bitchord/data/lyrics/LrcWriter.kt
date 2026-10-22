@@ -74,7 +74,13 @@ internal const val WORD_LYRICS_FIELD = "BITCHORD_LYRICS"
 internal fun List<LyricLine>.toEnhancedLrc(): String {
     if (isEmpty()) return ""
     if (none { it.isWordSynced || it.background?.isWordSynced == true }) return ""
-    return sortedBy { it.timeMs }.joinToString("\n") { line -> stamp(line.timeMs) + line.enhancedBody() }
+    // A duet's sides go into this field as `v1:` / `v2:` marks (see VoiceTags),
+    // so a downloaded duet reads back with its voices on their sides. Only
+    // here: the plain field is read by other players, which would show them.
+    val duet = any { it.alignment == LyricAlignment.End }
+    return sortedBy { it.timeMs }.joinToString("\n") { line ->
+        stamp(line.timeMs) + VoiceTags.markFor(line.alignment, duet) + line.enhancedBody()
+    }
 }
 
 /**

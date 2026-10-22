@@ -34,7 +34,13 @@ fun LocalSearchFilterChips(
                 onClick = { onFilterSelect(filter) },
                 label = {
                     Text(
-                        text = filter.label,
+                        text = when (filter) {
+                            LocalSearchFilter.ALL -> androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.search_filter_all)
+                            LocalSearchFilter.SONGS -> androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.songs)
+                            LocalSearchFilter.ALBUMS -> androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.albums)
+                            LocalSearchFilter.ARTISTS -> androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.artists)
+                            LocalSearchFilter.FOLDERS -> androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.folders)
+                        },
                         style = MaterialTheme.typography.labelLarge,
                     )
                 },

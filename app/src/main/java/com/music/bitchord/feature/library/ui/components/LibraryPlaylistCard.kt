@@ -141,13 +141,13 @@ fun LibraryPlaylistCard(
                         text = playlist.name,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "${playlist.songIds.size} ${if (playlist.songIds.size == 1) "song" else "songs"}",
+                        text = androidx.compose.ui.res.pluralStringResource(com.music.bitchord.R.plurals.song_count_plural, playlist.songIds.size, playlist.songIds.size),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

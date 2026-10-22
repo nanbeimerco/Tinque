@@ -549,6 +549,10 @@ object AppSettings {
     val glassClarity = MutableStateFlow(DEFAULT_GLASS_CLARITY)
     /** Mornye glass only: how much of Mornye's dark underlay to keep (1 = as Mornye). */
     val glassShade = MutableStateFlow(DEFAULT_GLASS_SHADE)
+    /** Coloured glass: the playing song's artwork colour laid over every glass surface. */
+    val tintedGlass = MutableStateFlow(false)
+    /** How much of that colour, 0..[MAX_TINTED_GLASS_AMOUNT]. */
+    val tintedGlassAmount = MutableStateFlow(DEFAULT_TINTED_GLASS_AMOUNT)
 
     /** Pill motion animation speed and fluid styling preset. */
     val pillMotionStyle = MutableStateFlow(PillMotionStyle.DEFAULT)
@@ -1135,6 +1139,9 @@ object AppSettings {
         glassRenderStyle.value = GlassRenderStyle.fromKey(prefs.getString(KEY_GLASS_RENDER_STYLE, null))
         glassClarity.value = prefs.getFloat(KEY_GLASS_CLARITY, DEFAULT_GLASS_CLARITY).coerceIn(0f, 1f)
         glassShade.value = prefs.getFloat(KEY_GLASS_SHADE, DEFAULT_GLASS_SHADE).coerceIn(0f, 1f)
+        tintedGlass.value = prefs.getBoolean(KEY_TINTED_GLASS, false)
+        tintedGlassAmount.value = prefs.getFloat(KEY_TINTED_GLASS_AMOUNT, DEFAULT_TINTED_GLASS_AMOUNT)
+            .coerceIn(0f, MAX_TINTED_GLASS_AMOUNT)
         pillMotionStyle.value = prefs.getString(KEY_PILL_MOTION_STYLE, null)?.let { name ->
             try {
                 PillMotionStyle.valueOf(name)
@@ -1796,6 +1803,17 @@ object AppSettings {
         val normalized = value.coerceIn(0f, 1f)
         glassShade.value = normalized
         prefs.edit().putFloat(KEY_GLASS_SHADE, normalized).apply()
+    }
+
+    fun setTintedGlass(value: Boolean) {
+        tintedGlass.value = value
+        prefs.edit().putBoolean(KEY_TINTED_GLASS, value).apply()
+    }
+
+    fun setTintedGlassAmount(value: Float) {
+        val normalized = value.coerceIn(0f, MAX_TINTED_GLASS_AMOUNT)
+        tintedGlassAmount.value = normalized
+        prefs.edit().putFloat(KEY_TINTED_GLASS_AMOUNT, normalized).apply()
     }
 
     fun setLiquidGlassOpacity(value: Float) {
@@ -3054,6 +3072,10 @@ object AppSettings {
     private const val KEY_GLASS_RENDER_STYLE = "glass_render_style"
     private const val KEY_GLASS_CLARITY = "glass_clarity"
     private const val KEY_GLASS_SHADE = "glass_shade"
+    private const val KEY_TINTED_GLASS = "tinted_glass"
+    private const val KEY_TINTED_GLASS_AMOUNT = "tinted_glass_amount"
+    const val DEFAULT_TINTED_GLASS_AMOUNT = 0.08f
+    const val MAX_TINTED_GLASS_AMOUNT = 0.25f
     private const val KEY_PILL_MOTION_STYLE = "pill_motion_style"
     private const val KEY_CLASSIC_NAV_BAR = "classic_nav_bar"
     private const val KEY_LOCK_BOTTOM_BAR_EXPANDED = "lock_bottom_bar_expanded"

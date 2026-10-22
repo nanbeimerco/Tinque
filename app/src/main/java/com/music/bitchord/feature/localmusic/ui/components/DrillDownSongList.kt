@@ -492,13 +492,13 @@ fun SongGridCard(
     Column(
         modifier = modifier
             .then(cardCompact.measure)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(com.music.bitchord.ui.components.LocalGridSpacing.current.corner))
             .debouncedCombinedClickable(onClick = onClick, onLongClick = onLongPress)
-            .padding(4.dp),
+            .padding(com.music.bitchord.ui.components.LocalGridSpacing.current.cardPadding),
     ) {
         val selectionActive = com.music.bitchord.ui.components.LocalSongSelection.current?.active == true
         val artScale = com.music.bitchord.ui.components.selectionArtScale(selected)
-        val shape = RoundedCornerShape(com.music.bitchord.ui.components.selectionArtCorner(selected, 16.dp))
+        val shape = RoundedCornerShape(com.music.bitchord.ui.components.selectionArtCorner(selected, com.music.bitchord.ui.components.LocalGridSpacing.current.corner))
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -661,6 +661,8 @@ fun DrillDownSongList(
                 )
             }
             val gridCols = rememberGridColumns(GridKind.COLLECTION_SONGS)
+            val gridSpacing = com.music.bitchord.ui.components.gridSpacingFor(gridCols)
+            androidx.compose.runtime.CompositionLocalProvider(com.music.bitchord.ui.components.LocalGridSpacing provides gridSpacing) {
             LazyVerticalGrid(
                 columns = ScaledGridCells(gridCols),
                 state = gridState,
@@ -671,8 +673,8 @@ fun DrillDownSongList(
                     top = pageContentPadding.calculateTopPadding(),
                     bottom = pageContentPadding.calculateBottomPadding() + 8.dp,
                 ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(gridSpacing.horizontal),
+                verticalArrangement = Arrangement.spacedBy(gridSpacing.vertical),
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     DrillDownHeader(
@@ -714,6 +716,7 @@ fun DrillDownSongList(
                         onLongPress = { onSongLongPress(song) },
                     )
                 }
+            }
             }
             FastScroller(
                 gridState = gridState,

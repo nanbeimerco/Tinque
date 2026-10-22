@@ -464,8 +464,8 @@ fun FolderBrowserScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "${node.totalSongCount} ${if (node.totalSongCount == 1) "track" else "tracks"}" +
-                                    if (node.subfolders.isNotEmpty()) " • ${node.subfolders.size} folders" else "",
+                                text = androidx.compose.ui.res.pluralStringResource(com.music.bitchord.R.plurals.song_count_plural, node.totalSongCount, node.totalSongCount) +
+                                    if (node.subfolders.isNotEmpty()) " • " + androidx.compose.ui.res.pluralStringResource(com.music.bitchord.R.plurals.folder_count_plural, node.subfolders.size, node.subfolders.size) else "",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -535,7 +535,7 @@ fun FolderBrowserScreen(
                 if (node.subfolders.isNotEmpty()) {
                     item(key = "subfolders_title") {
                         Text(
-                            text = "Folders (${node.subfolders.size})",
+                            text = "${androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.folders)} (${node.subfolders.size})",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
@@ -591,12 +591,14 @@ fun FolderBrowserScreen(
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
+                                        // Folder names run long (album names, dated
+                                        // rips): two lines still fit beside the 64dp cover.
+                                        maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                     Text(
-                                        text = "${subfolder.totalSongCount} ${if (subfolder.totalSongCount == 1) "track" else "tracks"}" +
-                                            if (subfolder.subfolders.isNotEmpty()) " • ${subfolder.subfolders.size} subfolders" else "",
+                                        text = androidx.compose.ui.res.pluralStringResource(com.music.bitchord.R.plurals.song_count_plural, subfolder.totalSongCount, subfolder.totalSongCount) +
+                                            if (subfolder.subfolders.isNotEmpty()) " • " + androidx.compose.ui.res.pluralStringResource(com.music.bitchord.R.plurals.folder_count_plural, subfolder.subfolders.size, subfolder.subfolders.size) else "",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1,

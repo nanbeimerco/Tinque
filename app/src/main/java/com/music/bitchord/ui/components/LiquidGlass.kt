@@ -68,6 +68,25 @@ val LocalAppBackdrop = staticCompositionLocalOf<Backdrop> { error("No AppBackdro
 internal val LocalGlassExport = compositionLocalOf<LayerBackdrop?> { null }
 
 /**
+ * The playing song's artwork colour, for coloured glass (see
+ * [AppSettings.tintedGlass]). Unspecified when nothing is playing or the
+ * artwork has not been read; the glass is then its usual neutral.
+ */
+val LocalGlassArtColor = compositionLocalOf { Color.Unspecified }
+
+/**
+ * The colour laid over a glass surface's own tint: the artwork's colour at the
+ * chosen amount when coloured glass is on, transparent otherwise.
+ */
+@Composable
+fun glassArtTint(): Color {
+    val enabled by AppSettings.tintedGlass.collectAsStateWithLifecycle()
+    val amount by AppSettings.tintedGlassAmount.collectAsStateWithLifecycle()
+    val art = LocalGlassArtColor.current
+    return if (enabled && art != Color.Unspecified && amount > 0f) art.copy(alpha = amount) else Color.Transparent
+}
+
+/**
  * The backdrop blur pipeline requires [android.graphics.RenderEffect] on a
  * [android.graphics.RenderNode], available from Android 12 (API 31).
  */
@@ -160,6 +179,7 @@ fun Modifier.lightweightLiquidGlass(
             color = if (useGlass) clearFill ?: glassTint.copy(alpha = surfaceOpacity) else fallbackColor,
             shape = shape,
         )
+        .then(if (useGlass) Modifier.background(glassArtTint(), shape) else Modifier)
         .then(
             if (useGlass) {
                 HighlightElement(
@@ -242,9 +262,11 @@ fun Modifier.liquidGlass(
     val tintedSurfaceColor = surfaceTintColor.copy(
         alpha = if (overlay) (surfaceOpacity + 0.15f).coerceAtMost(0.85f) else surfaceOpacity,
     )
-    val onDrawSurfaceLambda = remember<DrawScope.() -> Unit>(tintedSurfaceColor) {
+    val artTint = glassArtTint()
+    val onDrawSurfaceLambda = remember<DrawScope.() -> Unit>(tintedSurfaceColor, artTint) {
         {
             drawRect(color = tintedSurfaceColor, size = size)
+            if (artTint.alpha > 0f) drawRect(color = artTint, size = size)
         }
     }
 
@@ -410,8 +432,12 @@ private fun Modifier.clearGlass(
             }
         }
     }
-    val onDrawSurfaceLambda = remember<DrawScope.() -> Unit>(fill) {
-        { drawRect(color = fill, size = size) }
+    val artTint = glassArtTint()
+    val onDrawSurfaceLambda = remember<DrawScope.() -> Unit>(fill, artTint) {
+        {
+            drawRect(color = fill, size = size)
+            if (artTint.alpha > 0f) drawRect(color = artTint, size = size)
+        }
     }
     return drawBackdrop(
         backdrop = backdrop,

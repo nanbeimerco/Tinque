@@ -36,6 +36,29 @@ import kotlin.math.roundToInt
 /** True inside a grid of 4+ columns: cards drop to a smaller title and no subtitle. */
 val LocalGridCompact = compositionLocalOf { false }
 
+/**
+ * A grid's spacing for its column count: the gaps between cards, the card's
+ * own inset and its corners. Fixed 2-column spacing left a 5-column grid with
+ * gaps nearly half the width of its art, so the denser the grid, the tighter.
+ */
+@androidx.compose.runtime.Immutable
+data class GridSpacing(
+    val horizontal: androidx.compose.ui.unit.Dp,
+    val vertical: androidx.compose.ui.unit.Dp,
+    val cardPadding: androidx.compose.ui.unit.Dp,
+    val corner: androidx.compose.ui.unit.Dp,
+)
+
+fun gridSpacingFor(columns: Int): GridSpacing = when {
+    columns <= 2 -> GridSpacing(12.dp, 16.dp, 4.dp, 16.dp)
+    columns == 3 -> GridSpacing(10.dp, 12.dp, 3.dp, 14.dp)
+    columns == 4 -> GridSpacing(8.dp, 10.dp, 2.dp, 12.dp)
+    else -> GridSpacing(6.dp, 8.dp, 2.dp, 10.dp)
+}
+
+/** The spacing of the grid a card is in; set by the grid, read by its cards. */
+val LocalGridSpacing = compositionLocalOf { gridSpacingFor(2) }
+
 /** Narrower than this, a grid card is "compact" (about 4+ columns on a phone). */
 private val COMPACT_CARD_WIDTH = 100.dp
 

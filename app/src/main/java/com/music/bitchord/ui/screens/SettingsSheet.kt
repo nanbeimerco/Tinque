@@ -83,6 +83,7 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.MotionPhotosOff
 import androidx.compose.material.icons.rounded.Opacity
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Pause
@@ -296,6 +297,8 @@ fun SettingsScreen(
     val glassRenderStyle by AppSettings.glassRenderStyle.collectAsStateWithLifecycle()
     val glassClarity by AppSettings.glassClarity.collectAsStateWithLifecycle()
     val glassShade by AppSettings.glassShade.collectAsStateWithLifecycle()
+    val tintedGlass by AppSettings.tintedGlass.collectAsStateWithLifecycle()
+    val tintedGlassAmount by AppSettings.tintedGlassAmount.collectAsStateWithLifecycle()
     val pillMotionStyle by AppSettings.pillMotionStyle.collectAsStateWithLifecycle()
     val classicNavBar by AppSettings.classicNavBar.collectAsStateWithLifecycle()
     val lockBottomBarExpanded by AppSettings.lockBottomBarExpanded.collectAsStateWithLifecycle()
@@ -421,12 +424,6 @@ fun SettingsScreen(
             listOf("queue", "glass", "frosted", "blur", "再生キュー", "すりガラス", "ぼかし"),
             frostedQueueManager,
         ) { AppSettings.setFrostedQueueManager(!frostedQueueManager) },
-        SettingsSearchEntry(
-            stringResource(R.string.frosted_player_details),
-            stringResource(R.string.frosted_player_details_subtitle),
-            listOf("player", "details", "glass", "frosted", "プレーヤー", "詳細", "すりガラス"),
-            frostedPlayerDetails,
-        ) { AppSettings.setFrostedPlayerDetails(!frostedPlayerDetails) },
         SettingsSearchEntry(
             stringResource(R.string.frosted_compact_lyrics),
             stringResource(R.string.frosted_compact_lyrics_subtitle),
@@ -636,6 +633,25 @@ fun SettingsScreen(
             sliderSteps = 11,
             onSliderValueChange = AppSettings::setLiquidGlassOpacity,
             enabled = liquidGlass && liquidGlassSupported,
+            activate = {},
+        ),
+        SettingsSearchEntry(
+            stringResource(R.string.tinted_glass),
+            stringResource(R.string.tinted_glass_subtitle),
+            listOf("liquid glass", "tint", "color", "colour", "artwork", "色付きガラス", "色", "アート", "リキッドグラス"),
+            tintedGlass,
+            enabled = liquidGlass && liquidGlassSupported,
+        ) { AppSettings.setTintedGlass(!tintedGlass) },
+        SettingsSearchEntry(
+            title = stringResource(R.string.tinted_glass_amount),
+            subtitle = stringResource(R.string.tinted_glass_amount_subtitle),
+            keywords = listOf("liquid glass", "tint", "amount", "色の量", "色付きガラス", "リキッドグラス"),
+            valueLabel = stringResource(R.string.liquid_glass_opacity_value, (tintedGlassAmount * 100).roundToInt()),
+            sliderValue = tintedGlassAmount,
+            sliderValueRange = 0f..AppSettings.MAX_TINTED_GLASS_AMOUNT,
+            sliderSteps = 24,
+            onSliderValueChange = AppSettings::setTintedGlassAmount,
+            enabled = liquidGlass && liquidGlassSupported && tintedGlass,
             activate = {},
         ),
         SettingsSearchEntry(
@@ -2213,19 +2229,9 @@ fun SettingsScreen(
                 },
                 onClick = { AppSettings.setFrostedQueueManager(!frostedQueueManager) },
             )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.BlurOn,
-                title = stringResource(R.string.frosted_player_details),
-                subtitle = stringResource(R.string.frosted_player_details_subtitle),
-                trailing = {
-                    Switch(
-                        checked = frostedPlayerDetails,
-                        onCheckedChange = AppSettings::setFrostedPlayerDetails,
-                    )
-                },
-                onClick = { AppSettings.setFrostedPlayerDetails(!frostedPlayerDetails) },
-            )
+            // The player's menu is a glass popup now, so its "artwork colour
+            // sheet" setting has nothing to colour and is hidden (its value is
+            // kept). Coloured glass, under Liquid Glass, is the closest look.
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.BlurOn,
@@ -2571,6 +2577,62 @@ fun SettingsScreen(
                     steps = 11,
                     modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
                 )
+                }
+                // Coloured glass: the playing song's artwork colour over the glass.
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.Palette,
+                    title = stringResource(R.string.tinted_glass),
+                    subtitle = stringResource(R.string.tinted_glass_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = tintedGlass,
+                            onCheckedChange = AppSettings::setTintedGlass,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setTintedGlass(!tintedGlass) },
+                )
+                if (tintedGlass) {
+                    RowDivider()
+                    SettingsRow(
+                        icon = Icons.Rounded.Opacity,
+                        title = stringResource(R.string.tinted_glass_amount),
+                        subtitle = stringResource(R.string.tinted_glass_amount_subtitle),
+                        trailing = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = stringResource(R.string.liquid_glass_opacity_value, (tintedGlassAmount * 100).roundToInt()),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                if (tintedGlassAmount != AppSettings.DEFAULT_TINTED_GLASS_AMOUNT) {
+                                    Spacer(Modifier.width(4.dp))
+                                    IconButton(
+                                        onClick = { AppSettings.setTintedGlassAmount(AppSettings.DEFAULT_TINTED_GLASS_AMOUNT) },
+                                        modifier = Modifier.size(32.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.RestartAlt,
+                                            contentDescription = stringResource(R.string.reset_to_default),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                    )
+                    Slider(
+                        value = tintedGlassAmount,
+                        onValueChange = { AppSettings.setTintedGlassAmount((it * 100).roundToInt() / 100f) },
+                        valueRange = 0f..AppSettings.MAX_TINTED_GLASS_AMOUNT,
+                        steps = 24,
+                        modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                    )
                 }
                 RowDivider()
                 SettingsRow(

@@ -24,8 +24,9 @@ object LrcParser {
                 3 -> fraction.toLong()
                 else -> 0L
             }
-            val body = line.substring(match.range.last + 1)
-            LyricLine(
+            // A leading `v1:` / `bg:` says who sings the line, see [VoiceTags].
+            val (voice, body) = VoiceTags.split(line.substring(match.range.last + 1))
+            voice to LyricLine(
                 timeMs = minutes.toLong() * 60_000 + seconds.toLong() * 1_000 + fractionMs,
                 // Stripped rather than rebuilt from the runs below: the spacing
                 // and punctuation between two words belong to the line, and
@@ -34,7 +35,8 @@ object LrcParser {
                 text = body.replace(WORD_STAMP, "").trim(),
                 words = parseWordRuns(body),
             )
-        }.sortedBy { it.timeMs }.toList()
+        }.sortedBy { it.second.timeMs }.toList()
+            .let { voiced -> VoiceTags.apply(voiced.map { it.second }, voiced.map { it.first }) }
 
         val kept = all.filterIndexed { index, line ->
             if (!line.isGap) return@filterIndexed true

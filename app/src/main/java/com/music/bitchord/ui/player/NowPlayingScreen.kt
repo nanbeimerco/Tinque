@@ -260,6 +260,7 @@ import com.music.bitchord.data.canvas.CanvasRepository
 import com.music.bitchord.data.lyrics.CharGrowth
 import com.music.bitchord.data.lyrics.GrowingWord
 import com.music.bitchord.data.lyrics.LrcParser
+import com.music.bitchord.ui.components.trackBoundsInRoot
 import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsStripText
@@ -873,6 +874,8 @@ fun NowPlayingScreen(
     onMoveInQueue: (Int, Int) -> Unit,
     onClearQueue: () -> Unit,
     onOpenMenu: () -> Unit,
+    /** Where the ⋯ button is, in root coordinates: the player menu opens by it. */
+    onMenuAnchor: (androidx.compose.ui.geometry.Rect) -> Unit = {},
     onQuickAddToPlaylist: () -> Unit,
     onQuickPlaybackTuning: () -> Unit,
     onQuickMenuAction: (PlayerQuickAction) -> Unit,
@@ -1094,6 +1097,14 @@ fun NowPlayingScreen(
         likeStatus == LikeStatus.LIKE
     }
     val likeAvailable = localUri != null || signedIn
+    // A YouTube Music song has no file on the device: it cannot go into the
+    // app's own playlists (they are lists of files), nor be tagged or shared
+    // as a file. Those controls are dimmed for it, and say why when tapped.
+    val streamedSong = localUri == null && song.localPath.isNullOrBlank()
+    val explain: (Int) -> Unit = { res ->
+        android.widget.Toast.makeText(context, context.getString(res), android.widget.Toast.LENGTH_SHORT).show()
+    }
+    val likeUnavailableReason: () -> Unit = { explain(R.string.like_needs_sign_in) }
     val likeIcon = when {
         favoriteUsesStar && liked -> BitChordIcons.StarFilled
         favoriteUsesStar -> BitChordIcons.Star
@@ -2699,7 +2710,22 @@ fun NowPlayingScreen(
                                         PlayerQuickAction.FAVORITE -> liked
                                         else -> false
                                     },
-                                    enabled = action != PlayerQuickAction.FAVORITE || likeAvailable,
+                                    enabled = when (action) {
+                                        PlayerQuickAction.FAVORITE -> likeAvailable
+                                        // This one adds to the account's YouTube Music
+                                        // playlists, which a streamed song can join.
+                                        PlayerQuickAction.ADD_TO_PLAYLIST -> !streamedSong || signedIn
+                                        PlayerQuickAction.TAG_EDITOR,
+                                        PlayerQuickAction.SHARE_FILE -> !streamedSong
+                                        else -> true
+                                    },
+                                    onDisabledClick = when (action) {
+                                        PlayerQuickAction.FAVORITE -> likeUnavailableReason
+                                        PlayerQuickAction.ADD_TO_PLAYLIST -> { { explain(R.string.streamed_song_no_playlist) } }
+                                        PlayerQuickAction.TAG_EDITOR,
+                                        PlayerQuickAction.SHARE_FILE -> { { explain(R.string.streamed_song_no_file) } }
+                                        else -> null
+                                    },
                                     haptic = if (action == PlayerQuickAction.FAVORITE) {
                                         if (liked) Haptic.ToggleOff else Haptic.ToggleOn
                                     } else Haptic.Tap,
@@ -2732,15 +2758,17 @@ fun NowPlayingScreen(
                     }
                     Spacer(Modifier.width(4.dp))
 
-                    CircleGlyph(
-                        icon = when {
-                            showRevertCue -> Icons.AutoMirrored.Rounded.Undo
-                            playerDetailsVerticalMenu -> Icons.Rounded.MoreVert
-                            else -> Icons.Rounded.MoreHoriz
-                        },
-                        contentDescription = stringResource(R.string.more),
-                        onClick = onOpenMenu,
-                    )
+                    Box(Modifier.trackBoundsInRoot(onMenuAnchor)) {
+                        CircleGlyph(
+                            icon = when {
+                                showRevertCue -> Icons.AutoMirrored.Rounded.Undo
+                                playerDetailsVerticalMenu -> Icons.Rounded.MoreVert
+                                else -> Icons.Rounded.MoreHoriz
+                            },
+                            contentDescription = stringResource(R.string.more),
+                            onClick = onOpenMenu,
+                        )
+                    }
                 }
 
                 if (classicLyrics) {
@@ -3553,6 +3581,7 @@ fun NowPlayingScreen(
                                     selected = liked,
                                     onClick = toggleLike,
                                     enabled = likeAvailable,
+                                    onDisabledClick = likeUnavailableReason,
                                     haptic = if (liked) Haptic.ToggleOff else Haptic.ToggleOn,
                                     popOnSelect = true,
                                 ),
@@ -4973,9 +5002,9 @@ private fun CurrentLyricLine(
             LyricsStripText.firstLyricLine(lines)?.text
         }
         val label = if (!previewLine.isNullOrBlank()) {
-            "$previewLine • Tap for lyrics"
+            stringResource(R.string.mini_lyrics_tap_hint, previewLine)
         } else {
-            "Lyrics available • Tap to view"
+            stringResource(R.string.mini_lyrics_available)
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -5263,9 +5292,12 @@ private fun CircleGlyph(
     onClick: () -> Unit,
     active: Boolean = false,
     enabled: Boolean = true,
+    /** Tapped while not [enabled]: says why it is unavailable. The glyph is dimmed either way. */
+    onDisabledClick: (() -> Unit)? = null,
     haptic: Haptic = Haptic.Tap,
 ) {
     val haptics = rememberHaptics()
+    val glyphAlpha = if (enabled) 1f else 0.35f
     // On (a favourite, or a panel that is open): the same look as the bottom
     // row's — a 70% white disc with the glyph cut out of it.
     val discAlpha by animateFloatAsState(
@@ -5285,12 +5317,16 @@ private fun CircleGlyph(
             .clip(CircleShape)
             .background(Color.White.copy(alpha = discAlpha))
             .clickable(
-                enabled = enabled,
+                enabled = enabled || onDisabledClick != null,
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
             ) {
-                haptics.play(haptic)
-                onClick()
+                if (enabled) {
+                    haptics.play(haptic)
+                    onClick()
+                } else {
+                    onDisabledClick?.invoke()
+                }
             },
         contentAlignment = Alignment.Center,
     ) {
@@ -5304,7 +5340,7 @@ private fun CircleGlyph(
                     Icon(
                         imageVector = glyph,
                         contentDescription = contentDescription,
-                        tint = Color.White.copy(alpha = 1f - cutOut),
+                        tint = Color.White.copy(alpha = (1f - cutOut) * glyphAlpha),
                         modifier = Modifier.size(22.dp),
                     )
                 }
@@ -5518,6 +5554,8 @@ private class ToggleSegment(
     val onClick: () -> Unit,
     val haptic: Haptic,
     val enabled: Boolean = true,
+    /** Tapped while not [enabled]: says why it is unavailable. */
+    val onDisabledClick: (() -> Unit)? = null,
     /**
      * Shortest gap between taps that both reach [onClick]. A tap inside the
      * window of the last one is dropped whole, haptic included. Only the
@@ -5681,10 +5719,14 @@ private fun PlayerToggleSegment(
             .clip(shape)
             .background(Color.White.copy(alpha = fill))
             .clickable(
-                enabled = segment.enabled,
+                enabled = segment.enabled || segment.onDisabledClick != null,
                 interactionSource = interaction,
                 indication = null,
             ) {
+                if (!segment.enabled) {
+                    segment.onDisabledClick?.invoke()
+                    return@clickable
+                }
                 val now = SystemClock.uptimeMillis()
                 if (now - lastTap.longValue >= segment.tapWindowMs) {
                     lastTap.longValue = now

@@ -98,7 +98,7 @@ fun LocalFoldersTab(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "${displayFolders.size} ${if (displayFolders.size == 1) "Folder" else "Folders"}",
+                        text = androidx.compose.ui.res.pluralStringResource(com.music.bitchord.R.plurals.folder_count_plural, displayFolders.size, displayFolders.size),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
