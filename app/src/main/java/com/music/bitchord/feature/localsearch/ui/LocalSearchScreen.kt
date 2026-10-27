@@ -323,19 +323,11 @@ fun LocalSearchScreen(
                     .fillMaxSize()
                     .padding(top = contentPadding.calculateTopPadding()),
             ) {
-                // The tab's logo. The search box stays put, so the logo cannot
-                // scroll with a list here; it slides up and fades as soon as
-                // the results / history list scrolls, and returns at the top.
-                val listAtTop by remember {
-                    derivedStateOf { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 8 }
-                }
-                val logoShown by animateFloatAsState(if (listAtTop) 1f else 0f, label = "searchLogo")
+                // The tab's logo. The search box stays put, so the logo stays
+                // with it: fading it out on scroll only left an empty gap where
+                // it had been.
                 TabLogoHeader(
                     listTopPadding = contentPadding.calculateTopPadding(),
-                    modifier = Modifier.graphicsLayer {
-                        alpha = logoShown
-                        translationY = -(1f - logoShown) * 24.dp.toPx()
-                    },
                 )
                 // Search Input Header
                 LocalSearchField(
@@ -411,13 +403,13 @@ fun LocalSearchScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        text = "Recent searches",
+                                        text = androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.recent_searches),
                                         style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onSurface,
                                     )
                                     TextButton(onClick = onClearSearchHistory) {
                                         Text(
-                                            text = "Clear all",
+                                            text = androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.clear_all_searches),
                                             style = MaterialTheme.typography.labelMedium,
                                             color = MaterialTheme.colorScheme.primary,
                                         )
@@ -542,7 +534,7 @@ fun LocalSearchScreen(
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "No results found for \"$query\"",
+                                text = androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.no_results_for, query),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

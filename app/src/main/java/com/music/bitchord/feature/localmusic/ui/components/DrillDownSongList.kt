@@ -381,7 +381,7 @@ fun DrillDownActionRow(
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                BitChordIcons.Shuffle,
+                com.music.bitchord.ui.icons.PlayerControlIcons.Shuffle,
                 contentDescription = stringResource(R.string.shuffle),
                 tint = buttonContentColor,
                 modifier = Modifier.size(18.dp),

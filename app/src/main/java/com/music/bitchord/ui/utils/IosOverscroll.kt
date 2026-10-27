@@ -50,6 +50,15 @@ private fun rubberBand(rawDistance: Float, containerPx: Float): Float {
     return banded * sign(rawDistance)
 }
 
+/** The inverse of [rubberBand]: the raw pull that shows as [bandedDistance] on screen. */
+private fun inverseRubberBand(bandedDistance: Float, containerPx: Float): Float {
+    val dimension = containerPx.takeIf { it > 0f } ?: fallbackContainerPx
+    // The banded curve approaches dimension / rubberBandConstant; stay just under it.
+    val k = (abs(bandedDistance) * rubberBandConstant / dimension).coerceAtMost(0.999f)
+    val raw = k / (1f - k) * dimension / rubberBandConstant
+    return raw * sign(bandedDistance)
+}
+
 /**
  * An iOS-style overscroll effect for Compose scroll containers.
  *
@@ -72,8 +81,8 @@ private class IosOverscrollEffect : OverscrollEffect {
     ): Offset {
         // When pulling back from an existing stretch, settle the stretch before
         // allowing the list itself to scroll. This keeps the motion continuous.
-        val paidX = payDown(rawPullX, delta.x)
-        val paidY = payDown(rawPullY, delta.y)
+        val paidX = payDown(rawPullX, delta.x, containerWidthPx)
+        val paidY = payDown(rawPullY, delta.y, containerHeightPx)
         val remaining = Offset(delta.x - paidX, delta.y - paidY)
         val consumed = performScroll(remaining)
         val leftover = remaining - consumed
@@ -109,13 +118,28 @@ private class IosOverscrollEffect : OverscrollEffect {
         }
     }
 
-    private fun payDown(pull: MutableFloatState, delta: Float): Float {
+    /**
+     * Pushes an existing stretch back by [delta], in on-screen pixels.
+     *
+     * The stretch is stored as a raw pull but drawn through [rubberBand], which
+     * compresses it. Subtracting the finger's movement from the raw value made
+     * the content move less than the finger on the way back (a deep stretch
+     * barely moved at first), so a scroll or fling starting at a list's end
+     * felt late and short. Here the finger moves the drawn offset 1:1, and
+     * only what is left after the stretch is gone reaches the list.
+     */
+    private fun payDown(pull: MutableFloatState, delta: Float, containerPx: Float): Float {
         val current = pull.floatValue
         if (current == 0f || delta == 0f || sign(current) == sign(delta)) return 0f
-        val target = current + delta
-        val next = if (sign(target) != sign(current)) 0f else target
-        pull.floatValue = next
-        return next - current
+        val shown = rubberBand(current, containerPx)
+        val target = shown + delta
+        return if (target == 0f || sign(target) != sign(shown)) {
+            pull.floatValue = 0f
+            -shown
+        } else {
+            pull.floatValue = inverseRubberBand(target, containerPx)
+            delta
+        }
     }
 
     private suspend fun settle(pull: MutableFloatState, leftoverVelocity: Float) {

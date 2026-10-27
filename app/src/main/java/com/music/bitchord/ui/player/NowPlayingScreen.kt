@@ -405,6 +405,67 @@ private val ART_BOX_TOP_PAD = 8.dp
 private const val HERO_FADE_FRACTION = 0.42f
 
 /**
+ * The page's colours where it meets a docked player, top and foot. The pane's
+ * left edge starts from them and runs into its own backdrop over
+ * [DOCK_SEAM_WIDTH], so the two meet without an edge.
+ */
+@androidx.compose.runtime.Immutable
+data class DockSeam(
+    val top: Color,
+    val bottom: Color,
+    /** The page's bottom scrim (see BottomFadeScrim): its colour and height. */
+    val footColor: Color = bottom,
+    val footHeight: androidx.compose.ui.unit.Dp = 0.dp,
+)
+
+
+val LocalDockSeam = androidx.compose.runtime.staticCompositionLocalOf<DockSeam?> { null }
+
+/** How far into a docked pane the page's colour runs before the player's own takes over. */
+private val DOCK_SEAM_WIDTH = 96.dp
+
+/** At least this wide and this tall, a full-screen player splits into two columns. */
+private val TWO_COLUMN_MIN_SIZE = 600.dp
+
+/** The left column's share: artwork and controls. The lyrics take the rest. */
+private const val TWO_COLUMN_LEFT_FRACTION = 0.52f
+
+/** How much of the full-bleed artwork's width melts into the lyrics column. */
+private const val TWO_COLUMN_ART_MELT = 0.42f
+
+/** Lets a scrolling column's first and last lines fade in and out at its edges. */
+private fun Modifier.fadeEdgesVertically(edge: androidx.compose.ui.unit.Dp = 40.dp): Modifier = this
+    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        val e = edge.toPx().coerceAtMost(size.height / 3f)
+        drawRect(
+            brush = Brush.verticalGradient(
+                0f to Color.Transparent,
+                e / size.height to Color.Black,
+                1f - e / size.height to Color.Black,
+                1f to Color.Transparent,
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+
+/** Fades the content out towards its right edge, over [TWO_COLUMN_ART_MELT] of it. */
+private fun Modifier.meltRight(): Modifier = this
+    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+    .drawWithContent {
+        drawContent()
+        drawRect(
+            brush = Brush.horizontalGradient(
+                colors = listOf(Color.Black, Color.Transparent),
+                startX = size.width * (1f - TWO_COLUMN_ART_MELT),
+                endX = size.width,
+            ),
+            blendMode = BlendMode.DstIn,
+        )
+    }
+
+/**
  * How often the backdrop re-reads the colours of a playing Canvas clip.
  *
  * Every three seconds, with `MESH_FADE_MS` easing each read into the last so
@@ -1194,13 +1255,26 @@ fun NowPlayingScreen(
     var savedQueueManagerOpen by remember { mutableStateOf(false) }
     var quickSleepTimerOpen by remember { mutableStateOf(false) }
     var lyricsOpen by remember { mutableStateOf(false) }
+    // A wide, tall full-screen player (an unfolded foldable, a tablet) splits
+    // in two: artwork and controls on the left, lyrics — or the queue — on the
+    // right, always there. With no border: one backdrop runs under both, and
+    // the artwork melts into it. The lyrics and queue toggles then choose what
+    // the right column shows instead of folding the sleeve away.
+    val windowHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
+    val twoColumn = !docked && windowWidth >= TWO_COLUMN_MIN_SIZE && windowHeight >= TWO_COLUMN_MIN_SIZE
+    val leftColumnWidth = windowWidth * TWO_COLUMN_LEFT_FRACTION
+    // In two columns the toggle row stands at the foot of the right column.
+    // It is still built where it always is (it reads half the player's state);
+    // the left column hands it across instead of drawing it.
+    val twoColumnToggles = remember { mutableStateOf<List<ToggleSegment>>(emptyList()) }
+    val dockSeam = if (docked) LocalDockSeam.current else null
     // The classic lyrics page, and the beta layout's in-player lyrics. Only one
     // of them answers to [lyricsOpen] at a time, chosen by the layout.
     // The full lyrics page is gone: lyrics open inside the player, as in the
     // beta layout, in both layouts. Only the classic "replace the artwork"
     // option keeps a lyrics view of its own.
-    val classicLyrics = lyricsOpen && !betaLayout && lyricsReplaceArtworkOnly
-    val inPlayerLyrics = lyricsOpen && !classicLyrics
+    val classicLyrics = !twoColumn && lyricsOpen && !betaLayout && lyricsReplaceArtworkOnly
+    val inPlayerLyrics = !twoColumn && lyricsOpen && !classicLyrics
     val inPlayerLyricsT by animateFloatAsState(
         targetValue = if (inPlayerLyrics) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
@@ -1481,7 +1555,7 @@ fun NowPlayingScreen(
     // half of the artwork jumped, the other half glided after it, and the pair
     // read as a stutter rather than as either. One animation, both surfaces.
     val p by animateFloatAsState(
-        targetValue = if (queueOpen || inPlayerLyrics || (classicLyrics && !lyricsReplaceArtworkOnly)) 1f else 0f,
+        targetValue = if (!twoColumn && (queueOpen || inPlayerLyrics || (classicLyrics && !lyricsReplaceArtworkOnly))) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "sleeveCollapse",
     )
@@ -1532,7 +1606,7 @@ fun NowPlayingScreen(
     // ignored [fullBleedArt] entirely, so turning the setting off still left a
     // clip running the full screen. CanvasArtworkPlayer masks itself on every
     // API level now, and both layers answer to this.
-    val heroMode = fullBleedArt && (docked || playerFillsWindow(windowWidth))
+    val heroMode = fullBleedArt && (docked || playerFillsWindow(if (twoColumn) leftColumnWidth else windowWidth))
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top
     // third of the screen.
@@ -1708,10 +1782,45 @@ fun NowPlayingScreen(
             Box(backdropModifier) {
                 ArtworkMeshBackdrop(
                     mesh = artMesh,
-                    seam = if (heroMode) heroHeight else 0.dp,
+                    seam = if (heroMode && !twoColumn) heroHeight else 0.dp,
                     blurRadius = artworkBackdropBlurDp.dp,
                 )
             }
+        }
+
+        if (dockSeam != null) {
+            // The page's colours, running from the pane's left edge into the
+            // backdrop. Under everything the pane draws, so nothing of the
+            // player is covered: only the backdrop gives way to the page.
+            val seamTop by animateColorAsState(dockSeam.top, tween(400), label = "seamTop")
+            val seamBottom by animateColorAsState(dockSeam.bottom, tween(400), label = "seamBottom")
+            val seamFoot by animateColorAsState(dockSeam.footColor, tween(400), label = "seamFoot")
+            val footHeight = dockSeam.footHeight
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxHeight()
+                    .width(DOCK_SEAM_WIDTH)
+                    .then(backdropModifier)
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawBehind {
+                        drawRect(Brush.verticalGradient(listOf(seamTop, seamBottom)))
+                        if (footHeight > 0.dp) {
+                            // The page's bottom scrim, carried on across the seam.
+                            val top = size.height - footHeight.toPx()
+                            drawRect(
+                                brush = com.music.bitchord.ui.components.bottomFadeBrush(seamFoot, top, size.height),
+                                topLeft = androidx.compose.ui.geometry.Offset(0f, top),
+                            )
+                        }
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                listOf(Color.Black, Color.Black.copy(alpha = 0.55f), Color.Transparent),
+                            ),
+                            blendMode = BlendMode.DstIn,
+                        )
+                    },
+            )
         }
 
         if (heroHeight > 0.dp) {
@@ -1732,7 +1841,7 @@ fun NowPlayingScreen(
                         bottomFade = HERO_FADE_FRACTION,
                         modifier = Modifier
                             .align(Alignment.TopStart)
-                            .fillMaxWidth()
+                            .then(if (twoColumn) Modifier.width(leftColumnWidth).meltRight() else Modifier.fillMaxWidth())
                             .height(heroHeight)
                             .hazeSource(playerHaze)
                             .graphicsLayer {
@@ -1767,7 +1876,7 @@ fun NowPlayingScreen(
 
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .then(if (twoColumn) Modifier.fillMaxHeight().width(leftColumnWidth) else Modifier.fillMaxSize())
                 .then(if (showStatusBar && !quietMode) Modifier.statusBarsPadding() else Modifier)
                 .navigationBarsPadding()
                 .pointerInput(Unit) {
@@ -2164,7 +2273,9 @@ fun NowPlayingScreen(
                     -(statusBarTop.roundToPx() + topStrip.roundToPx() + ART_BOX_TOP_PAD.roundToPx())
                 }
                 val boxWidthPx = constraints.maxWidth
-                val effectivePlayerWidth = if (playerBounds.width > 0) {
+                val effectivePlayerWidth = if (twoColumn) {
+                    with(density) { leftColumnWidth.roundToPx() }
+                } else if (playerBounds.width > 0) {
                     playerBounds.width
                 } else {
                     boxWidthPx + with(density) { (PLAYER_GUTTER * 2).roundToPx() }
@@ -2308,6 +2419,17 @@ fun NowPlayingScreen(
                                     ),
                                     blendMode = BlendMode.DstIn,
                                 )
+                                if (twoColumn) {
+                                    // Into the lyrics column, as well as down into the controls.
+                                    drawRect(
+                                        brush = Brush.horizontalGradient(
+                                            colors = listOf(Color.Black, Color.Black.copy(alpha = 1f - shown)),
+                                            startX = size.width * (1f - TWO_COLUMN_ART_MELT),
+                                            endX = size.width,
+                                        ),
+                                        blendMode = BlendMode.DstIn,
+                                    )
+                                }
                             }
                         },
                 ) {
@@ -2432,7 +2554,7 @@ fun NowPlayingScreen(
                             translationX = swipeSettle * (1f - p)
                         }
                         .then(
-                            if (queueOpen || lyricsOpen) {
+                            if (!twoColumn && (queueOpen || lyricsOpen)) {
                                 Modifier.clickable {
                                     queueOpen = false
                                     lyricsOpen = false
@@ -2924,7 +3046,7 @@ fun NowPlayingScreen(
 
                 // Toggles and the queue arrive after the sleeve has finished
                 // travelling, and leave before it starts coming back.
-                if (!lyricsOpen && queueProgress > 0.01f) {
+                if (!twoColumn && !lyricsOpen && queueProgress > 0.01f) {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -2969,7 +3091,7 @@ fun NowPlayingScreen(
             //
             val lyricsMode = classicLyrics && !lyricsReplaceArtworkOnly
             val miniLyricsVisible = showPlayerLyricsStrip && (syncedLyricsEnabled || !lyrics.isNullOrEmpty())
-            if (miniLyricsVisible && !betaLayout && (!lyricsMode || p < 1f)) {
+            if (miniLyricsVisible && !betaLayout && !twoColumn && (!lyricsMode || p < 1f)) {
                 Box(
                     contentAlignment = Alignment.CenterStart,
                     modifier = Modifier
@@ -3647,7 +3769,9 @@ fun NowPlayingScreen(
                     // With the transport folded away, keep the row off the timestamps.
                     // Matches the gap above the transport, so it sits midway.
                     if (!rowFolds) Spacer(Modifier.height(QUEUE_TRANSPORT_GAP * queueCompact))
-                    if (segments.isNotEmpty()) {
+                    if (twoColumn) {
+                        SideEffect { twoColumnToggles.value = segments }
+                    } else if (segments.isNotEmpty()) {
                         PlayerToggleGroup(
                             segments,
                             inverted = true,
@@ -3657,6 +3781,101 @@ fun NowPlayingScreen(
                 }
             }
             }
+            }
+        }
+
+        // Two columns: the right one, lyrics — or the queue, chosen with the
+        // toggles, and the queue too when there are no lyrics to show. No
+        // background of its own: the backdrop above runs under both columns.
+        if (twoColumn) {
+            val rightShowsQueue = queueOpen || (lyricsUnavailable && !lyricsOpen)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .fillMaxHeight()
+                    .width(windowWidth - leftColumnWidth)
+                    .then(if (showStatusBar && !quietMode) Modifier.statusBarsPadding() else Modifier)
+                    .navigationBarsPadding()
+                    .padding(top = 8.dp),
+            ) {
+              Column(Modifier.fillMaxSize()) {
+                Crossfade(
+                    targetState = rightShowsQueue,
+                    modifier = Modifier.weight(1f).fadeEdgesVertically(),
+                    animationSpec = tween(durationMillis = 260),
+                    label = "twoColumnRight",
+                ) { showQueue ->
+                    if (showQueue) {
+                        Column(Modifier.fillMaxSize()) {
+                            InlineQueue(
+                                queue = queue,
+                                currentIndex = queueIndex,
+                                autoplayEnabled = autoplayEnabled,
+                                onJumpTo = onJumpTo,
+                                onRemove = onRemoveFromQueue,
+                                onMove = onMoveInQueue,
+                                onClear = onClearQueue,
+                                onManageQueues = { savedQueueManagerOpen = true },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    } else if (lyricsLogsOpen) {
+                        Box(Modifier.fillMaxSize()) {
+                            LyricsLogConsole(Modifier.fillMaxSize().padding(top = 48.dp))
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(end = 12.dp)
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.White.copy(alpha = 0.18f))
+                                    .clickable { lyricsLogsOpen = false },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = stringResource(R.string.close),
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                    } else {
+                        val footerText = when {
+                            lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
+                            !lyrics.isNullOrEmpty() && !hideLyricsSavedMessage ->
+                                stringResource(R.string.lyrics_saved_with_download)
+                            else -> null
+                        }
+                        LyricsPanel(
+                            lines = lyrics.orEmpty(),
+                            trackKey = song.videoId,
+                            positionMs = positionMs,
+                            isPlaying = isPlaying,
+                            onSeekToLine = onSeek,
+                            lyricsUnavailable = lyricsUnavailable,
+                            footer = if (footerText != null || showLyricsLogsEnabled) {
+                                {
+                                    LyricsFooter(
+                                        text = footerText,
+                                        showLogs = showLyricsLogsEnabled,
+                                        onOpenLogs = { lyricsLogsOpen = true },
+                                    )
+                                }
+                            } else {
+                                null
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+                val toggles = twoColumnToggles.value
+                if (toggles.isNotEmpty()) {
+                    Box(Modifier.padding(horizontal = PLAYER_GUTTER).padding(top = 12.dp, bottom = 18.dp)) {
+                        PlayerToggleGroup(toggles, inverted = true)
+                    }
+                }
+              }
             }
         }
     }

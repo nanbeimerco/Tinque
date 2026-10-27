@@ -997,6 +997,7 @@ fun SettingsScreen(
     var confirmImport by remember { mutableStateOf(false) }
     var showPerformanceConfirmation by remember { mutableStateOf(false) }
     var showEqualizerSheet by remember { mutableStateOf(false) }
+    val openEqualizerPage = com.music.bitchord.ui.screens.equalizer.LocalOpenEqualizer.current
     var showManageFoldersSheet by remember { mutableStateOf(false) }
     var showPlaylistOrderDialog by remember { mutableStateOf(false) }
     var preparedM3uImport by remember { mutableStateOf<PreparedM3uImport?>(null) }
@@ -1726,7 +1727,9 @@ fun SettingsScreen(
                 icon = Icons.Rounded.Tune,
                 title = stringResource(R.string.equalizer),
                 subtitle = stringResource(R.string.equalizer_subtitle),
-                onClick = { showEqualizerSheet = true },
+                // The app's own equalizer page where there is one (under the
+                // bottom bar); the sheet otherwise.
+                onClick = { openEqualizerPage?.invoke() ?: run { showEqualizerSheet = true } },
             )
             RowDivider()
             SettingsRow(

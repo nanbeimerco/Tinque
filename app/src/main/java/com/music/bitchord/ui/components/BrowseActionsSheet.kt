@@ -174,7 +174,7 @@ fun BrowseActionsSheet(
         HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
 
         onPlay?.let { ActionRow(Icons.Rounded.PlayArrow, stringResource(R.string.play), onClick = it) }
-        onShuffle?.let { ActionRow(BitChordIcons.Shuffle, stringResource(R.string.shuffle), onClick = it) }
+        onShuffle?.let { ActionRow(com.music.bitchord.ui.icons.PlayerControlIcons.Shuffle, stringResource(R.string.shuffle), onClick = it) }
         ActionRow(
             Icons.AutoMirrored.Rounded.PlaylistPlay,
             stringResource(R.string.play_next),

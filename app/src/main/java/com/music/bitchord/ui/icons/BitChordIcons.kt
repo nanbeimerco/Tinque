@@ -5,6 +5,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathBuilder
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
@@ -41,99 +42,97 @@ object BitChordIcons {
 
     // ---- Now Playing transport ----
     //
-    // Filled shapes whose corners come from a wide round-joined stroke drawn
-    // over the fill: the stroke's half-width is the corner radius. Overlaps
-    // between sub-shapes are harmless — the vector is rendered to one cached
-    // bitmap and tinted as a whole.
+    // Filled outlines, drawn as true straight lines and circular arcs (the
+    // play tip is its own eased curve, tighter-looking than the left corners
+    // on purpose). Each sits where the old stroke-rounded glyph sat in the
+    // 24 box: same centre, the same visual size (play and pause by area; the
+    // skips, flatter now, by width). Every glyph is mirror-symmetric top to
+    // bottom, and previous is next mirrored.
 
-    /** A plump play triangle with heavily rounded vertices. */
-    val TransportPlay: ImageVector by lazy {
+    private fun transportIcon(name: String, draw: PathBuilder.() -> Unit): ImageVector =
         ImageVector.Builder(
-            name = "bc_transport_play",
-            defaultWidth = 24.dp, defaultHeight = 24.dp,
-            viewportWidth = 24f, viewportHeight = 24f,
-        ).apply {
-            path(
-                fill = stroke,
-                stroke = stroke,
-                strokeLineWidth = 4.6f,
-                strokeLineCap = StrokeCap.Round,
-                strokeLineJoin = StrokeJoin.Round,
-            ) {
-                moveTo(7.4f, 5.6f)
-                lineTo(18.8f, 12f)
-                lineTo(7.4f, 18.4f)
-                close()
-            }
-        }.build()
-    }
-
-    /**
-     * Two very thick bars with a narrow gap and only slightly rounded
-     * corners — straight edges remain top and bottom, so from a distance it
-     * reads as one near-square block.
-     */
-    val TransportPause: ImageVector by lazy {
-        ImageVector.Builder(
-            name = "bc_transport_pause",
-            defaultWidth = 24.dp, defaultHeight = 24.dp,
-            viewportWidth = 24f, viewportHeight = 24f,
-        ).apply {
-            val r = 1.3f
-            // Bars 5.4 wide with a 2.6 gap (was 6.5 / 2.2).
-            for ((left, right) in listOf(5.3f to 10.7f, 13.3f to 18.7f)) {
-                path(
-                    fill = stroke,
-                    stroke = stroke,
-                    strokeLineWidth = r * 2,
-                    strokeLineCap = StrokeCap.Round,
-                    strokeLineJoin = StrokeJoin.Round,
-                ) {
-                    moveTo(left + r, 4f + r)
-                    lineTo(right - r, 4f + r)
-                    lineTo(right - r, 20f - r)
-                    lineTo(left + r, 20f - r)
-                    close()
-                }
-            }
-        }.build()
-    }
-
-    /**
-     * Skip forward: two triangles, the rear one's tip driven deep into the
-     * back of the front one, so the pair is one wide silhouette.
-     */
-    val TransportNext: ImageVector by lazy { skipIcon("bc_transport_next", mirrored = false) }
-
-    /** Skip back: [TransportNext] mirrored. */
-    val TransportPrevious: ImageVector by lazy { skipIcon("bc_transport_previous", mirrored = true) }
-
-    private fun skipIcon(name: String, mirrored: Boolean): ImageVector {
-        fun x(v: Float) = if (mirrored) 24f - v else v
-        return ImageVector.Builder(
             name = name,
             defaultWidth = 24.dp, defaultHeight = 24.dp,
             viewportWidth = 24f, viewportHeight = 24f,
-        ).apply {
-            // The round-joined 2.6 stroke spreads each shape 1.3 outward, so the
-            // visible overlap is the coordinate overlap + 2.6. Rear tip 10.9 and
-            // front base 12.9 leave ~0.6 of visible overlap: the rear tip just
-            // touches into the front triangle. Both triangles are 9.4 wide.
-            for ((base, tip) in listOf(1.5f to 10.9f, 12.9f to 22.3f)) {
-                path(
-                    fill = stroke,
-                    stroke = stroke,
-                    strokeLineWidth = 2.6f,
-                    strokeLineCap = StrokeCap.Round,
-                    strokeLineJoin = StrokeJoin.Round,
-                ) {
-                    moveTo(x(base), 5.4f)
-                    lineTo(x(tip), 12f)
-                    lineTo(x(base), 18.6f)
-                    close()
-                }
-            }
-        }.build()
+        ).apply { path(fill = stroke, pathBuilder = draw) }.build()
+
+    /** Play: rounded triangle; its tip rounds tighter than its left corners. */
+    val TransportPlay: ImageVector by lazy {
+        transportIcon("bc_transport_play") {
+            moveTo(7.381f, 3.823f)
+            lineTo(18.143f, 9.259f)
+            curveTo(20.859f, 10.631f, 21.417f, 10.938f, 21.417f, 12f)
+            curveTo(21.417f, 13.062f, 20.859f, 13.369f, 18.143f, 14.741f)
+            lineTo(7.381f, 20.177f)
+            arcTo(1.79f, 1.79f, 0f, isMoreThanHalf = false, isPositiveArc = true, 4.783f, 18.579f)
+            lineTo(4.783f, 5.421f)
+            arcTo(1.79f, 1.79f, 0f, isMoreThanHalf = false, isPositiveArc = true, 7.381f, 3.823f)
+            close()
+        }
+    }
+
+    /** Pause: two bars with rounded corners. */
+    val TransportPause: ImageVector by lazy {
+        transportIcon("bc_transport_pause") {
+            moveTo(7f, 3.91f)
+            lineTo(9.281f, 3.91f)
+            arcTo(1.625f, 1.625f, 0f, isMoreThanHalf = false, isPositiveArc = true, 10.906f, 5.535f)
+            lineTo(10.906f, 18.465f)
+            arcTo(1.625f, 1.625f, 0f, isMoreThanHalf = false, isPositiveArc = true, 9.281f, 20.09f)
+            lineTo(7f, 20.09f)
+            arcTo(1.625f, 1.625f, 0f, isMoreThanHalf = false, isPositiveArc = true, 5.374f, 18.465f)
+            lineTo(5.374f, 5.535f)
+            arcTo(1.625f, 1.625f, 0f, isMoreThanHalf = false, isPositiveArc = true, 7f, 3.91f)
+            close()
+            moveTo(14.719f, 3.91f)
+            lineTo(17f, 3.91f)
+            arcTo(1.625f, 1.625f, 0f, isMoreThanHalf = false, isPositiveArc = true, 18.626f, 5.535f)
+            lineTo(18.626f, 18.465f)
+            arcTo(1.625f, 1.625f, 0f, isMoreThanHalf = false, isPositiveArc = true, 17f, 20.09f)
+            lineTo(14.719f, 20.09f)
+            arcTo(1.625f, 1.625f, 0f, isMoreThanHalf = false, isPositiveArc = true, 13.094f, 18.465f)
+            lineTo(13.094f, 5.535f)
+            arcTo(1.625f, 1.625f, 0f, isMoreThanHalf = false, isPositiveArc = true, 14.719f, 3.91f)
+            close()
+        }
+    }
+
+    /** Skip forward: two 60-degree triangles meeting in a sharp notch. */
+    val TransportNext: ImageVector by lazy {
+        transportIcon("bc_transport_next") {
+            moveTo(13.627f, 5.537f)
+            arcTo(1.222f, 1.222f, 0f, isMoreThanHalf = false, isPositiveArc = false, 11.794f, 6.595f)
+            lineTo(11.794f, 11.172f)
+            lineTo(2.033f, 5.537f)
+            arcTo(1.222f, 1.222f, 0f, isMoreThanHalf = false, isPositiveArc = false, 0.2f, 6.595f)
+            lineTo(0.2f, 17.405f)
+            arcTo(1.222f, 1.222f, 0f, isMoreThanHalf = false, isPositiveArc = false, 2.033f, 18.463f)
+            lineTo(11.794f, 12.828f)
+            lineTo(11.794f, 17.405f)
+            arcTo(1.222f, 1.222f, 0f, isMoreThanHalf = false, isPositiveArc = false, 13.627f, 18.463f)
+            lineTo(22.989f, 13.058f)
+            arcTo(1.222f, 1.222f, 0f, isMoreThanHalf = false, isPositiveArc = false, 22.989f, 10.942f)
+            close()
+        }
+    }
+
+    /** Skip back: [TransportNext] mirrored. */
+    val TransportPrevious: ImageVector by lazy {
+        transportIcon("bc_transport_previous") {
+            moveTo(10.373f, 5.537f)
+            arcTo(1.222f, 1.222f, 0f, isMoreThanHalf = false, isPositiveArc = true, 12.206f, 6.595f)
+            lineTo(12.206f, 11.172f)
+            lineTo(21.967f, 5.537f)
+            arcTo(1.222f, 1.222f, 0f, isMoreThanHalf = false, isPositiveArc = true, 23.8f, 6.595f)
+            lineTo(23.8f, 17.405f)
+            arcTo(1.222f, 1.222f, 0f, isMoreThanHalf = false, isPositiveArc = true, 21.967f, 18.463f)
+            lineTo(12.206f, 12.828f)
+            lineTo(12.206f, 17.405f)
+            arcTo(1.222f, 1.222f, 0f, isMoreThanHalf = false, isPositiveArc = true, 10.373f, 18.463f)
+            lineTo(1.011f, 13.058f)
+            arcTo(1.222f, 1.222f, 0f, isMoreThanHalf = false, isPositiveArc = true, 1.011f, 10.942f)
+            close()
+        }
     }
 
     val Search: ImageVector by lazy {

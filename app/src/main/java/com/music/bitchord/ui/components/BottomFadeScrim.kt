@@ -88,19 +88,7 @@ fun BottomFadeScrim(
         label = "bottomScrimHeight",
     )
 
-    val brush = remember(pageColor) {
-        Brush.verticalGradient(
-            // A cubic ease-in rather than a straight ramp: the alpha then holds
-            // under a few percent for the first half of the strip, which is what
-            // stops the eye from finding the line where the layer starts. Its
-            // whole run is spent arriving — the same curve the blur it replaced
-            // ramped its radius along, so the strip reads at the same weight.
-            colorStops = Array(STOPS) { i ->
-                val t = i / (STOPS - 1f)
-                t to pageColor.copy(alpha = EaseInCubic.transform(t))
-            },
-        )
-    }
+    val brush = remember(pageColor) { bottomFadeBrush(pageColor) }
 
     Box(
         modifier = modifier
@@ -109,6 +97,30 @@ fun BottomFadeScrim(
             .background(brush),
     )
 }
+
+/**
+ * The scrim's ramp, for [pageColor]. A cubic ease-in rather than a straight
+ * ramp: the alpha then holds under a few percent for the first half of the
+ * strip, which is what stops the eye from finding the line where the layer
+ * starts. Its whole run is spent arriving — the same curve the blur it
+ * replaced ramped its radius along, so the strip reads at the same weight.
+ *
+ * Shared with a docked player's seam, which carries the page's foot across.
+ */
+fun bottomFadeBrush(pageColor: Color, startY: Float = 0f, endY: Float = Float.POSITIVE_INFINITY): Brush =
+    Brush.verticalGradient(
+        colorStops = Array(STOPS) { i ->
+            val t = i / (STOPS - 1f)
+            t to pageColor.copy(alpha = EaseInCubic.transform(t))
+        },
+        startY = startY,
+        endY = endY,
+    )
+
+/** How tall [BottomFadeScrim] stands, without a mini player (as beside a docked player). */
+@Composable
+fun bottomFadeScrimHeight(): androidx.compose.ui.unit.Dp =
+    floatingBarInsets.asPaddingValues().calculateBottomPadding() + FADE_HEIGHT
 
 /**
  * How far above the floating bars the page stops taking touches. A tap that

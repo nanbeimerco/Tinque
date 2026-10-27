@@ -51,8 +51,8 @@ android {
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
         targetSdk = 36
-        versionCode = 50
-        versionName = "2.4.4"
+        versionCode = 52
+        versionName = "2.4.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -129,16 +129,18 @@ android {
     buildTypes {
         release {
             /*
-             * Off deliberately. Stream resolution runs YouTube's own player
-             * JavaScript through Rhino, and NewPipe, Ktor and
-             * kotlinx.serialization all reach for classes reflectively — none
-             * of which R8 can see. Shrinking that reliably is a set of keep
-             * rules to be written and then proven on a device, because the
-             * breakage it causes appears at runtime rather than at build time.
-             * Until then, a larger APK that works beats a smaller one that
-             * might not. The rules below stay wired up for when it's revisited.
+             * On for speed, not size (as in BitChord). Compose is written to be
+             * run through R8 — without it every composable keeps the debug-era
+             * shape the compiler emits, and the whole UI runs slower: scrolls
+             * drop frames and flings come out short or late.
+             *
+             * Nothing is renamed (-dontobfuscate), and every library that finds
+             * classes by name — Rhino, NewPipe, InnerTubeX, QuickJS, TagLib,
+             * Ktor, protobuf-lite — is kept whole: see proguard-rules.pro.
+             * Breakage from a missing rule shows at runtime, not build time, so
+             * check playback and lyrics on a device after changing them.
              */
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

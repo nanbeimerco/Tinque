@@ -88,6 +88,10 @@
     <string name="streamed_song_no_file">This needs the song\'s file on the device</string>
     <string name="like_needs_sign_in">Sign in to like songs on YouTube Music</string>
     <string name="search_filter_all">All</string>
+    <string name="folder_empty">No songs in this folder</string>
+    <string name="local_search_placeholder">Search songs, albums, artists…</string>
+    <string name="clear_all_searches">Clear all</string>
+    <string name="no_results_for">No results for “%1$s”</string>
     <string name="no_album_information">No album information</string>
     <string name="no_artist_information">No artist information</string>
     <plurals name="artist_count">

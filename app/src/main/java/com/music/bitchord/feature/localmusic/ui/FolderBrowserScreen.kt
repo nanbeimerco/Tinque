@@ -469,38 +469,15 @@ fun FolderBrowserScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-
-                            if (node.totalSongCount > 0) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    FilledTonalButton(
-                                        onClick = { onShuffle(node.allSongs) },
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                        shape = RoundedCornerShape(12.dp),
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Shuffle,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp),
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Shuffle", style = MaterialTheme.typography.labelMedium)
-                                    }
-
-                                    Button(
-                                        onClick = { onSongClick(node.allSongs, 0) },
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                                        shape = RoundedCornerShape(12.dp),
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.PlayArrow,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp),
-                                        )
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Play", style = MaterialTheme.typography.labelMedium)
-                                    }
-                                }
-                            }
+                        }
+                        // Shuffle and play: the same row the album and playlist pages use.
+                        if (node.totalSongCount > 0) {
+                            com.music.bitchord.feature.localmusic.ui.components.DrillDownActionRow(
+                                songs = node.allSongs,
+                                onSongClick = onSongClick,
+                                onShuffle = onShuffle,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
                         }
                     }
                 }
@@ -522,7 +499,7 @@ fun FolderBrowserScreen(
                                 )
                                 Spacer(Modifier.height(8.dp))
                                 Text(
-                                    text = "No songs found in this folder",
+                                    text = androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.folder_empty),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

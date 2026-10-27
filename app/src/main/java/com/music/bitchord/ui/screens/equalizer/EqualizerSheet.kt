@@ -142,8 +142,53 @@ fun EqualizerSheet(
     }
 }
 
+/**
+ * Opens the equalizer as the app's own page (under the bottom bar), where the
+ * app provides one; null inside windows of their own, which keep the sheet.
+ */
+val LocalOpenEqualizer = androidx.compose.runtime.staticCompositionLocalOf<(() -> Unit)?> { null }
+
+/**
+ * The equalizer as a page inside the app's window, so the bottom bar floats
+ * over it as over any other page. Slides and fades as the sheet does.
+ * [bottomPadding] keeps its last controls clear of the bar.
+ */
 @Composable
-private fun EqualizerPage(onClose: () -> Unit, recordGlass: Boolean = true) {
+fun EqualizerPageHost(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    bottomPadding: androidx.compose.ui.unit.Dp,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInVertically(tween(320)) { it / 6 } + fadeIn(tween(220)),
+        exit = slideOutVertically(tween(240)) { it / 6 } + fadeOut(tween(200)),
+        modifier = modifier,
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            BackHandler(onBack = onDismiss)
+            com.music.bitchord.ui.components.GlassWindowScope {
+                // As in the sheet: the top buttons' glass records the page only
+                // once it has finished sliding in.
+                val settled = !transition.isRunning &&
+                    transition.currentState == androidx.compose.animation.EnterExitState.Visible
+                EqualizerPage(onClose = onDismiss, recordGlass = settled, bottomPadding = bottomPadding)
+            }
+        }
+    }
+}
+
+@Composable
+private fun EqualizerPage(
+    onClose: () -> Unit,
+    recordGlass: Boolean = true,
+    /** Room kept at the bottom: the bottom bar's, or the system bar's when null. */
+    bottomPadding: androidx.compose.ui.unit.Dp? = null,
+) {
     val enabled by EqualizerSettings.enabled.collectAsStateWithLifecycle()
     val presetId by EqualizerSettings.presetId.collectAsStateWithLifecycle()
     val bandLevels by EqualizerSettings.bandLevels.collectAsStateWithLifecycle()
@@ -291,7 +336,11 @@ private fun EqualizerPage(onClose: () -> Unit, recordGlass: Boolean = true) {
             )
 
             Spacer(Modifier.height(24.dp))
-            Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+            if (bottomPadding != null) {
+                Spacer(Modifier.height(bottomPadding))
+            } else {
+                Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+            }
         }
 
         // Status bar fade only — just enough for the clock to stay readable.

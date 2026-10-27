@@ -114,6 +114,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -131,6 +132,7 @@ import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.first
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -234,7 +236,7 @@ fun FloatingTabBar(
         AnimatedContent(
             targetState = scrollConnection.isInline,
             transitionSpec = { fadeIn() togetherWith fadeOut() },
-            contentAlignment = Alignment.BottomCenter
+            contentAlignment = Alignment.BottomCenter,
         ) { isInline ->
             if (isInline) {
                 InlineBar(
@@ -443,11 +445,14 @@ private fun SharedTransitionScope.InlineBar(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (accessory == null) Modifier.wrapContentWidth() else Modifier)
-            .height(IntrinsicSize.Max)
+            .cachedMaxIntrinsicHeight(inlineTab?.key, accessory != null, standaloneTab != null)
     ) {
         if (hasInlineTab) {
             InlineTab(
                 inlineTab = inlineTab,
+                // False while the standalone tab is the selected one: the
+                // inline tab is then only the last tab, not the current one.
+                isSelected = inlineTab.key == selectedTabKey,
                 onInlineTabClick = onInlineTabClick,
                 shapes = shapes,
                 sizes = sizes,
@@ -492,6 +497,7 @@ private fun SharedTransitionScope.InlineBar(
 @Composable
 private fun SharedTransitionScope.InlineTab(
     inlineTab: FloatingTabBarTab,
+    isSelected: Boolean,
     onInlineTabClick: () -> Unit,
     shapes: FloatingTabBarShapes,
     sizes: FloatingTabBarSizes,
@@ -529,7 +535,10 @@ private fun SharedTransitionScope.InlineTab(
             )
             .padding(sizes.tabInlineContentPadding)
     ) {
-        val inlineColor = if (colors.selectedContentColor != Color.Unspecified) {
+        // Unspecified falls back to the tab's own (unselected) tint.
+        val inlineColor = if (!isSelected) {
+            colors.unselectedContentColor
+        } else if (colors.selectedContentColor != Color.Unspecified) {
             colors.selectedContentColor
         } else if (colors.isArtworkTheme && colors.artworkColor != Color.Unspecified) {
             colors.artworkColor
@@ -682,7 +691,7 @@ private fun SharedTransitionScope.ExpandedBar(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(IntrinsicSize.Max)
+                .cachedMaxIntrinsicHeight(scope.tabs.map { it.key }, standaloneTab != null)
         ) {
             if (hasTabGroup) {
                 ExpandedTabs(
@@ -776,6 +785,33 @@ private fun SharedTransitionScope.ExpandedTabs(
         GlassSpring
     }
     val haptics = rememberHaptics()
+
+    // When the bar expands, the flat selection pill does not grow with it: it
+    // sits inside the bar's clip, which opens from the top down, so a pill shown
+    // early was revealed bottom-last. It waits, hidden, until the expansion has
+    // actually finished (not a fixed delay, which the bar's morph outlasted),
+    // then settles in whole: a fade with a slight grow. A bar that is simply
+    // there shows it at once.
+    val enterTransition = animatedVisibilityScope.transition
+    val expandingIn = enterTransition.currentState != EnterExitState.Visible &&
+        enterTransition.targetState == EnterExitState.Visible
+    val restPillAlpha = remember {
+        androidx.compose.animation.core.Animatable(if (expandingIn && !reduceAnimation) 0f else 1f)
+    }
+    LaunchedEffect(Unit) {
+        if (restPillAlpha.value < 1f) {
+            androidx.compose.runtime.snapshotFlow {
+                enterTransition.currentState == EnterExitState.Visible && !enterTransition.isRunning
+            }.first { it }
+            restPillAlpha.animateTo(
+                1f,
+                androidx.compose.animation.core.tween(
+                    PILL_FADE_IN_MS,
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing,
+                ),
+            )
+        }
+    }
 
     val pillMotionStyle by AppSettings.pillMotionStyle.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
@@ -888,7 +924,14 @@ private fun SharedTransitionScope.ExpandedTabs(
                             .pillPlacement(
                                 center = { pillCenterInRow(pill.position) },
                                 size = { restSize },
-                            ),
+                            )
+                            .graphicsLayer {
+                                val t = restPillAlpha.value
+                                alpha = t
+                                // 90% to full size as it fades in, so it settles rather than appears.
+                                scaleX = 0.9f + 0.1f * t
+                                scaleY = 0.9f + 0.1f * t
+                            },
                     )
                 }
 
@@ -1195,12 +1238,15 @@ private fun Modifier.animateEnterExitAccessory(
             }
         }
 
+        // The alpha is read in the layer block, not passed as a value: passed,
+        // it was read in composition, and the whole accessory (the mini
+        // player) recomposed on every frame of every fold.
         this@animateEnterExitAccessory
             .renderInSharedTransitionScopeOverlay()
-            .graphicsLayer(
-                compositingStrategy = CompositingStrategy.ModulateAlpha,
+            .graphicsLayer {
+                compositingStrategy = CompositingStrategy.ModulateAlpha
                 alpha = animatedAlpha
-            )
+            }
     }
 }
 
@@ -1531,4 +1577,45 @@ private fun Modifier.pillSplit(
                 this@drawWithContent.drawContent()
             }
         }
+}
+
+/** How long the flat pill takes to settle in once an expand has finished. */
+private const val PILL_FADE_IN_MS = 160
+
+
+/**
+ * `height(IntrinsicSize.Max)`, with the intrinsic height worked out once per
+ * width and per [keys] (what the row holds) instead of on every measure.
+ *
+ * Both bar rows are inside the shared transition, which lays its whole tree
+ * out twice a frame (lookahead and approach) while the bar folds; asking every
+ * tab and the mini player for their intrinsic heights on each of those passes
+ * was a large part of a frame. The answer only changes with the row's width
+ * or its contents, and the text size, which recomposes with new keys.
+ */
+@Composable
+private fun Modifier.cachedMaxIntrinsicHeight(vararg keys: Any?): Modifier {
+    val fontScale = LocalDensity.current.fontScale
+    val cache = remember(*keys, fontScale) { IntrinsicHeightCache() }
+    return this.then(
+        Modifier.layout { measurable, constraints ->
+            val width = constraints.maxWidth
+            val height = if (cache.width == width && cache.height >= 0) {
+                cache.height
+            } else {
+                measurable.maxIntrinsicHeight(width).also {
+                    cache.width = width
+                    cache.height = it
+                }
+            }
+            val fixed = height.coerceIn(constraints.minHeight, constraints.maxHeight)
+            val placeable = measurable.measure(constraints.copy(minHeight = fixed, maxHeight = fixed))
+            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+        },
+    )
+}
+
+private class IntrinsicHeightCache {
+    var width = -1
+    var height = -1
 }

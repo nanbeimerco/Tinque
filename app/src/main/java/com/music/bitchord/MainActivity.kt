@@ -131,6 +131,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.layout.layout
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -659,6 +660,34 @@ private fun BitChordApp(
     var showLastfmLogin by remember { mutableStateOf(false) }
     var showDownloadManager by remember { mutableStateOf(false) }
     var showEqualizerSheet by remember { mutableStateOf(false) }
+    // Tabs opened so far, kept built (see the page host).
+    val keptTabs = remember { androidx.compose.runtime.mutableStateListOf<Int>() }
+    val lifecycleForParked = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val parkedBackOwner = remember(lifecycleForParked) {
+        object : androidx.activity.OnBackPressedDispatcherOwner {
+            override val lifecycle get() = lifecycleForParked.lifecycle
+            override val onBackPressedDispatcher = androidx.activity.OnBackPressedDispatcher()
+        }
+    }
+    // The equalizer is a page under the bottom bar. Opened from the player,
+    // the player folds down to the mini player first (playback carries on)
+    // and comes back up when the equalizer is closed.
+    var equalizerReturnsToPlayer by remember { mutableStateOf(false) }
+    val openEqualizer: () -> Unit = {
+        val fromPlayer = showNowPlaying && !playerDocked
+        equalizerReturnsToPlayer = fromPlayer
+        if (fromPlayer) {
+            if (reducePlayerMotion) showNowPlaying = false else playerSheetMotion.close()
+        }
+        showEqualizerSheet = true
+    }
+    val closeEqualizer: () -> Unit = {
+        showEqualizerSheet = false
+        if (equalizerReturnsToPlayer) {
+            equalizerReturnsToPlayer = false
+            if (reducePlayerMotion) showNowPlaying = true else playerSheetMotion.open()
+        }
+    }
     var showPlaybackTuning by remember { mutableStateOf(false) }
     var targetAlbumDrillDown by remember { mutableStateOf<String?>(null) }
     var targetArtistDrillDown by remember { mutableStateOf<String?>(null) }
@@ -1914,7 +1943,7 @@ private fun BitChordApp(
             onQuickPlaybackTuning = { showPlaybackTuning = true },
             onQuickMenuAction = { action ->
                 when (action) {
-                    PlayerQuickAction.EQUALIZER -> showEqualizerSheet = true
+                    PlayerQuickAction.EQUALIZER -> openEqualizer()
                     PlayerQuickAction.SHARE_FILE -> {
                         if (song.localUri != null || song.localPath != null) {
                             LocalSongActionsHelper.shareSong(context, song)
@@ -2065,43 +2094,13 @@ private fun BitChordApp(
         CompositionLocalProvider(
             LocalEditLyricsAction provides openLyricsEditor,
             LocalSongSelection provides songSelection,
+            com.music.bitchord.ui.screens.equalizer.LocalOpenEqualizer provides openEqualizer,
         ) {
         Row(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxHeight()) {
-                AnimatedContent(
-                    targetState = when {
-                        detail != null -> detail.browseId
-                        showSettings -> "settings"
-                        showReplay -> "replay"
-                        else -> "$TAB_KEY$selectedTab"
-                    },
-                    transitionSpec = {
-                        val tabSwap = initialState.startsWith(TAB_KEY) && targetState.startsWith(TAB_KEY)
-                        if (tabSwap) {
-                            EnterTransition.None togetherWith ExitTransition.None
-                        } else {
-                            fadeIn(tween(180)) togetherWith fadeOut(tween(180))
-                        }
-                    },
-                    modifier = Modifier
-                        .hazeSource(hazeState)
-                        .then(
-                            if (useCollapsibleNavBar) {
-                                Modifier
-                                    .then(
-                                        if (glassSamplesBackdrop) {
-                                            Modifier.layerBackdrop(appBackdrop)
-                                        } else {
-                                            Modifier
-                                        },
-                                    )
-                                    .nestedScroll(navBarScroll)
-                            } else {
-                                Modifier
-                            },
-                        ),
-                    label = "content",
-                ) { key ->
+                // One page's content, for the page [key] names: a tab ("tab:N"),
+                // an opened release, Settings or Replay.
+                val pageBody: @Composable (String) -> Unit = { key ->
                     // Each tab/page keeps its saved state (scroll position, opened
                     // playlist, filter…) while another one is showing, so coming
                     // back to a tab lands where it was left.
@@ -2654,6 +2653,79 @@ private fun BitChordApp(
                     }
                     }
                 }
+                Box(
+                    modifier = Modifier
+                        .hazeSource(hazeState)
+                        .then(
+                            if (useCollapsibleNavBar) {
+                                Modifier
+                                    .then(
+                                        if (glassSamplesBackdrop) {
+                                            Modifier.layerBackdrop(appBackdrop)
+                                        } else {
+                                            Modifier
+                                        },
+                                    )
+                                    .nestedScroll(navBarScroll)
+                            } else {
+                                Modifier
+                            },
+                        ),
+                ) {
+                AnimatedContent(
+                    targetState = when {
+                        detail != null -> detail.browseId
+                        showSettings -> "settings"
+                        showReplay -> "replay"
+                        // All the tabs are one page: they live side by side in it (see below).
+                        else -> TAB_KEY
+                    },
+                    transitionSpec = {
+                        val tabSwap = initialState.startsWith(TAB_KEY) && targetState.startsWith(TAB_KEY)
+                        if (tabSwap) {
+                            EnterTransition.None togetherWith ExitTransition.None
+                        } else {
+                            fadeIn(tween(180)) togetherWith fadeOut(tween(180))
+                        }
+                    },
+                    label = "content",
+                ) { key ->
+                    if (key == TAB_KEY) {
+                        // Every tab opened so far stays built, side by side: a tab
+                        // switch shows another one instead of building its page
+                        // from nothing. The ones not showing are neither laid out
+                        // nor drawn, and Back does not reach them.
+                        val tabsHere = (keptTabs + selectedTab).distinct()
+                            .filter { it == selectedTab || it in visibleTabIndices }
+                        SideEffect { if (selectedTab !in keptTabs) keptTabs.add(selectedTab) }
+                        Box(Modifier.fillMaxSize()) {
+                            tabsHere.forEach { tab ->
+                                androidx.compose.runtime.key(tab) {
+                                    val showing = tab == selectedTab
+                                    Box(Modifier.fillMaxSize().shownOrParked(showing)) {
+                                        if (showing) {
+                                            pageBody("$TAB_KEY$tab")
+                                        } else {
+                                            CompositionLocalProvider(
+                                                androidx.activity.compose.LocalOnBackPressedDispatcherOwner provides parkedBackOwner,
+                                            ) { pageBody("$TAB_KEY$tab") }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        pageBody(key)
+                    }
+                }
+                // The equalizer, as a page: inside the recorded layer, so the
+                // bottom bar's glass shows it, and under the bars.
+                com.music.bitchord.ui.screens.equalizer.EqualizerPageHost(
+                    visible = showEqualizerSheet,
+                    onDismiss = closeEqualizer,
+                    bottomPadding = listPadding.calculateBottomPadding(),
+                )
+                }
 
                 // Every top bar is a fade rather than a pane — see [TopFadeBlur].
                 // Drawn before the bar so the bar's own content sits on top of it.
@@ -2695,7 +2767,7 @@ private fun BitChordApp(
                 val showCollectionSortAction = detail != null && !isLocalDetail && detail.type != BrowseType.ARTIST
                 // Back and settings stay on screen everywhere — including opened
                 // albums and folders — each on its own round glass.
-                run {
+                if (!showEqualizerSheet) run {
                     val selecting = songSelection.active
                     FrostedTopBar(
                         title = when {
@@ -2778,6 +2850,12 @@ private fun BitChordApp(
                 // One tab handler, whichever bar is drawing it.
                 val onTabSelected: (Int) -> Unit = onTabSelected@{ visibleIndex ->
                     val index = visibleTabIndices.getOrNull(visibleIndex) ?: return@onTabSelected
+                    // A tab is a place to go: the equalizer page closes on the way,
+                    // and does not reopen the player it may have come from.
+                    if (showEqualizerSheet) {
+                        equalizerReturnsToPlayer = false
+                        showEqualizerSheet = false
+                    }
                     if (index == TAB_SEARCH && selectedTab == TAB_SEARCH) {
                         searchFocusTrigger++
                     } else {
@@ -2951,11 +3029,38 @@ private fun BitChordApp(
             // put it away and nothing to put it away for — the pane is its
             // own space rather than something borrowed from the page.
             if (playerDocked) {
-                DockedPlayer(
-                    song = playerSong,
-                    width = dockedPlayerWidth(windowWidth),
-                    content = { current -> nowPlaying(current, true) },
+                // The page's own colours where it meets the pane, top and foot,
+                // for the pane to start from: the two run into each other there
+                // instead of meeting at an edge. The same reading the top fade
+                // takes of the page.
+                val seamDetail = detail != null && !isLocalDetail && !showSettings && !showReplay
+                val seamLocal = localCollectionPalette != null && detail == null && !showSettings && !showReplay
+                val seam = com.music.bitchord.ui.player.DockSeam(
+                    top = when {
+                        showReplay -> Color.Black
+                        seamDetail -> detailPalette.wash
+                        seamLocal -> localCollectionPalette!!.wash
+                        else -> MaterialTheme.colorScheme.background
+                    },
+                    bottom = when {
+                        showReplay -> Color.Black
+                        seamDetail -> detailPalette.background
+                        // A device album or playlist is washed one colour top
+                        // to foot (see DrillDownSongList), not shaded down.
+                        seamLocal -> localCollectionPalette!!.wash
+                        else -> MaterialTheme.colorScheme.background
+                    },
+                    // The bottom scrim the page has, as BottomFadeScrim is given it.
+                    footColor = if (seamDetail) detailPalette.background else MaterialTheme.colorScheme.background,
+                    footHeight = com.music.bitchord.ui.components.bottomFadeScrimHeight(),
                 )
+                CompositionLocalProvider(com.music.bitchord.ui.player.LocalDockSeam provides seam) {
+                    DockedPlayer(
+                        song = playerSong,
+                        width = dockedPlayerWidth(windowWidth),
+                        content = { current -> nowPlaying(current, true) },
+                    )
+                }
             }
         }
         }
@@ -3347,7 +3452,7 @@ private fun BitChordApp(
                         },
                         onEqualizer = {
                             songActions = null
-                            showEqualizerSheet = true
+                            openEqualizer()
                         },
                         onPlaybackTuning = {
                             songActions = null
@@ -3408,7 +3513,7 @@ private fun BitChordApp(
                         },
                         onEqualizer = {
                             songActions = null
-                            showEqualizerSheet = true
+                            openEqualizer()
                         },
                         onPlaybackTuning = {
                             songActions = null
@@ -3460,11 +3565,6 @@ private fun BitChordApp(
             }
         }
 
-        if (showEqualizerSheet) {
-            EqualizerSheet(
-                onDismiss = { showEqualizerSheet = false },
-            )
-        }
 
         if (showPlaybackTuning) {
             PlaybackTuningDialog(
@@ -4229,3 +4329,14 @@ private object PlayerSheetShape : Shape {
     override fun createOutline(size: Size, layoutDirection: LayoutDirection, density: Density): Outline =
         Outline.Rectangle(Rect(0f, -size.height, size.width, size.height))
 }
+
+/** Lays the page out and shows it, or keeps it composed but unmeasured and unplaced. */
+private fun Modifier.shownOrParked(shown: Boolean): Modifier =
+    layout { measurable, constraints ->
+        if (!shown) {
+            layout(0, 0) {}
+        } else {
+            val placeable = measurable.measure(constraints)
+            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+        }
+    }

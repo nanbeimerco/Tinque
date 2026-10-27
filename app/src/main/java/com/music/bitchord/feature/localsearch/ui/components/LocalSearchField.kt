@@ -41,7 +41,7 @@ fun LocalSearchField(
     onQueryChange: (String) -> Unit,
     onSearch: () -> Unit,
     modifier: Modifier = Modifier,
-    placeholder: String = "Search songs, albums, artists...",
+    placeholder: String? = null,
     autoFocus: Boolean = false,
     focusTrigger: Int = 0,
 ) {
@@ -89,7 +89,7 @@ fun LocalSearchField(
         ) {
             if (query.isEmpty()) {
                 Text(
-                    text = placeholder,
+                    text = placeholder ?: androidx.compose.ui.res.stringResource(com.music.bitchord.R.string.local_search_placeholder),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 )
