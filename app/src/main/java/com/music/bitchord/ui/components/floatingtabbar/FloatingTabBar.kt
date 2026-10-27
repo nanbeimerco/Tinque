@@ -42,10 +42,10 @@ package com.music.bitchord.ui.components.floatingtabbar
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.EnterExitState
+import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloat
@@ -132,7 +132,8 @@ import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import androidx.compose.ui.unit.Constraints
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -508,12 +509,9 @@ private fun SharedTransitionScope.InlineTab(
     tabBarContentModifier: @Composable () -> Modifier
 ) {
     Box(
+        contentAlignment = Alignment.Center,
         modifier = modifier
-            .sharedElement(
-                sharedContentState = rememberSharedContentState("tabGroup"),
-                animatedVisibilityScope = animatedVisibilityScope,
-                zIndexInOverlay = 1f
-            )
+            .then(morphBounds("tabGroup", animatedVisibilityScope))
             .shadow(
                 shape = shapes.tabBarShape,
                 elevation = elevations.inlineElevation
@@ -559,7 +557,9 @@ private fun SharedTransitionScope.InlineTab(
                     }
                 },
                 title = { inlineTab.title() },
-                isInline = true
+                isInline = true,
+                // Laid out at its own size while the surface around it morphs.
+                modifier = Modifier.skipToLookaheadSize(),
             )
         }
     }
@@ -581,11 +581,7 @@ private fun SharedTransitionScope.InlineStandaloneTab(
         isInline = true,
         isStandalone = true,
         modifier = modifier
-            .sharedElement(
-                sharedContentState = rememberSharedContentState("standaloneTab"),
-                animatedVisibilityScope = animatedVisibilityScope,
-                zIndexInOverlay = 1f
-            )
+            .then(morphBounds("standaloneTab", animatedVisibilityScope))
             .shadow(
                 shape = shapes.standaloneTabShape,
                 elevation = elevations.inlineElevation
@@ -786,32 +782,24 @@ private fun SharedTransitionScope.ExpandedTabs(
     }
     val haptics = rememberHaptics()
 
-    // When the bar expands, the flat selection pill does not grow with it: it
-    // sits inside the bar's clip, which opens from the top down, so a pill shown
-    // early was revealed bottom-last. It waits, hidden, until the expansion has
-    // actually finished (not a fixed delay, which the bar's morph outlasted),
-    // then settles in whole: a fade with a slight grow. A bar that is simply
-    // there shows it at once.
-    val enterTransition = animatedVisibilityScope.transition
-    val expandingIn = enterTransition.currentState != EnterExitState.Visible &&
-        enterTransition.targetState == EnterExitState.Visible
-    val restPillAlpha = remember {
-        androidx.compose.animation.core.Animatable(if (expandingIn && !reduceAnimation) 0f else 1f)
-    }
-    LaunchedEffect(Unit) {
-        if (restPillAlpha.value < 1f) {
-            androidx.compose.runtime.snapshotFlow {
-                enterTransition.currentState == EnterExitState.Visible && !enterTransition.isRunning
-            }.first { it }
-            restPillAlpha.animateTo(
-                1f,
-                androidx.compose.animation.core.tween(
-                    PILL_FADE_IN_MS,
-                    easing = androidx.compose.animation.core.FastOutSlowInEasing,
-                ),
-            )
-        }
-    }
+    // How far the bar is through its expand (0 = still the inline bar, 1 =
+    // fully expanded), and back down on a collapse. The surface morphs with its
+    // bottom edge fixed (see [morphBounds]) and the flat pill is sized from the
+    // surface on every frame, so nothing needs to wait for the morph to end:
+    // the pill fades in with it, and a collapse interrupted halfway simply
+    // turns around. A bar that is simply there starts at 1.
+    val expandProgress by animatedVisibilityScope.transition.animateFloat(
+        transitionSpec = { androidx.compose.animation.core.tween(PILL_EXPAND_FADE_MS) },
+        label = "tabBarExpandProgress",
+    ) { if (it == EnterExitState.Visible) 1f else 0f }
+
+    // Back from the standalone tab there is no tab for the pill to travel
+    // from, so it grows in place instead — on the same spring the icon scales
+    // on, so the two start and settle together, as they do between tabs.
+    val pillPop = remember { androidx.compose.animation.core.Animatable(1f) }
+    // A tap on the tab that is already selected: a small press in the icon,
+    // since nothing else on the bar moves.
+    val reselectPress = remember { androidx.compose.animation.core.Animatable(1f) }
 
     val pillMotionStyle by AppSettings.pillMotionStyle.collectAsStateWithLifecycle()
     val coroutineScope = rememberCoroutineScope()
@@ -878,8 +866,15 @@ private fun SharedTransitionScope.ExpandedTabs(
             // Back from the standalone tab there is no tab to travel from.
             if (lastSelectedTabIndex < 0) {
                 pill.snapTo(selectedTabIndex)
-            } else if (!pill.isDragging) {
-                pill.animateTo(selectedTabIndex)
+                if (!reduceAnimation) {
+                    launch {
+                        pillPop.snapTo(0f)
+                        pillPop.animateTo(1f, selectionSpec)
+                    }
+                }
+            } else {
+                pillPop.snapTo(1f)
+                if (!pill.isDragging) pill.animateTo(selectedTabIndex)
             }
         }
         lastSelectedTabIndex = selectedTabIndex
@@ -889,12 +884,7 @@ private fun SharedTransitionScope.ExpandedTabs(
     // Unclipped: the lifted pill stands past the bar's edges, so it is drawn
     // here, over the bar, rather than inside the bar's clip.
     Box(
-        modifier = modifier
-            .sharedElement(
-                sharedContentState = rememberSharedContentState("tabGroup"),
-                animatedVisibilityScope = animatedVisibilityScope,
-                zIndexInOverlay = 1f
-            )
+        modifier = modifier.then(morphBounds("tabGroup", animatedVisibilityScope))
     ) {
         // The bar's glass is exported for the lens to refract only while the
         // glass selection pill is lifted/travelling.
@@ -913,7 +903,6 @@ private fun SharedTransitionScope.ExpandedTabs(
                     .clip(shapes.tabBarShape)
                     .then(tabBarContentModifier())
                     .padding(contentPadding)
-                    .animateContentSize()
             ) {
                 if (showPill && (pill.isFlat || !glassPill)) {
                     FlatSelectionPill(
@@ -921,22 +910,50 @@ private fun SharedTransitionScope.ExpandedTabs(
                         isLifted = !pill.isFlat,
                         modifier = Modifier
                             .matchParentSize()
-                            .pillPlacement(
-                                center = { pillCenterInRow(pill.position) },
-                                size = { restSize },
-                            )
+                            // Sized from the surface as it is this frame, not
+                            // from the row's last reported size, so while the
+                            // bar morphs the pill always fits inside it.
+                            .layout { measurable, constraints ->
+                                // The bar's height is worked out by asking for its
+                                // intrinsic height, which measures this with no
+                                // height limit (after a rotation or an unfold). The
+                                // pill takes no room of its own, so it says so —
+                                // building fixed constraints from an unbounded
+                                // height crashed the app.
+                                if (!constraints.hasBoundedWidth || !constraints.hasBoundedHeight) {
+                                    return@layout layout(constraints.minWidth, constraints.minHeight) {}
+                                }
+                                val w = constraints.maxWidth.toFloat()
+                                val h = constraints.maxHeight
+                                val cell = if (tabCount > 0) {
+                                    ((w - tabSpacingPx * (tabCount - 1)) / tabCount).coerceAtLeast(1f)
+                                } else {
+                                    1f
+                                }
+                                val placeable = measurable.measure(
+                                    Constraints.fixed(cell.roundToInt().coerceAtLeast(1), h.coerceAtLeast(1)),
+                                )
+                                layout(constraints.maxWidth, h) {
+                                    val x = pill.position * (cell + tabSpacingPx) + cell / 2f
+                                    val cx = if (isRtl) w - x else x
+                                    placeable.place((cx - cell / 2f).roundToInt(), 0)
+                                }
+                            }
                             .graphicsLayer {
-                                val t = restPillAlpha.value
-                                alpha = t
-                                // 90% to full size as it fades in, so it settles rather than appears.
-                                scaleX = 0.9f + 0.1f * t
-                                scaleY = 0.9f + 0.1f * t
+                                val pop = pillPop.value
+                                alpha = expandProgress * pop.coerceIn(0f, 1f)
+                                val s = 0.3f + 0.7f * pop
+                                scaleX = s
+                                scaleY = s
                             },
                     )
                 }
 
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(sizes.tabSpacing),
+                    // Tabs keep their own size while the surface morphs; centred,
+                    // they ride its middle up instead of hanging off its top.
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
                         .onSizeChanged { rowSize = it }
@@ -1000,6 +1017,20 @@ private fun SharedTransitionScope.ExpandedTabs(
                                             if (activeTab != currentSelectedTabIndex) {
                                                 scope.tabs[activeTab].onClick()
                                             }
+                                        } else if (!tabChanged) {
+                                            // A plain tap on the tab that is already
+                                            // selected still goes to the app: it closes
+                                            // whatever is open over the tab (settings,
+                                            // the equalizer) and takes it back to its top.
+                                            // Sent on release, so starting to drag the
+                                            // pill never triggers it.
+                                            scope.tabs[activeTab].onClick()
+                                            if (!reduceAnimation) {
+                                                coroutineScope.launch {
+                                                    reselectPress.animateTo(0.86f, androidx.compose.animation.core.tween(90))
+                                                    reselectPress.animateTo(1f, selectionSpec)
+                                                }
+                                            }
                                         }
                                         break
                                     }
@@ -1054,11 +1085,12 @@ private fun SharedTransitionScope.ExpandedTabs(
                                             animatedVisibilityScope = animatedVisibilityScope
                                         )
                                     }).graphicsLayer {
-                                        scaleX = iconScale
-                                        scaleY = iconScale
+                                        val pop = if (isSelected) reselectPress.value else 1f
+                                        scaleX = iconScale * pop
+                                        scaleY = iconScale * pop
                                     }
                                 ) {
-                                    val hasArtwork = showPill && colors.isArtworkTheme && colors.artworkColor != Color.Unspecified
+                                    val hasArtwork = selectedTabIndex >= 0 && colors.isArtworkTheme && colors.artworkColor != Color.Unspecified
 
                                     // Normal colour outside the pill, accent inside — split
                                     // along the pill's real capsule outline (see [pillSplit]).
@@ -1068,6 +1100,7 @@ private fun SharedTransitionScope.ExpandedTabs(
                                             inside = false,
                                             row = rowCoords,
                                             pillRect = pillRectInRow,
+                                                    fallbackInside = isSelected,
                                         )
                                     ) {
                                         CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.unselectedContentColor) {
@@ -1084,6 +1117,7 @@ private fun SharedTransitionScope.ExpandedTabs(
                                                     inside = true,
                                                     row = rowCoords,
                                                     pillRect = pillRectInRow,
+                                                    fallbackInside = isSelected,
                                                 )
                                         ) {
                                             CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.artworkColor) {
@@ -1100,7 +1134,7 @@ private fun SharedTransitionScope.ExpandedTabs(
                                         animatedVisibilityScope = animatedVisibilityScope
                                     )
                                 ) {
-                                    val hasArtwork = showPill && colors.isArtworkTheme && colors.artworkColor != Color.Unspecified
+                                    val hasArtwork = selectedTabIndex >= 0 && colors.isArtworkTheme && colors.artworkColor != Color.Unspecified
 
                                     Box(
                                         modifier = Modifier.pillSplit(
@@ -1108,6 +1142,7 @@ private fun SharedTransitionScope.ExpandedTabs(
                                             inside = false,
                                             row = rowCoords,
                                             pillRect = pillRectInRow,
+                                                    fallbackInside = isSelected,
                                         )
                                     ) {
                                         CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.unselectedContentColor) {
@@ -1124,6 +1159,7 @@ private fun SharedTransitionScope.ExpandedTabs(
                                                     inside = true,
                                                     row = rowCoords,
                                                     pillRect = pillRectInRow,
+                                                    fallbackInside = isSelected,
                                                 )
                                         ) {
                                             CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.artworkColor) {
@@ -1178,11 +1214,7 @@ private fun SharedTransitionScope.ExpandedStandaloneTab(
         isInline = false,
         isStandalone = true,
         modifier = modifier
-            .sharedElement(
-                sharedContentState = rememberSharedContentState("standaloneTab"),
-                animatedVisibilityScope = animatedVisibilityScope,
-                zIndexInOverlay = 1f
-            )
+            .then(morphBounds("standaloneTab", animatedVisibilityScope))
             .shadow(
                 shape = shapes.standaloneTabShape,
                 elevation = elevations.expandedElevation
@@ -1541,6 +1573,12 @@ private fun Modifier.pillSplit(
     inside: Boolean,
     row: CoordsHolder,
     pillRect: () -> Rect,
+    /**
+     * Which half draws while the pill's place is not known yet (the first
+     * frames of a freshly expanded bar, before the row has a size): the
+     * selected tab stays in its accent colour rather than flashing white.
+     */
+    fallbackInside: Boolean = false,
 ): Modifier {
     val mine = remember { CoordsHolder() }
     if (!enabled) return this
@@ -1549,11 +1587,13 @@ private fun Modifier.pillSplit(
         .drawWithContent {
             val rowCoords = row.coords
             val myCoords = mine.coords
-            if (rowCoords == null || myCoords == null || !rowCoords.isAttached || !myCoords.isAttached) {
-                if (!inside) drawContent()
+            val rect = pillRect()
+            if (rowCoords == null || myCoords == null || !rowCoords.isAttached || !myCoords.isAttached ||
+                rect.width <= 0f || rect.height <= 0f
+            ) {
+                if (inside == fallbackInside) drawContent()
                 return@drawWithContent
             }
-            val rect = pillRect()
             val topLeft = myCoords.localPositionOf(rowCoords, rect.topLeft)
             val bottomRight = myCoords.localPositionOf(rowCoords, rect.bottomRight)
             val local = Rect(topLeft, bottomRight)
@@ -1579,8 +1619,34 @@ private fun Modifier.pillSplit(
         }
 }
 
-/** How long the flat pill takes to settle in once an expand has finished. */
-private const val PILL_FADE_IN_MS = 160
+/** How long the flat pill takes to fade in (or out) with an expand (or collapse). */
+private const val PILL_EXPAND_FADE_MS = 280
+
+/**
+ * The bar's surfaces (the tab group and the standalone circle) morphing
+ * between the inline and expanded bars.
+ *
+ * Remeasured to the animating bounds on every frame, rather than drawn once
+ * at the final size and moved by its top-left corner: moved, the taller
+ * expanded bar started below where it ends and rose into place, its lower part
+ * cut off by the bar's bottom edge. Remeasured, the surface grows from where it
+ * is, and since both bars share the bottom edge, only its top moves.
+ */
+@Composable
+private fun SharedTransitionScope.morphBounds(
+    key: String,
+    animatedVisibilityScope: AnimatedVisibilityScope,
+): Modifier = Modifier.sharedBounds(
+    sharedContentState = rememberSharedContentState(key),
+    animatedVisibilityScope = animatedVisibilityScope,
+    // The arriving surface is solid from the first frame and only the leaving
+    // one fades: crossfading both left the glass half see-through mid-morph.
+    // What sits on the arriving surface (labels, the pill) fades in on its own.
+    enter = EnterTransition.None,
+    exit = fadeOut(),
+    resizeMode = SharedTransitionScope.ResizeMode.RemeasureToBounds,
+    zIndexInOverlay = 1f,
+)
 
 
 /**

@@ -477,11 +477,24 @@ fun LibraryScreen(
     LaunchedEffect(resetToTopSignal) {
         if (resetToTopSignal != lastResetSignal) {
             lastResetSignal = resetToTopSignal
+            // Already on the main list with "All" showing: nothing changes
+            // place, so the list glides back to the top (iOS's tab re-tap)
+            // instead of jumping there. A long way down it jumps most of the
+            // way first, so the glide never takes long.
+            val alreadyAtRoot = !inDrillDown && !inHistoryView && selectedFilter == LibraryFilter.ALL
             leaveDrillDown()
             selectedFilter = LibraryFilter.ALL
-            // Non-suspending: the list may not be laid out (e.g. a drill-down is showing).
-            collectionListState.requestScrollToItem(0)
-            collectionGridState.requestScrollToItem(0)
+            if (alreadyAtRoot && collectionListState.layoutInfo.totalItemsCount > 0) {
+                if (collectionListState.firstVisibleItemIndex > 8) collectionListState.scrollToItem(8)
+                collectionListState.animateScrollToItem(0)
+            } else if (alreadyAtRoot && collectionGridState.layoutInfo.totalItemsCount > 0) {
+                if (collectionGridState.firstVisibleItemIndex > 12) collectionGridState.scrollToItem(12)
+                collectionGridState.animateScrollToItem(0)
+            } else {
+                // Non-suspending: the list may not be laid out (e.g. a drill-down is showing).
+                collectionListState.requestScrollToItem(0)
+                collectionGridState.requestScrollToItem(0)
+            }
         }
     }
 

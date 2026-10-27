@@ -158,6 +158,44 @@ object BitChordIcons {
         }.build()
     }
 
+    /**
+     * "Play next", for the selection toolbar beside Material's QueueMusic and
+     * PlaylistAdd. The three lines are QueueMusic's exactly (same lengths,
+     * heights and weight); the play mark sits in the space the short third
+     * line leaves, its top level with that line's top and its bottom level
+     * with the bottoms of QueueMusic's note and PlaylistAdd's plus. Material's
+     * own PlaylistPlay has a much smaller mark and read a size smaller.
+     */
+    val PlayNext: ImageVector by lazy {
+        ImageVector.Builder(
+            name = "bc_play_next",
+            defaultWidth = 24.dp, defaultHeight = 24.dp,
+            viewportWidth = 24f, viewportHeight = 24f,
+        ).apply {
+            path(
+                stroke = stroke,
+                strokeLineWidth = 2f,
+                strokeLineCap = StrokeCap.Round,
+            ) {
+                moveTo(4f, 7f); horizontalLineTo(14f)
+                moveTo(4f, 11f); horizontalLineTo(14f)
+                moveTo(4f, 15f); horizontalLineTo(10f)
+            }
+            // Outline 13..18.4 x 14..20 once the 1.2 rounding stroke is added.
+            path(
+                fill = stroke,
+                stroke = stroke,
+                strokeLineWidth = 1.2f,
+                strokeLineJoin = StrokeJoin.Round,
+            ) {
+                moveTo(13.6f, 14.6f)
+                lineTo(17.8f, 17f)
+                lineTo(13.6f, 19.4f)
+                close()
+            }
+        }.build()
+    }
+
     val Explore: ImageVector by lazy {
         ImageVector.Builder(
             name = "bc_explore",

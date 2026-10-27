@@ -42,8 +42,16 @@ class PlayerDock {
      * on every scroll that folds it, and working out a screen position for each
      * of those frames would be paid for by a player that isn't open.
      */
-    private var miniArt: LayoutCoordinates? = null
-    private var miniArtCorner: Dp = 8.dp
+    // Every cover on screen, latest placed last. While the bar folds, the
+    // inline and expanded mini players are both composed and both report;
+    // holding only the last one meant that when the leaving bar's cover was
+    // released, the dock was left with none — and with no cover to fly to, a
+    // folded bar opened and closed the player with the plain sheet slide.
+    private val covers = ArrayList<Pair<LayoutCoordinates, Dp>>(2)
+    private val miniArt: LayoutCoordinates?
+        get() = covers.lastOrNull { it.first.isAttached }?.first
+    private val miniArtCorner: Dp
+        get() = covers.lastOrNull { it.first.isAttached }?.second ?: 8.dp
 
     /**
      * How far the player sheet sits below fully open, in pixels. Set by the
@@ -65,13 +73,15 @@ class PlayerDock {
 
     /** Reported by the mini player's cover whenever it is placed. */
     fun reportMiniArt(coordinates: LayoutCoordinates, corner: Dp) {
-        miniArt = coordinates
-        miniArtCorner = corner
+        val last = covers.lastOrNull()
+        if (last != null && last.first === coordinates && last.second == corner) return
+        covers.removeAll { it.first === coordinates || !it.first.isAttached }
+        covers.add(coordinates to corner)
     }
 
     /** From the cover leaving composition, so a stale rect is never flown to. */
     fun releaseMiniArt(coordinates: LayoutCoordinates) {
-        if (miniArt === coordinates) miniArt = null
+        covers.removeAll { it.first === coordinates }
     }
 
     fun hasMiniArt(): Boolean = miniArt?.isAttached == true

@@ -27,7 +27,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Velocity
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.sign
@@ -65,11 +65,21 @@ private fun inverseRubberBand(bandedDistance: Float, containerPx: Float): Float 
  * It replaces Android's stretch/glow with a UIScrollView-like rubber band during a
  * drag, then critically damps the content back to its resting position on release.
  */
-private class IosOverscrollEffect : OverscrollEffect {
+private class IosOverscrollEffect(private val scope: CoroutineScope) : OverscrollEffect {
     private val rawPullX = mutableFloatStateOf(0f)
     private val rawPullY = mutableFloatStateOf(0f)
     private var containerWidthPx = 0f
     private var containerHeightPx = 0f
+
+    /**
+     * The spring back after a release, run on its own job so a new touch can
+     * stop it. Run inline in [applyToFling], nothing stopped it: a drag that
+     * began while a stretch was springing back fought the spring for the same
+     * value every frame, and the spring won — the finger's first movement at
+     * a list's end was swallowed, and the scroll started late and short.
+     * Stopped, the finger catches the stretch where it is, as on iOS.
+     */
+    private var settleJob: Job? = null
 
     override val isInProgress: Boolean
         get() = rawPullX.floatValue != 0f || rawPullY.floatValue != 0f
@@ -79,6 +89,7 @@ private class IosOverscrollEffect : OverscrollEffect {
         source: NestedScrollSource,
         performScroll: (Offset) -> Offset,
     ): Offset {
+        if (source == NestedScrollSource.UserInput) settleJob?.cancel()
         // When pulling back from an existing stretch, settle the stretch before
         // allowing the list itself to scroll. This keeps the motion continuous.
         val paidX = payDown(rawPullX, delta.x, containerWidthPx)
@@ -108,14 +119,18 @@ private class IosOverscrollEffect : OverscrollEffect {
         velocity: Velocity,
         performFling: suspend (Velocity) -> Velocity,
     ) {
+        settleJob?.cancel()
         val consumed = performFling(velocity)
         val leftover = velocity - consumed
         if (!isInProgress && leftover == Velocity.Zero) return
 
-        coroutineScope {
+        val job = scope.launch {
             launch { settle(rawPullX, leftover.x) }
             launch { settle(rawPullY, leftover.y) }
         }
+        settleJob = job
+        // Returns early, without throwing, when a new touch cancels the job.
+        job.join()
     }
 
     /**
@@ -197,7 +212,7 @@ private class IosOverscrollFactory(
     private val density: Density,
     private val scope: CoroutineScope,
 ) : OverscrollFactory {
-    override fun createOverscrollEffect(): OverscrollEffect = IosOverscrollEffect()
+    override fun createOverscrollEffect(): OverscrollEffect = IosOverscrollEffect(scope)
 
     override fun equals(other: Any?): Boolean =
         other is IosOverscrollFactory && other.density == density && other.scope === scope

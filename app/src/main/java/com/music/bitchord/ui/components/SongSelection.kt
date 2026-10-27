@@ -225,7 +225,7 @@ fun SelectionActionToolbar(
             val addToQueue = stringResource(R.string.add_to_queue)
             val addToPlaylist = stringResource(R.string.add_to_playlist)
             val deleteLabel = stringResource(R.string.delete)
-            ToolbarAction(Icons.Rounded.PlaylistPlay, playNext, palette.content, onHold = { tip = playNext }) { act(onPlayNext) }
+            ToolbarAction(com.music.bitchord.ui.icons.BitChordIcons.PlayNext, playNext, palette.content, onHold = { tip = playNext }) { act(onPlayNext) }
             ToolbarAction(Icons.AutoMirrored.Rounded.QueueMusic, addToQueue, palette.content, onHold = { tip = addToQueue }) { act(onAddToQueue) }
             ToolbarAction(Icons.Rounded.PlaylistAdd, addToPlaylist, palette.content, onHold = { tip = addToPlaylist }) { act(onAddToPlaylist) }
             if (delete != null) {
