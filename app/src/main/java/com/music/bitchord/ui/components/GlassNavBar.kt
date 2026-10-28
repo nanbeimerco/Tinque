@@ -429,11 +429,14 @@ private fun GlassNowPlaying(
                             modifier = Modifier.fixedLineHeight(titleStyle),
                         )
                         // Folds its height away as well as fading, so the
-                        // title alone is centred in the inline row.
+                        // title alone is centred in the inline row. Outside
+                        // the fixed line height, not inside it: inside, the
+                        // fixed height held the line's room open after it
+                        // had folded, and the title sat above the middle.
                         Text(
                             modifier = Modifier
-                                .fixedLineHeight(artistStyle)
-                                .foldAway(narrow, horizontal = false),
+                                .foldAway(narrow, horizontal = false)
+                                .fixedLineHeight(artistStyle),
                             text = shownSong.artist,
                             style = artistStyle,
                             color = if (useGlass) contentColor.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,

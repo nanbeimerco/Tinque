@@ -202,8 +202,7 @@ fun FloatingTabBar(
  * spring. Every surface works out where it is from that number on each frame,
  * each over its own part of the way (see [BarMorph]), so the parts move one
  * after another rather than all at once, and a fold turned around halfway
- * simply heads back from where it is. Before a fold that starts from rest, the
- * whole bar dips slightly towards its centre ([BarMorph.squeeze]).
+ * simply heads back from where it is.
  *
  * @param selectedTabKey the key of the currently selected tab
  * @param scrollConnection the scroll connection that handles state transitions
@@ -236,42 +235,20 @@ fun FloatingTabBar(
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
 
     val fold = remember { Animatable(if (scrollConnection.isInline) 1f else 0f) }
-    val squeeze = remember { Animatable(0f) }
-    val morph = remember { BarMorph({ fold.value }, { squeeze.value }) }
+    val morph = remember { BarMorph { fold.value } }
     val animationScope = rememberCoroutineScope()
     val currentReduceAnimation by rememberUpdatedState(reduceAnimation)
 
     LaunchedEffect(scrollConnection) {
-        // Waiting out the squeeze before the fold itself starts.
-        var pending: Job? = null
         snapshotFlow { scrollConnection.isInline }.collect { inline ->
             val target = if (inline) 1f else 0f
             if (currentReduceAnimation) {
-                pending?.cancel()
                 fold.snapTo(target)
-                squeeze.snapTo(0f)
-                return@collect
-            }
-            val waiting = pending?.isActive == true && !fold.isRunning
-            if (waiting) {
-                // Turned around before the fold began: drop the dip too.
-                pending?.cancel()
-                animationScope.launch { squeeze.animateTo(0f, tween(SQUEEZE_OUT_MS)) }
-            }
-            if (!waiting && !fold.isRunning && abs(fold.value - target) > 0.5f) {
-                // From rest: dip first, then fold out of the dip.
-                pending = animationScope.launch {
-                    launch {
-                        squeeze.animateTo(1f, tween(SQUEEZE_IN_MS, easing = LinearOutSlowInEasing))
-                        squeeze.animateTo(0f, tween(SQUEEZE_OUT_MS, easing = FastOutSlowInEasing))
-                    }
-                    delay(SQUEEZE_IN_MS.toLong())
-                    fold.animateTo(target, FoldSpring)
-                }
             } else {
-                // Mid-fold: [Animatable.animateTo] takes the current velocity
-                // with it, so the bar turns around without a jolt.
-                pending = animationScope.launch { fold.animateTo(target, FoldSpring) }
+                // Each launch takes over from the last: [Animatable.animateTo]
+                // starts from the current value and velocity, so a fold
+                // turned around midway heads back without a jolt.
+                animationScope.launch { fold.animateTo(target, FoldSpring) }
             }
         }
     }
@@ -373,13 +350,9 @@ fun FloatingTabBar(
 @Stable
 class BarMorph internal constructor(
     private val foldValue: () -> Float,
-    private val squeezeValue: () -> Float,
 ) {
     /** The whole fold: 0 = expanded, 1 = inline. */
     val fold: Float get() = foldValue().coerceIn(0f, 1f)
-
-    /** The dip before a fold starts from rest: 0 at rest, 1 at its deepest. */
-    val squeeze: Float get() = squeezeValue().coerceIn(0f, 1f)
 
     /** The tab group and the standalone tab shrinking to circles. */
     val tabs: Float get() = smoothStep(segment(fold, 0f, TABS_END))
@@ -427,12 +400,6 @@ private const val ACCESSORY_WIDTH_START = 0.05f
 private const val ACCESSORY_WIDTH_END = 0.5f
 private const val ACCESSORY_DROP_START = 0.1f
 
-/** The dip: in over 50ms, then back out while the fold runs. */
-private const val SQUEEZE_IN_MS = 50
-private const val SQUEEZE_OUT_MS = 220
-/** How far the bar dips: to 95% of its size. */
-private const val SQUEEZE_SCALE = 0.05f
-
 /**
  * iOS's spring with a response of 0.3s and a damping fraction of 0.85:
  * stiffness is (2π / response)².
@@ -476,12 +443,7 @@ private fun MorphingBar(
     val heights = remember(groupHeightKeys, fontScale) { ExpandedHeights() }
     Layout(
         contents = listOf(tabGroup, accessory, standalone),
-        modifier = modifier.graphicsLayer {
-            // The whole bar dips towards its own centre, as one piece.
-            val s = 1f - SQUEEZE_SCALE * morph.squeeze
-            scaleX = s
-            scaleY = s
-        },
+        modifier = modifier,
     ) { (groupMeasurables, accessoryMeasurables, standaloneMeasurables), constraints ->
         val width = if (constraints.hasBoundedWidth) constraints.maxWidth else constraints.minWidth
         val gap = sizes.componentSpacing.roundToPx()
@@ -1108,11 +1070,7 @@ private fun TabGroup(
                                         scaleX = s
                                         scaleY = s
                                         if (!isInlineTab) alpha = 1f - morph.tabFade
-                                        val blur = if (isInlineTab) {
-                                            morph.squeeze * blurMaxPx * 0.5f
-                                        } else {
-                                            maxOf(morph.squeeze, sinHump(morph.tabFade)) * blurMaxPx
-                                        }
+                                        val blur = if (isInlineTab) 0f else sinHump(morph.tabFade) * blurMaxPx
                                         // Null at rest: a layer holding any render
                                         // effect is drawn offscreen for as long as it does.
                                         renderEffect = if (blur > 0.05f) BlurEffect(blur, blur) else null
@@ -1178,7 +1136,7 @@ private fun TabGroup(
                                         .onSizeChanged { labelHeights[tabIndex] = it.height.toFloat() }
                                         .graphicsLayer {
                                             alpha = 1f - morph.labelFade
-                                            val blur = maxOf(morph.squeeze, sinHump(morph.labelFade)) * blurMaxPx
+                                            val blur = sinHump(morph.labelFade) * blurMaxPx
                                             renderEffect = if (blur > 0.05f) BlurEffect(blur, blur) else null
                                         }
                                 ) {
