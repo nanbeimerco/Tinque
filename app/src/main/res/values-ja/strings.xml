@@ -388,6 +388,9 @@
     <string name="shuffle_off">シャッフル: オフ</string>
     <string name="repeat_one">1曲をリピート</string>
     <string name="repeat_all">すべてリピート</string>
+    <string name="queue_repeat_heading">リピート</string>
+    <string name="queue_repeat_all_description">キューの最初からもう一度再生</string>
+    <string name="queue_repeat_one_notice">この曲をリピート中</string>
     <string name="repeat_off">リピート: オフ</string>
     <string name="autoplay_on">AutoPlay: オン</string>
     <string name="autoplay_off">AutoPlay: オフ</string>

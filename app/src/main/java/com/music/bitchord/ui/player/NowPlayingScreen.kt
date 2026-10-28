@@ -3060,6 +3060,7 @@ fun NowPlayingScreen(
                             queue = queue,
                             currentIndex = queueIndex,
                             autoplayEnabled = autoplayEnabled,
+                            repeatMode = repeatMode,
                             onJumpTo = onJumpTo,
                             onRemove = onRemoveFromQueue,
                             onMove = onMoveInQueue,
@@ -3811,6 +3812,7 @@ fun NowPlayingScreen(
                                 queue = queue,
                                 currentIndex = queueIndex,
                                 autoplayEnabled = autoplayEnabled,
+                                repeatMode = repeatMode,
                                 onJumpTo = onJumpTo,
                                 onRemove = onRemoveFromQueue,
                                 onMove = onMoveInQueue,
@@ -6242,12 +6244,16 @@ private fun Modifier.fadingEdges(): Modifier = this
         )
     }
 
+/** How many of the queue's first tracks repeat all shows after its end. */
+private const val REPEAT_PREVIEW_COUNT = 20
+
 /** The live queue, in the player itself. */
 @Composable
 private fun InlineQueue(
     queue: List<Song>,
     currentIndex: Int,
     autoplayEnabled: Boolean,
+    repeatMode: Int,
     onJumpTo: (Int) -> Unit,
     onRemove: (Int) -> Unit,
     onMove: (Int, Int) -> Unit,
@@ -6357,6 +6363,27 @@ private fun InlineQueue(
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
+        // Repeat one plays this song again rather than anything below it, so
+        // the list stays as it is and a line here says so instead.
+        if (repeatMode == Player.REPEAT_MODE_ONE) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 2.dp),
+            ) {
+                Icon(
+                    PlayerControlIcons.RepeatOne,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.75f),
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.queue_repeat_one_notice),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.75f),
+                )
+            }
+        }
         Spacer(Modifier.height(4.dp))
         LazyColumn(
             state = listState,
@@ -6459,6 +6486,50 @@ private fun InlineQueue(
                         .graphicsLayer { translationY = if (dragging) autoplayDrag.renderOffset else 0f }
                         .then(if (autoplayDrag.draggedKey != null) Modifier else Modifier.animateItem()),
                 )
+            }
+            // Repeat all: after the last track the queue starts over, so what
+            // plays next past the end is its start. Shown after everything
+            // else, and only as far as [REPEAT_PREVIEW_COUNT] tracks; these
+            // rows are the queue's own first tracks, so they don't reorder.
+            if (repeatMode == Player.REPEAT_MODE_ALL && queue.isNotEmpty()) {
+                item(key = "repeat-heading") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            PlayerControlIcons.Repeat,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.75f),
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = stringResource(R.string.queue_repeat_heading),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                            )
+                            Text(
+                                text = stringResource(R.string.queue_repeat_all_description),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = 0.55f),
+                            )
+                        }
+                    }
+                }
+                val repeatCount = minOf(REPEAT_PREVIEW_COUNT, queue.size)
+                items(count = repeatCount, key = { "repeat/$it" }) { index ->
+                    InlineQueueRow(
+                        song = queue[index],
+                        isCurrent = false,
+                        onClick = { onJumpTo(index) },
+                        onRemove = { onRemove(index) },
+                        modifier = Modifier.animateItem(),
+                    )
+                }
             }
         }
     }

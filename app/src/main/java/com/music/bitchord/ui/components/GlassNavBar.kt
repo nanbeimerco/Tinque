@@ -56,6 +56,15 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
+import com.music.bitchord.ui.components.floatingtabbar.BarMorph
+import androidx.compose.ui.unit.offset
+import androidx.compose.ui.unit.constrainWidth
+import androidx.compose.ui.unit.constrainHeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.layout.layout
+import androidx.compose.runtime.derivedStateOf
 import coil3.compose.AsyncImage
 import com.music.bitchord.R
 import com.music.bitchord.data.model.ROW_ART_PX
@@ -179,11 +188,11 @@ fun GlassNavBar(
         tabBarContentModifier = if (useGlass) {
             { Modifier.liquidGlass(shape = pillShape, role = GlassRole.TabBar) }
         } else surfaceModifier,
-        inlineAccessory = song?.let { current ->
-            { accessoryModifier, _ ->
+        accessory = song?.let { current ->
+            { accessoryModifier, morph ->
                 GlassNowPlaying(
                     song = current,
-                    isInline = true,
+                    morph = morph,
                     isPlaying = isPlaying,
                     isLoading = isLoading,
                     contentColor = contentColor,
@@ -198,28 +207,6 @@ fun GlassNavBar(
                     previousSong = previousSong,
                     nextSong = nextSong,
                     modifier = accessoryModifier.then(surfaceModifier()),
-                )
-            }
-        },
-        expandedAccessory = song?.let { current ->
-            { accessoryModifier, _ ->
-                GlassNowPlaying(
-                    song = current,
-                    isInline = false,
-                    isPlaying = isPlaying,
-                    isLoading = isLoading,
-                    contentColor = contentColor,
-                    onPlayPause = onPlayPause,
-                    onPrevious = onPrevious,
-                    onNext = onNext,
-                    onExpand = onExpand,
-                    onDismiss = onDismiss,
-                    dock = dock,
-                    pull = pull,
-                    useGlass = useGlass,
-                    previousSong = previousSong,
-                    nextSong = nextSong,
-                    modifier = accessoryModifier.fillMaxWidth().then(surfaceModifier()),
                 )
             }
         },
@@ -247,6 +234,8 @@ fun GlassNavBar(
         sizes = FloatingTabBarDefaults.sizes(
             tabBarContentPadding = PaddingValues(PILL_INSET),
             tabExpandedContentPadding = PaddingValues(vertical = TAB_VERTICAL_PADDING),
+            // The inline circle: the 25dp glyph and 10dp around it.
+            inlineBarHeight = 45.dp,
         ),
         contentKey = remember(selectedIndex, tabs, contentColor, artworkColor, isArtworkTheme, hideNavigationBarLabels, shouldIntegrate) {
             listOf(selectedIndex, tabs, contentColor, artworkColor, isArtworkTheme, hideNavigationBarLabels, shouldIntegrate)
@@ -311,15 +300,16 @@ fun GlassNavBar(
 /**
  * The now playing controls docked into [GlassNavBar] as its accessory.
  *
- * Two densities of the same row rather than two components, so the shared
- * element carrying it between the bar's states has one thing to interpolate:
- * [isInline] narrows the artwork, drops the artist line and drops the skip
- * button, which is what makes it fit the collapsed row's height.
+ * One row that follows the bar's fold ([morph]) as it goes: the artwork,
+ * buttons and padding shrink to the inline sizes as it drops into the row,
+ * and the artist line and skip button fade and fold away as it narrows. All
+ * of it is read while laying out and drawing, so the fold does not recompose
+ * this row on every frame.
  */
 @Composable
 private fun GlassNowPlaying(
     song: Song,
-    isInline: Boolean,
+    morph: BarMorph,
     isPlaying: Boolean,
     isLoading: Boolean,
     contentColor: Color,
@@ -351,12 +341,19 @@ private fun GlassNowPlaying(
         label = "accessoryPressScale",
     )
 
-    val artSize = if (isInline) 32.dp else 40.dp
-    val glyphSlot = if (isInline) 32.dp else 40.dp
+    // Sizes go with the drop into the row; what disappears goes with the
+    // narrowing, which comes first, so it is gone before the room is.
+    val drop = remember(morph) { { morph.accessoryDrop } }
+    val narrow = remember(morph) { { (morph.accessoryWidth / 0.5f).coerceIn(0f, 1f) } }
+    // Past halfway it is the inline row: the dock's corner and the swipe's
+    // bleed switch then, not on every frame.
+    val isInline by remember(morph) { derivedStateOf { morph.accessoryDrop >= 0.5f } }
     // Same proportions as the full player (skip 46 : play 66 ≈ 0.7), so
     // play/pause reads as the main control here too.
-    val skipGlyphSize = if (isInline) 17.dp else 21.dp
-    val playGlyphSize = if (isInline) 24.dp else 30.dp
+    val artSize = Modifier.morphSize(40.dp, 32.dp, drop)
+    val glyphSlot = Modifier.morphSize(40.dp, 32.dp, drop)
+    val skipGlyphSize = Modifier.morphSize(21.dp, 17.dp, drop)
+    val playGlyphSize = Modifier.morphSize(30.dp, 24.dp, drop)
 
     Box(
         contentAlignment = Alignment.Center,
@@ -389,10 +386,7 @@ private fun GlassNowPlaying(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(
-                    horizontal = if (isInline) 8.dp else 12.dp,
-                    vertical = if (isInline) 4.dp else 8.dp,
-                ),
+                .morphPadding(12.dp, 8.dp, 8.dp, 4.dp, drop),
         ) {
             MiniPlayerTrackSwipe(
                 current = song,
@@ -409,7 +403,7 @@ private fun GlassNowPlaying(
                         contentDescription = null,
                         contentScale = miniArtContentScale,
                         modifier = Modifier
-                            .size(artSize)
+                            .then(artSize)
                             .then(
                                 // Only the playing track is the dock's shared element.
                                 if (isCurrent) Modifier.playerDockArt(dock = dock, corner = if (isInline) 6.dp else 8.dp)
@@ -418,36 +412,28 @@ private fun GlassNowPlaying(
                             .clip(RoundedCornerShape(if (isInline) 6.dp else 8.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant),
                     )
-                    Spacer(Modifier.width(if (isInline) 8.dp else 10.dp))
-                    if (isInline) {
+                    Spacer(Modifier.morphSize(10.dp, 8.dp, drop, height = false))
+                    Column(Modifier.weight(1f)) {
                         val titleStyle = MaterialTheme.typography.titleMedium.centeredLine()
-                        Text(
-                            text = shownSong.title,
+                        val artistStyle = MaterialTheme.typography.bodyMedium.centeredLine()
+                        ExplicitSongTitle(
+                            song = shownSong,
                             style = titleStyle,
                             color = contentColor,
+                            modifier = Modifier.fixedLineHeight(titleStyle),
+                        )
+                        // Folds its height away as well as fading, so the
+                        // title alone is centred in the inline row.
+                        Text(
+                            modifier = Modifier
+                                .fixedLineHeight(artistStyle)
+                                .foldAway(narrow, horizontal = false),
+                            text = shownSong.artist,
+                            style = artistStyle,
+                            color = if (useGlass) contentColor.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f).fixedLineHeight(titleStyle),
                         )
-                    } else {
-                        Column(Modifier.weight(1f)) {
-                            val titleStyle = MaterialTheme.typography.titleMedium.centeredLine()
-                            val artistStyle = MaterialTheme.typography.bodyMedium.centeredLine()
-                            ExplicitSongTitle(
-                                song = shownSong,
-                                style = titleStyle,
-                                color = contentColor,
-                                modifier = Modifier.fixedLineHeight(titleStyle),
-                            )
-                            Text(
-                                modifier = Modifier.fixedLineHeight(artistStyle),
-                                text = shownSong.artist,
-                                style = artistStyle,
-                                color = if (useGlass) contentColor.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
                     }
                 }
             }
@@ -457,24 +443,24 @@ private fun GlassNowPlaying(
                         haptics.play(Haptic.SkipPrevious)
                         onPrevious()
                     },
-                    modifier = Modifier.size(glyphSlot),
+                    modifier = glyphSlot,
                 ) {
                     Icon(
                         imageVector = BitChordIcons.TransportPrevious,
                         contentDescription = stringResource(R.string.widget_previous),
                         tint = contentColor,
-                        modifier = Modifier.size(skipGlyphSize),
+                        modifier = skipGlyphSize,
                     )
                 }
                 // Same gap as before Next, so play/pause sits in the middle.
                 Spacer(Modifier.width(8.dp))
             }
             if (isLoading) {
-                Box(Modifier.size(glyphSlot), contentAlignment = Alignment.Center) {
+                Box(glyphSlot, contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(
                         color = if (useGlass) contentColor else MaterialTheme.colorScheme.primary,
                         strokeWidth = 2.dp,
-                        modifier = Modifier.size(if (isInline) 18.dp else 22.dp),
+                        modifier = Modifier.morphSize(22.dp, 18.dp, drop),
                     )
                 }
             } else {
@@ -483,33 +469,82 @@ private fun GlassNowPlaying(
                         haptics.play(if (isPlaying) Haptic.Pause else Haptic.Resume)
                         onPlayPause()
                     },
-                    modifier = Modifier.size(glyphSlot),
+                    modifier = glyphSlot,
                 ) {
                     Icon(
                         imageVector = if (isPlaying) BitChordIcons.TransportPause else BitChordIcons.TransportPlay,
                         contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
                         tint = contentColor,
-                        modifier = Modifier.size(playGlyphSize),
+                        modifier = playGlyphSize,
                     )
                 }
             }
-            if (!isInline && !playPauseOnly) {
-                Spacer(Modifier.width(8.dp))
-                IconButton(
-                    onClick = {
-                        haptics.play(Haptic.SkipNext)
-                        onNext()
-                    },
-                    modifier = Modifier.size(glyphSlot),
-                ) {
-                    Icon(
-                        imageVector = BitChordIcons.TransportNext,
-                        contentDescription = stringResource(R.string.widget_next),
-                        tint = contentColor,
-                        modifier = Modifier.size(skipGlyphSize),
-                    )
+            if (!playPauseOnly) {
+                // Narrows to nothing, gap and all, as it fades: the inline row
+                // has no skip button.
+                Row(Modifier.foldAway(narrow, horizontal = true)) {
+                    Spacer(Modifier.width(8.dp))
+                    IconButton(
+                        onClick = {
+                            haptics.play(Haptic.SkipNext)
+                            onNext()
+                        },
+                        enabled = !isInline,
+                        modifier = glyphSlot,
+                    ) {
+                        Icon(
+                            imageVector = BitChordIcons.TransportNext,
+                            contentDescription = stringResource(R.string.widget_next),
+                            tint = contentColor,
+                            modifier = skipGlyphSize,
+                        )
+                    }
                 }
             }
         }
     }
 }
+
+
+/** A size between [from] (at 0) and [to] (at 1), read when laid out. */
+private fun Modifier.morphSize(from: Dp, to: Dp, fraction: () -> Float, height: Boolean = true): Modifier =
+    layout { measurable, _ ->
+        val f = fraction()
+        val px = (from.toPx() + (to.toPx() - from.toPx()) * f).roundToInt()
+        val placeable = measurable.measure(
+            if (height) Constraints.fixed(px, px) else Constraints.fixed(px, 0),
+        )
+        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+    }
+
+/** Padding between two sets ([fromH]/[fromV] at 0, [toH]/[toV] at 1), read when laid out. */
+private fun Modifier.morphPadding(fromH: Dp, toH: Dp, fromV: Dp, toV: Dp, fraction: () -> Float): Modifier =
+    layout { measurable, constraints ->
+        val f = fraction()
+        val h = (fromH.toPx() + (toH.toPx() - fromH.toPx()) * f).roundToInt()
+        val v = (fromV.toPx() + (toV.toPx() - fromV.toPx()) * f).roundToInt()
+        val placeable = measurable.measure(constraints.offset(-2 * h, -2 * v))
+        val width = constraints.constrainWidth(placeable.width + 2 * h)
+        val height = constraints.constrainHeight(placeable.height + 2 * v)
+        layout(width, height) { placeable.place(h, v) }
+    }
+
+/**
+ * Fades out and gives up its width ([horizontal]) or its height as
+ * [fraction] goes to 1, drawn clipped to what is left of it.
+ */
+private fun Modifier.foldAway(fraction: () -> Float, horizontal: Boolean): Modifier =
+    this
+        .layout { measurable, constraints ->
+            val placeable = measurable.measure(
+                if (horizontal) constraints.copy(minWidth = 0) else constraints.copy(minHeight = 0),
+            )
+            val keep = 1f - fraction()
+            val width = if (horizontal) (placeable.width * keep).roundToInt() else placeable.width
+            val height = if (horizontal) placeable.height else (placeable.height * keep).roundToInt()
+            layout(width, height) { placeable.place(0, 0) }
+        }
+        .graphicsLayer {
+            alpha = 1f - fraction()
+            clip = true
+        }

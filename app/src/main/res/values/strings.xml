@@ -429,6 +429,9 @@
     <string name="shuffle_off">Shuffle off</string>
     <string name="repeat_one">Repeat one</string>
     <string name="repeat_all">Repeat all</string>
+    <string name="queue_repeat_heading">Repeat</string>
+    <string name="queue_repeat_all_description">The queue plays again from the start</string>
+    <string name="queue_repeat_one_notice">Repeating this song</string>
     <string name="repeat_off">Repeat off</string>
     <string name="autoplay_on">AutoPlay on</string>
     <string name="autoplay_off">AutoPlay off</string>
