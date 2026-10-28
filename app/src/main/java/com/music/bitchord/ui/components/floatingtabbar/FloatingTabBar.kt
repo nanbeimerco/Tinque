@@ -498,7 +498,6 @@ private fun MorphingBar(
         if (heights.width != width) {
             heights.width = width
             heights.group = -1
-            heights.accessory = -1
         }
         // The standalone circle is as tall as the group, so it takes the
         // group's width; assume a square from a first guess and settle it.
@@ -554,8 +553,11 @@ private fun MorphingBar(
             null
         }
         if (accessoryM != null && heights.accessory < 0) {
-            // Starting out folded, with no expanded height seen yet.
-            heights.accessory = accessoryM.maxIntrinsicHeight(width).coerceAtLeast(inline)
+            // Appearing while folded (a song started with the page scrolled),
+            // before its expanded height has been seen: a stand-in until the
+            // first time it is laid out expanded. Not asked of the accessory
+            // as an intrinsic, which its contents answer badly or not at all.
+            heights.accessory = ACCESSORY_EXPANDED_FALLBACK.roundToPx().coerceAtLeast(inline)
         }
         val expandedAccessory = heights.accessory.coerceAtLeast(0)
         val accessoryH = lerp(expandedAccessory.toFloat(), inline.toFloat(), td)
@@ -577,6 +579,9 @@ private fun MorphingBar(
         }
     }
 }
+
+/** The accessory's expanded height until it has been measured expanded. */
+private val ACCESSORY_EXPANDED_FALLBACK = 60.dp
 
 private class ExpandedHeights {
     var width = -1

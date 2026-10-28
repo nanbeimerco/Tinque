@@ -532,8 +532,11 @@ private fun GlassNowPlaying(
         ) { measurables, constraints ->
             val slot = BUTTON_SLOT.roundToPx()
             val placeables = measurables.map { it.measure(Constraints.fixed(slot, slot)) }
-            val width = constraints.maxWidth
-            val height = constraints.maxHeight
+            // Unbounded when asked for an intrinsic size (the bar does that
+            // for a mini player that appears while folded): a size of
+            // "infinity" is not a size, and reporting it crashed the app.
+            val width = if (constraints.hasBoundedWidth) constraints.maxWidth else constraints.minWidth
+            val height = if (constraints.hasBoundedHeight) constraints.maxHeight else maxOf(constraints.minHeight, slot)
             layout(width, height) {
                 val y = (height - slot) / 2
                 val centers = buttons.centersFromRight(this@Layout)
