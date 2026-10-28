@@ -3,6 +3,7 @@ package com.music.bitchord.feature.localmusic.domain
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.feature.localsearch.domain.LocalFileNameOrdering
 import java.io.File
+import java.util.Locale
 
 /**
  * Represents a directory node in the local music hierarchy.
@@ -34,7 +35,7 @@ data class FolderNode(
     private val pathIndex: Map<String, FolderNode> by lazy {
         val map = HashMap<String, FolderNode>()
         fun index(node: FolderNode) {
-            map[node.path.trimEnd('/', '\\').replace('\\', '/')] = node
+            map[pathKey(node.path)] = node
             for (sub in node.subfolders) {
                 index(sub)
             }
@@ -43,11 +44,15 @@ data class FolderNode(
         map
     }
 
-    /** Finds a node by its path within this subtree */
-    fun findByPath(targetPath: String): FolderNode? {
-        val normTarget = targetPath.trimEnd('/', '\\').replace('\\', '/')
-        return pathIndex[normTarget]
-    }
+    /**
+     * Finds a node by its path within this subtree. Letter case is ignored,
+     * as the tree itself ignores it (see [FolderTreeBuilder.canonicalDirectories]):
+     * a folder remembered under one spelling is found under the other.
+     */
+    fun findByPath(targetPath: String): FolderNode? = pathIndex[pathKey(targetPath)]
+
+    private fun pathKey(path: String): String =
+        path.trimEnd('/', '\\').replace('\\', '/').lowercase(Locale.ROOT)
 }
 
 object FolderTreeBuilder {
@@ -72,6 +77,45 @@ object FolderTreeBuilder {
             }
         }
         return result
+    }
+
+    /**
+     * One spelling for every directory that differs from another only in
+     * letter case, mapping each directory as given to that spelling.
+     *
+     * Shared storage on Android ignores letter case, so "Music" and "music"
+     * are the same folder there; but the media store keeps a file's path
+     * exactly as the app that saved it wrote it. One song saved by another
+     * app under "music/" was enough to show a second, one-song "music"
+     * folder beside "Music". Each part of a path is spelled the way most of
+     * the songs under it spell it (ties go to the one sorting first, which
+     * prefers capitals).
+     *
+     * @param songCounts each directory as given, with how many songs are in it
+     */
+    fun canonicalDirectories(songCounts: Map<String, Int>): Map<String, String> {
+        // For every path prefix (lower-cased): how many songs spell its last part which way.
+        val votes = HashMap<String, HashMap<String, Int>>()
+        for ((dir, count) in songCounts) {
+            val key = StringBuilder()
+            for (part in dir.split('/')) {
+                key.append('/').append(part.lowercase(Locale.ROOT))
+                votes.getOrPut(key.toString()) { HashMap() }.merge(part, count, Int::plus)
+            }
+        }
+        val chosen = HashMap<String, String>(votes.size)
+        for ((key, spellings) in votes) {
+            chosen[key] = spellings.entries
+                .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+                .first().key
+        }
+        return songCounts.keys.associateWith { dir ->
+            val key = StringBuilder()
+            dir.split('/').joinToString("/") { part ->
+                key.append('/').append(part.lowercase(Locale.ROOT))
+                chosen[key.toString()] ?: part
+            }
+        }
     }
 
     /**
@@ -116,9 +160,9 @@ object FolderTreeBuilder {
             )
         }
 
-        val songsByDir = validSongs.groupBy {
-            it.localPath!!.replace('\\', '/').substringBeforeLast('/')
-        }
+        val rawDir = { song: Song -> song.localPath!!.replace('\\', '/').substringBeforeLast('/') }
+        val canonical = canonicalDirectories(validSongs.groupingBy(rawDir).eachCount())
+        val songsByDir = validSongs.groupBy { canonical.getValue(rawDir(it)) }
 
         val normalizedCustomRoot = customRoot?.trimEnd('/', '\\')?.replace('\\', '/')
             ?.takeIf { it.isNotBlank() }
@@ -136,7 +180,7 @@ object FolderTreeBuilder {
             }
 
             val rel = if (normDir.startsWith(rootPath, ignoreCase = true)) {
-                normDir.removePrefix(rootPath).trim('/')
+                normDir.substring(rootPath.length).trim('/')
             } else {
                 normDir.trim('/')
             }
@@ -174,7 +218,7 @@ object FolderTreeBuilder {
             val allSubAndDirect = sortedDirectSongs + allSubSongs
             val covers = extractCoverSongs(allSubAndDirect)
             val rel = if (path.startsWith(rootPath, ignoreCase = true)) {
-                path.removePrefix(rootPath).trim('/')
+                path.substring(rootPath.length).trim('/')
             } else {
                 path.trim('/')
             }

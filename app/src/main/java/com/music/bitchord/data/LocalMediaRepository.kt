@@ -419,7 +419,16 @@ object LocalMediaRepository {
             }
         }.onFailure { Log.w(TAG, "Failed discovering local folders: ${it.message}") }
 
-        counts.map { (folderPath, count) ->
+        // Folders that differ only in letter case are one folder on shared
+        // storage; listed once, under the spelling most of their songs use.
+        val canonical = com.music.bitchord.feature.localmusic.domain.FolderTreeBuilder.canonicalDirectories(counts)
+        val merged = LinkedHashMap<String, Int>()
+        for ((folderPath, count) in counts) {
+            val folder = canonical[folderPath] ?: folderPath
+            merged[folder] = (merged[folder] ?: 0) + count
+        }
+
+        merged.map { (folderPath, count) ->
             val name = folderPath.substringAfterLast('/').takeIf { it.isNotBlank() } ?: folderPath
             val parent = folderPath.substringBeforeLast('/').takeIf { it.isNotBlank() && it != folderPath }
             LocalFolder(

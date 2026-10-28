@@ -399,6 +399,14 @@ class BarMorph internal constructor(
      * tab group can start widening while it still has a little way to go.
      */
     val accessoryDrop: Float get() = segment(fold, ACCESSORY_DROP_START, 1f).let { it * it }
+
+    /**
+     * How far the accessory's right edge has come in from where it is when
+     * expanded, in pixels, as of its last layout. For its contents to hold
+     * something still on screen while the edge moves.
+     */
+    var accessoryRightInset: Float = 0f
+        internal set
 }
 
 private fun segment(value: Float, start: Float, end: Float): Float =
@@ -534,6 +542,7 @@ private fun MorphingBar(
         val accessoryX = lerp(0f, accessoryXI.toFloat(), tw)
         val accessoryW = lerp(width.toFloat(), accessoryWI.toFloat(), tw)
         val accessoryWPx = accessoryW.roundToInt().coerceAtLeast(0)
+        morph.accessoryRightInset = width - (accessoryX + accessoryW)
         // Until it starts to drop, the accessory is measured at its own height,
         // which is then its expanded height for the rest of the fold. Not asked
         // for as an intrinsic: the mini player's swipe preview answers that
@@ -756,6 +765,10 @@ private fun TabGroup(
         GlassSpring
     }
     val haptics = rememberHaptics()
+    // Mid-fold the tabs move off their cells while the pill stays put, so a
+    // split along the pill would colour whatever passes through it: the
+    // selected tab is drawn in its accent colour and the rest in theirs.
+    val foldInProgress = remember(morph) { { morph.fold > 0f } }
     // Each label's height, for the icon above it to come down by half of it
     // into the middle of the inline circle. Written on layout, read on draw.
     val labelHeights = remember(scope.tabs.size) { FloatArray(scope.tabs.size) }
@@ -840,6 +853,14 @@ private fun TabGroup(
         Rect(Offset(center.x - size.width / 2f, center.y - size.height / 2f), size)
     }
 
+    // A fold can start while the pill is still lifted (a tab tapped just
+    // before the page was scrolled). The lens then carries on to its tab and
+    // fades out with the other tabs (see [GlassSelectionPill] below), the
+    // icons stop being coloured by its outline (see [foldInProgress]), and
+    // the bar's glass stops being drawn for it. Left as it was, the lens hung
+    // over the shrinking circle as a pale blob at its expanded size.
+    val folding by remember(morph) { derivedStateOf { morph.fold > 0f } }
+
     LaunchedEffect(selectedTabIndex) {
         if (selectedTabIndex >= 0) {
             // Back from the standalone tab there is no tab to travel from.
@@ -853,7 +874,11 @@ private fun TabGroup(
                 }
             } else {
                 pillPop.snapTo(1f)
-                if (!pill.isDragging) pill.animateTo(selectedTabIndex)
+                if (morph.fold > 0f) {
+                    pill.snapTo(selectedTabIndex)
+                } else if (!pill.isDragging) {
+                    pill.animateTo(selectedTabIndex)
+                }
             }
         }
         lastSelectedTabIndex = selectedTabIndex
@@ -867,7 +892,7 @@ private fun TabGroup(
     ) {
         // The bar's glass is exported for the lens to refract only while the
         // glass selection pill is lifted/travelling.
-        val activeGlassExport = barGlass.takeIf { glassPill && showPill && !pill.isFlat }
+        val activeGlassExport = barGlass.takeIf { glassPill && showPill && !pill.isFlat && !folding }
         CompositionLocalProvider(LocalGlassExport provides activeGlassExport) {
             Box(
                 modifier = Modifier
@@ -974,7 +999,7 @@ private fun TabGroup(
                                     haptics.play(Haptic.Tick)
                                 }
 
-                                if (currentSelectedTabIndex < 0) {
+                                if (currentSelectedTabIndex < 0 || morph.fold > 0f) {
                                     pill.snapTo(activeTab)
                                 } else {
                                     pill.animateTo(activeTab)
@@ -1099,6 +1124,7 @@ private fun TabGroup(
                                             row = rowCoords,
                                             pillRect = pillRectInRow,
                                                     fallbackInside = isSelected,
+                                                    solid = foldInProgress,
                                         )
                                     ) {
                                         CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.unselectedContentColor) {
@@ -1116,6 +1142,7 @@ private fun TabGroup(
                                                     row = rowCoords,
                                                     pillRect = pillRectInRow,
                                                     fallbackInside = isSelected,
+                                                    solid = foldInProgress,
                                                 )
                                         ) {
                                             CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.artworkColor) {
@@ -1159,6 +1186,7 @@ private fun TabGroup(
                                             row = rowCoords,
                                             pillRect = pillRectInRow,
                                                     fallbackInside = isSelected,
+                                                    solid = foldInProgress,
                                         )
                                     ) {
                                         CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.unselectedContentColor) {
@@ -1176,6 +1204,7 @@ private fun TabGroup(
                                                     row = rowCoords,
                                                     pillRect = pillRectInRow,
                                                     fallbackInside = isSelected,
+                                                    solid = foldInProgress,
                                                 )
                                         ) {
                                             CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.artworkColor) {
@@ -1221,6 +1250,7 @@ private fun TabGroup(
                 tabRow = tabRow,
                 modifier = Modifier
                     .matchParentSize()
+                    .graphicsLayer { alpha = 1f - morph.tabFade }
                     .pillPlacement(
                         center = { pillCenterInRow(pill.position) + Offset(padLeftPx, padTopPx) },
                         size = { pill.liveSize(restSize, liftedSize) },
@@ -1484,6 +1514,8 @@ private fun Modifier.pillSplit(
      * selected tab stays in its accent colour rather than flashing white.
      */
     fallbackInside: Boolean = false,
+    /** While true, no split: the element is drawn whole on its [fallbackInside] side. */
+    solid: () -> Boolean = { false },
 ): Modifier {
     val mine = remember { CoordsHolder() }
     if (!enabled) return this
@@ -1493,7 +1525,7 @@ private fun Modifier.pillSplit(
             val rowCoords = row.coords
             val myCoords = mine.coords
             val rect = pillRect()
-            if (rowCoords == null || myCoords == null || !rowCoords.isAttached || !myCoords.isAttached ||
+            if (solid() || rowCoords == null || myCoords == null || !rowCoords.isAttached || !myCoords.isAttached ||
                 rect.width <= 0f || rect.height <= 0f
             ) {
                 if (inside == fallbackInside) drawContent()

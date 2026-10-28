@@ -56,6 +56,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.layout.Layout
 import kotlin.math.roundToInt
 import com.music.bitchord.ui.components.floatingtabbar.BarMorph
 import androidx.compose.ui.unit.offset
@@ -348,12 +350,16 @@ private fun GlassNowPlaying(
     // Past halfway it is the inline row: the dock's corner and the swipe's
     // bleed switch then, not on every frame.
     val isInline by remember(morph) { derivedStateOf { morph.accessoryDrop >= 0.5f } }
-    // Same proportions as the full player (skip 46 : play 66 ≈ 0.7), so
-    // play/pause reads as the main control here too.
     val artSize = Modifier.morphSize(40.dp, 32.dp, drop)
-    val glyphSlot = Modifier.morphSize(40.dp, 32.dp, drop)
-    val skipGlyphSize = Modifier.morphSize(21.dp, 17.dp, drop)
-    val playGlyphSize = Modifier.morphSize(30.dp, 24.dp, drop)
+    // Folded, the row has play/pause alone, whatever the buttons setting:
+    // the skip buttons fade out where they stand, early in the fold, and
+    // stop taking taps once they are mostly gone.
+    val showNextButton = !playPauseOnly
+    val buttonsGone = remember(morph) { { (morph.accessoryWidth / BUTTONS_FADE_END).coerceIn(0f, 1f) } }
+    val skipsTappable by remember(morph) { derivedStateOf { morph.accessoryWidth < BUTTONS_FADE_END * 0.5f } }
+    val buttons = remember(morph, showPreviousButton, showNextButton) {
+        MiniPlayerButtonPlacement(morph, showPreviousButton, showNextButton)
+    }
 
     Box(
         contentAlignment = Alignment.Center,
@@ -437,71 +443,169 @@ private fun GlassNowPlaying(
                     }
                 }
             }
-            if (showPreviousButton) {
-                IconButton(
-                    onClick = {
-                        haptics.play(Haptic.SkipPrevious)
-                        onPrevious()
-                    },
-                    modifier = glyphSlot,
-                ) {
-                    Icon(
-                        imageVector = BitChordIcons.TransportPrevious,
-                        contentDescription = stringResource(R.string.widget_previous),
-                        tint = contentColor,
-                        modifier = skipGlyphSize,
-                    )
+            // Room kept clear for the buttons, which are placed over this end
+            // of the row (below) rather than laid out in it.
+            Spacer(
+                Modifier.layout { measurable, _ ->
+                    val width = buttons.reservedWidth(this, drop()).roundToInt().coerceAtLeast(0)
+                    val placeable = measurable.measure(Constraints.fixed(width, 0))
+                    layout(placeable.width, 0) { placeable.place(0, 0) }
+                },
+            )
+        }
+
+        // The buttons, placed from the accessory's right edge. Play/pause
+        // drops into the folded row almost straight down — its distance from
+        // the right edge closes by about as much as the edge moves in — and
+        // shrinks as a drawing rather than being laid out smaller every
+        // frame. The skip buttons stay where they are on screen and fade.
+        // Laid out in the row instead, the play button was pushed right by
+        // the skip button folding away while the edge pulled it left, on two
+        // different timings, and went back and forth.
+        Layout(
+            modifier = Modifier.matchParentSize(),
+            content = {
+                if (showPreviousButton) {
+                    IconButton(
+                        onClick = {
+                            haptics.play(Haptic.SkipPrevious)
+                            onPrevious()
+                        },
+                        enabled = skipsTappable,
+                        modifier = Modifier.graphicsLayer { alpha = 1f - buttonsGone() },
+                    ) {
+                        Icon(
+                            imageVector = BitChordIcons.TransportPrevious,
+                            contentDescription = stringResource(R.string.widget_previous),
+                            tint = contentColor,
+                            modifier = Modifier.size(21.dp),
+                        )
+                    }
                 }
-                // Same gap as before Next, so play/pause sits in the middle.
-                Spacer(Modifier.width(8.dp))
-            }
-            if (isLoading) {
-                Box(glyphSlot, contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(
-                        color = if (useGlass) contentColor else MaterialTheme.colorScheme.primary,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.morphSize(22.dp, 18.dp, drop),
-                    )
+                val playScale = Modifier.graphicsLayer {
+                    val scale = 1f + (PLAY_FOLDED_SCALE - 1f) * drop()
+                    scaleX = scale
+                    scaleY = scale
                 }
-            } else {
-                IconButton(
-                    onClick = {
-                        haptics.play(if (isPlaying) Haptic.Pause else Haptic.Resume)
-                        onPlayPause()
-                    },
-                    modifier = glyphSlot,
-                ) {
-                    Icon(
-                        imageVector = if (isPlaying) BitChordIcons.TransportPause else BitChordIcons.TransportPlay,
-                        contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
-                        tint = contentColor,
-                        modifier = playGlyphSize,
-                    )
+                if (isLoading) {
+                    Box(playScale, contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(
+                            color = if (useGlass) contentColor else MaterialTheme.colorScheme.primary,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                } else {
+                    IconButton(
+                        onClick = {
+                            haptics.play(if (isPlaying) Haptic.Pause else Haptic.Resume)
+                            onPlayPause()
+                        },
+                        modifier = playScale,
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) BitChordIcons.TransportPause else BitChordIcons.TransportPlay,
+                            contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
+                            tint = contentColor,
+                            modifier = Modifier.size(30.dp),
+                        )
+                    }
                 }
-            }
-            if (!playPauseOnly) {
-                // Narrows to nothing, gap and all, as it fades: the inline row
-                // has no skip button.
-                Row(Modifier.foldAway(narrow, horizontal = true)) {
-                    Spacer(Modifier.width(8.dp))
+                if (showNextButton) {
                     IconButton(
                         onClick = {
                             haptics.play(Haptic.SkipNext)
                             onNext()
                         },
-                        enabled = !isInline,
-                        modifier = glyphSlot,
+                        enabled = skipsTappable,
+                        modifier = Modifier.graphicsLayer { alpha = 1f - buttonsGone() },
                     ) {
                         Icon(
                             imageVector = BitChordIcons.TransportNext,
                             contentDescription = stringResource(R.string.widget_next),
                             tint = contentColor,
-                            modifier = skipGlyphSize,
+                            modifier = Modifier.size(21.dp),
                         )
                     }
                 }
+            },
+        ) { measurables, constraints ->
+            val slot = BUTTON_SLOT.roundToPx()
+            val placeables = measurables.map { it.measure(Constraints.fixed(slot, slot)) }
+            val width = constraints.maxWidth
+            val height = constraints.maxHeight
+            layout(width, height) {
+                val y = (height - slot) / 2
+                val centers = buttons.centersFromRight(this@Layout)
+                placeables.forEachIndexed { index, placeable ->
+                    val fromRight = centers.getOrNull(index) ?: return@forEachIndexed
+                    placeable.place((width - fromRight - slot / 2f).roundToInt(), y)
+                }
             }
         }
+    }
+}
+
+/** How far into the narrowing the skip buttons are gone. */
+private const val BUTTONS_FADE_END = 0.35f
+
+/** Play/pause folded: the 24dp glyph of the inline row, drawn from the 30dp one. */
+private const val PLAY_FOLDED_SCALE = 0.8f
+
+/** The touch target of every button on the row. */
+private val BUTTON_SLOT = 40.dp
+
+/**
+ * Where [GlassNowPlaying]'s buttons go, as distances from the accessory's
+ * right edge to each button's centre, in the order they are composed
+ * (previous, play/pause, next).
+ */
+private class MiniPlayerButtonPlacement(
+    private val morph: BarMorph,
+    private val hasPrevious: Boolean,
+    private val hasNext: Boolean,
+) {
+    private val slot = BUTTON_SLOT
+    private val gap = 8.dp
+
+    private fun Density.playExpanded(): Float =
+        (12.dp + (if (hasNext) slot + gap else 0.dp) + slot / 2).toPx()
+
+    private fun Density.playFolded(): Float = (8.dp + 16.dp).toPx()
+
+    private fun Density.play(): Float {
+        val t = morph.accessoryWidth
+        return playExpanded() + (playFolded() - playExpanded()) * t
+    }
+
+    // The skip buttons hold their place on screen: as the right edge comes
+    // in, they sit that much closer to it.
+    private fun Density.next(): Float = (12.dp + slot / 2).toPx() - morph.accessoryRightInset
+
+    private fun Density.previous(): Float =
+        playExpanded() + (slot + gap).toPx() - morph.accessoryRightInset
+
+    fun centersFromRight(density: Density): List<Float> = with(density) {
+        buildList {
+            if (hasPrevious) add(previous())
+            add(play())
+            if (hasNext) add(next())
+        }
+    }
+
+    /**
+     * The room the row leaves at its end for the buttons, past its own end
+     * padding: up to the leftmost button that is showing, closing in on
+     * play/pause as the others fade.
+     */
+    fun reservedWidth(density: Density, drop: Float): Float = with(density) {
+        val half = (slot / 2).toPx()
+        val leftmostExpanded = (if (hasPrevious) previous() else play()) + half
+        val playLeft = play() + half * (1f + (PLAY_FOLDED_SCALE - 1f) * drop)
+        val gone = (morph.accessoryWidth / BUTTONS_FADE_END).coerceIn(0f, 1f)
+        val edge = leftmostExpanded + (playLeft - leftmostExpanded) * gone
+        val rowEndPadding = (12.dp + (8.dp - 12.dp) * drop).toPx()
+        edge + 4.dp.toPx() - rowEndPadding
     }
 }
 

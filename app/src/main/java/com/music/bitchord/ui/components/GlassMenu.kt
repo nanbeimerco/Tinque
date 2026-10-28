@@ -53,6 +53,10 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Velocity
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 
@@ -199,6 +203,7 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
                     Column(
                         modifier = Modifier
                             .heightIn(max = 520.dp)
+                            .nestedScroll(KeepMenuScroll)
                             .verticalScroll(rememberScrollState())
                             .padding(vertical = 8.dp),
                     ) { androidx.compose.runtime.key(menu.id) { GlassContentTheme { menu.content() } } }
@@ -209,6 +214,19 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
 }
 
 private val topInset = 24.dp
+
+/**
+ * Keeps a scroll that starts in the menu inside the menu. Whatever the menu's
+ * list doesn't use at either end is dropped here instead of travelling on to
+ * what the menu sits over. In the player, which is a bottom sheet, that
+ * leftover was read as a pull on the sheet: scrolling the menu back past its
+ * top started sliding the player away to the mini player.
+ */
+private object KeepMenuScroll : NestedScrollConnection {
+    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset = available
+
+    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = available
+}
 
 @Composable
 private fun Modifier.glassMenuSurface(glassBackdrop: Boolean): Modifier {
