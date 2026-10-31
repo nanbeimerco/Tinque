@@ -174,7 +174,7 @@ fun ReplayScreen(
                         )
                     }
                     item("open") {
-                        ReplayActionRow(BitChordIcons.Play, stringResource(R.string.play_your_replay), dark) {
+                        ReplayActionRow(BitChordIcons.TransportPlay, stringResource(R.string.play_your_replay), dark) {
                             onOpenStory(ReplayStoryPage.INTRO)
                         }
                     }

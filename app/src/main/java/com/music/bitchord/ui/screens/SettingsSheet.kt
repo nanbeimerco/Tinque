@@ -87,7 +87,6 @@ import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.TextFields
 import androidx.compose.material.icons.rounded.SmartDisplay
@@ -237,6 +236,8 @@ private data class SettingsSearchEntry(
 fun SettingsScreen(
     /** The window's width, for the gates that depend on it. */
     windowWidth: Dp,
+    /** And its height: the large-screen player choice needs both. */
+    windowHeight: Dp = Dp.Unspecified,
     onOpenReplay: () -> Unit,
     onLyricsSources: () -> Unit,
     onAppLanguage: () -> Unit,
@@ -330,6 +331,8 @@ fun SettingsScreen(
     val showNavigationBar by AppSettings.showNavigationBar.collectAsStateWithLifecycle()
     val quietMode by AppSettings.quietMode.collectAsStateWithLifecycle()
     val orientationMode by AppSettings.screenOrientationMode.collectAsStateWithLifecycle()
+    val landscapePlayerLayout by AppSettings.landscapePlayerLayout.collectAsStateWithLifecycle()
+    val portraitPlayerLayout by AppSettings.portraitPlayerLayout.collectAsStateWithLifecycle()
     val favoriteUsesStar by AppSettings.favoriteUsesStar.collectAsStateWithLifecycle()
     val persistentLocalArtwork by AppSettings.persistentLocalArtwork.collectAsStateWithLifecycle()
     val resamplerCutoffHz by AppSettings.resamplerCutoffHz.collectAsStateWithLifecycle()
@@ -2737,6 +2740,52 @@ fun SettingsScreen(
                 onClick = { AppSettings.setHideNavigationBarLabels(!hideNavBarLabels) },
             )
             RowDivider()
+            // Only on a window large enough to have the choice: a phone has
+            // one layout whatever this says.
+            if (windowHeight != Dp.Unspecified &&
+                com.music.bitchord.ui.player.largeScreenPlayerChoiceAvailable(windowWidth, windowHeight)
+            ) {
+                SettingsRow(
+                    icon = Icons.Rounded.Fullscreen,
+                    title = stringResource(R.string.large_screen_player),
+                    subtitle = stringResource(R.string.large_screen_player_subtitle),
+                )
+                Text(
+                    text = stringResource(R.string.large_screen_player_landscape),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 6.dp),
+                )
+                SegmentedControl(
+                    options = listOf(
+                        stringResource(R.string.large_screen_player_side_by_side),
+                        stringResource(R.string.large_screen_player_two_column),
+                    ),
+                    selectedIndex = com.music.bitchord.data.settings.LandscapePlayerLayout.entries.indexOf(landscapePlayerLayout),
+                    onSelect = {
+                        AppSettings.setLandscapePlayerLayout(com.music.bitchord.data.settings.LandscapePlayerLayout.entries[it])
+                    },
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 12.dp),
+                )
+                Text(
+                    text = stringResource(R.string.large_screen_player_portrait),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 6.dp),
+                )
+                SegmentedControl(
+                    options = listOf(
+                        stringResource(R.string.large_screen_player_two_column),
+                        stringResource(R.string.large_screen_player_phone),
+                    ),
+                    selectedIndex = com.music.bitchord.data.settings.PortraitPlayerLayout.entries.indexOf(portraitPlayerLayout),
+                    onSelect = {
+                        AppSettings.setPortraitPlayerLayout(com.music.bitchord.data.settings.PortraitPlayerLayout.entries[it])
+                    },
+                    modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+                )
+                RowDivider()
+            }
             // Left out where the player won't honour it: a window too wide for
             // the player to fill and too narrow to stand a page beside it keeps
             // the sleeve either way. A docked pane is a phone's width, so it does
@@ -2979,7 +3028,7 @@ fun SettingsScreen(
                 )
                 RowDivider()
                 SettingsRow(
-                    icon = if (showLyricsPlayPauseControl) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    icon = if (showLyricsPlayPauseControl) com.music.bitchord.ui.icons.BitChordIcons.TransportPause else com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
                     title = stringResource(R.string.lyrics_show_play_pause),
                     subtitle = stringResource(R.string.lyrics_transport_visibility_subtitle),
                     trailing = {
@@ -3502,7 +3551,7 @@ fun SettingsScreen(
             )
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.PlayArrow,
+                icon = com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
                 title = stringResource(R.string.play_cue_sheet),
                 subtitle = stringResource(R.string.play_cue_sheet_subtitle),
                 onClick = {

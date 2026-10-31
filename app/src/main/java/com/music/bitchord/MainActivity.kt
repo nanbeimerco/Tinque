@@ -161,6 +161,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.draw.drawBehind
+import kotlin.math.roundToInt
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
@@ -442,6 +448,7 @@ class MainActivity : AppCompatActivity() {
                     BitChordApp(
                         darkTheme = darkTheme,
                         windowWidth = maxWidth,
+                        windowHeight = maxHeight,
                         appBackdrop = appBackdrop,
                         controller = controller,
                         player = player,
@@ -503,6 +510,15 @@ class MainActivity : AppCompatActivity() {
 }
 
 internal fun applySystemBarPreferences(targetWindow: android.view.Window) {
+    // Nothing painted behind the navigation bar, in this window or in the
+    // player sheet's: the app draws under it itself. A dialog window does not
+    // get this from enableEdgeToEdge, and some systems (HyperOS on tablets)
+    // otherwise lay a light band across the foot of the player.
+    @Suppress("DEPRECATION")
+    targetWindow.navigationBarColor = android.graphics.Color.TRANSPARENT
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        targetWindow.isNavigationBarContrastEnforced = false
+    }
     val bars = WindowInsetsControllerCompat(targetWindow, targetWindow.decorView)
     bars.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     // Quiet mode folds the status bar away in addition to whatever the
@@ -523,6 +539,8 @@ private fun BitChordApp(
     darkTheme: Boolean,
     /** The width of the window this is laid out in — see the call site. */
     windowWidth: Dp,
+    /** Its height, measured the same way — see [playerLayoutFor]. */
+    windowHeight: Dp,
     appBackdrop: LayerBackdrop,
     controller: MediaController?,
     player: PlayerState,
@@ -602,7 +620,12 @@ private fun BitChordApp(
     // page does about the player is really about which of the two it is: no mini
     // player standing in for one that is already there, no sheet to raise, and
     // the bottom inset the mini player was holding handed back to the page.
-    val playerDocked = dockedPlayerAvailable(windowWidth)
+    val landscapePlayerLayout by AppSettings.landscapePlayerLayout.collectAsStateWithLifecycle()
+    val portraitPlayerLayout by AppSettings.portraitPlayerLayout.collectAsStateWithLifecycle()
+    val playerLayout = com.music.bitchord.ui.player.playerLayoutFor(
+        windowWidth, windowHeight, landscapePlayerLayout, portraitPlayerLayout,
+    )
+    val playerDocked = playerLayout == com.music.bitchord.ui.player.PlayerLayout.DOCKED
     /**
      * Whether the player's *sheet* is up.
      *
@@ -1799,6 +1822,7 @@ private fun BitChordApp(
             onMenuAnchor = { playerMenuAnchor = it },
             playerHaze = playerHazeState,
             windowWidth = windowWidth,
+            twoColumnLayout = playerLayout == com.music.bitchord.ui.player.PlayerLayout.TWO_COLUMN,
             isPlaying = player.isPlaying,
             isLoading = player.isLoading,
             positionMs = player.position.positionMs,
@@ -2096,8 +2120,47 @@ private fun BitChordApp(
             LocalSongSelection provides songSelection,
             com.music.bitchord.ui.screens.equalizer.LocalOpenEqualizer provides openEqualizer,
         ) {
+        // The divider between the page and a docked player: where it was left,
+        // and, while a finger is on it, how far it has been pulled. A drag does
+        // not lay either side out again: both are held at their widths and
+        // stretched to the new ones, blurred, and laid out once on release.
+        val dockedPageFraction by AppSettings.dockedPageFraction.collectAsStateWithLifecycle()
+        val dockPaneWidth = dockedPlayerWidth(windowWidth, dockedPageFraction)
+        val dividerDrag = remember { mutableStateOf<Float?>(null) }
+        val dividerBlur = remember { androidx.compose.animation.core.Animatable(0f) }
+        val dockDensity = LocalDensity.current
+        val dockGapPx = with(dockDensity) { com.music.bitchord.ui.player.DOCK_DIVIDER_GAP.toPx() }
+        val dockWindowPx = with(dockDensity) { windowWidth.toPx() }
+        val dockPanePx = with(dockDensity) { dockPaneWidth.toPx() }
+        val dockPagePx = dockWindowPx - dockGapPx - dockPanePx
+        val dockPageMinPx = with(dockDensity) { DOCKED_PAGE_MIN_WIDTH_FOR_DIVIDER.toPx() }
+        val dockPaneMinPx = with(dockDensity) { DOCKED_PANE_MIN_WIDTH_FOR_DIVIDER.toPx() }
+        fun draggedPagePx(): Float = (dockPagePx + (dividerDrag.value ?: 0f))
+            .coerceIn(dockPageMinPx, (dockWindowPx - dockGapPx - dockPaneMinPx).coerceAtLeast(dockPageMinPx))
+        val dockCorner = 28.dp
+        val dockGapColor = MaterialTheme.colorScheme.background.let {
+            if (darkTheme) androidx.compose.ui.graphics.lerp(it, Color.Black, 0.4f)
+            else androidx.compose.ui.graphics.lerp(it, MaterialTheme.colorScheme.onBackground, 0.08f)
+        }
+        Box(Modifier.fillMaxSize().then(if (playerDocked) Modifier.background(dockGapColor) else Modifier)) {
         Row(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxHeight()) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .then(
+                        if (playerDocked) {
+                            Modifier.dockedPaneLayer(
+                                shape = RoundedCornerShape(topEnd = dockCorner, bottomEnd = dockCorner),
+                                scaleX = { if (dividerDrag.value == null) 1f else draggedPagePx() / dockPagePx },
+                                originX = 0f,
+                                blur = { dividerBlur.value },
+                            )
+                        } else {
+                            Modifier
+                        },
+                    ),
+            ) {
                 // One page's content, for the page [key] names: a tab ("tab:N"),
                 // an opened release, Settings or Replay.
                 val pageBody: @Composable (String) -> Unit = { key ->
@@ -2159,6 +2222,7 @@ private fun BitChordApp(
                     } else if (key == "settings") {
                         SettingsScreen(
                             windowWidth = windowWidth,
+                            windowHeight = windowHeight,
                             onOpenReplay = {
                                 showSettings = false
                                 showReplay = true
@@ -3029,39 +3093,45 @@ private fun BitChordApp(
             // put it away and nothing to put it away for — the pane is its
             // own space rather than something borrowed from the page.
             if (playerDocked) {
-                // The page's own colours where it meets the pane, top and foot,
-                // for the pane to start from: the two run into each other there
-                // instead of meeting at an edge. The same reading the top fade
-                // takes of the page.
-                val seamDetail = detail != null && !isLocalDetail && !showSettings && !showReplay
-                val seamLocal = localCollectionPalette != null && detail == null && !showSettings && !showReplay
-                val seam = com.music.bitchord.ui.player.DockSeam(
-                    top = when {
-                        showReplay -> Color.Black
-                        seamDetail -> detailPalette.wash
-                        seamLocal -> localCollectionPalette!!.wash
-                        else -> MaterialTheme.colorScheme.background
-                    },
-                    bottom = when {
-                        showReplay -> Color.Black
-                        seamDetail -> detailPalette.background
-                        // A device album or playlist is washed one colour top
-                        // to foot (see DrillDownSongList), not shaded down.
-                        seamLocal -> localCollectionPalette!!.wash
-                        else -> MaterialTheme.colorScheme.background
-                    },
-                    // The bottom scrim the page has, as BottomFadeScrim is given it.
-                    footColor = if (seamDetail) detailPalette.background else MaterialTheme.colorScheme.background,
-                    footHeight = com.music.bitchord.ui.components.bottomFadeScrimHeight(),
+                Spacer(Modifier.width(com.music.bitchord.ui.player.DOCK_DIVIDER_GAP))
+                DockedPlayer(
+                    song = playerSong,
+                    width = dockPaneWidth,
+                    modifier = Modifier.dockedPaneLayer(
+                        shape = RoundedCornerShape(topStart = dockCorner, bottomStart = dockCorner),
+                        scaleX = {
+                            if (dividerDrag.value == null) 1f
+                            else (dockWindowPx - dockGapPx - draggedPagePx()) / dockPanePx
+                        },
+                        originX = 1f,
+                        blur = { dividerBlur.value },
+                    ),
+                    content = { current -> nowPlaying(current, true) },
                 )
-                CompositionLocalProvider(com.music.bitchord.ui.player.LocalDockSeam provides seam) {
-                    DockedPlayer(
-                        song = playerSong,
-                        width = dockedPlayerWidth(windowWidth),
-                        content = { current -> nowPlaying(current, true) },
-                    )
-                }
             }
+        }
+        if (playerDocked) {
+            DockDivider(
+                centerX = { draggedPagePx() + dockGapPx / 2f },
+                dragging = dividerDrag.value != null,
+                blur = { dividerBlur.value },
+                pageCenterX = { draggedPagePx() / 2f },
+                paneCenterX = { (draggedPagePx() + dockGapPx + dockWindowPx) / 2f },
+                onDragStart = { dividerDrag.value = 0f },
+                onDrag = { dx -> dividerDrag.value = (dividerDrag.value ?: 0f) + dx },
+                onDragEnd = {
+                    val page = draggedPagePx()
+                    // Committed and released together, so the frame that drops
+                    // the stretch is the one laid out at the new widths.
+                    androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                        AppSettings.setDockedPageFraction(((page + dockGapPx / 2f) / dockWindowPx).coerceIn(0.05f, 0.95f))
+                        dividerDrag.value = null
+                    }
+                },
+                onReset = { AppSettings.setDockedPageFraction(null) },
+                blurAnim = dividerBlur,
+            )
+        }
         }
         }
 
@@ -4097,10 +4167,11 @@ private fun formatDurationText(ms: Long): String {
 private fun DockedPlayer(
     song: Song?,
     width: Dp,
+    modifier: Modifier = Modifier,
     content: @Composable (Song) -> Unit,
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .width(width)
             .fillMaxHeight()
             .background(MaterialTheme.colorScheme.surface),
@@ -4340,3 +4411,134 @@ private fun Modifier.shownOrParked(shown: Boolean): Modifier =
             layout(placeable.width, placeable.height) { placeable.place(0, 0) }
         }
     }
+
+
+/** The narrowest either side of the divider may be dragged to: the split's own minimums. */
+private val DOCKED_PAGE_MIN_WIDTH_FOR_DIVIDER = 360.dp
+private val DOCKED_PANE_MIN_WIDTH_FOR_DIVIDER = 340.dp
+
+/**
+ * One side of the page / player split: its rounded inner corners and, while the
+ * divider is dragged, the stretch to the width it is being pulled to and the
+ * blur over it. All read in the draw phase, so a drag never recomposes or lays
+ * out either side again.
+ */
+private fun Modifier.dockedPaneLayer(
+    shape: androidx.compose.ui.graphics.Shape,
+    scaleX: () -> Float,
+    originX: Float,
+    blur: () -> Float,
+): Modifier = this
+    .graphicsLayer {
+        this.scaleX = scaleX()
+        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(originX, 0.5f)
+        this.shape = shape
+        clip = true
+        val b = blur()
+        renderEffect = if (b > 0.01f) {
+            androidx.compose.ui.graphics.BlurEffect(
+                28.dp.toPx() * b,
+                28.dp.toPx() * b,
+                androidx.compose.ui.graphics.TileMode.Clamp,
+            )
+        } else {
+            null
+        }
+    }
+    .drawWithContent {
+        drawContent()
+        val b = blur()
+        if (b > 0.01f) drawRect(Color.Black.copy(alpha = 0.25f * b))
+    }
+
+/**
+ * The handle between the page and a docked player, and the strip around it that
+ * takes the drag. Laid over both sides rather than placed in the row, so it can
+ * be wider to the finger than the 12dp gap it sits in. A double tap puts the
+ * split back where it started.
+ */
+@Composable
+private fun DockDivider(
+    centerX: () -> Float,
+    dragging: Boolean,
+    blur: () -> Float,
+    pageCenterX: () -> Float,
+    paneCenterX: () -> Float,
+    onDragStart: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onReset: () -> Unit,
+    blurAnim: androidx.compose.animation.core.Animatable<Float, androidx.compose.animation.core.AnimationVector1D>,
+) {
+    val scope = rememberCoroutineScope()
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    val touchWidth = 28.dp
+    val grow by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (dragging) 1f else 0f,
+        animationSpec = androidx.compose.animation.core.tween(160),
+        label = "dividerHandle",
+    )
+    val handleColor = MaterialTheme.colorScheme.onSurface
+    // The two sides' names, while they are blurred past reading.
+    if (dragging || blurAnim.value > 0.01f) {
+        val labels = listOf(
+            stringResource(R.string.divider_page) to pageCenterX,
+            stringResource(R.string.divider_player) to paneCenterX,
+        )
+        Box(Modifier.fillMaxSize().graphicsLayer { alpha = blur() }) {
+            for ((label, cx) in labels) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color.White,
+                    modifier = Modifier.layout { m, c ->
+                        val pl = m.measure(c.copy(minWidth = 0, minHeight = 0))
+                        layout(c.maxWidth, c.maxHeight) {
+                            pl.place((cx() - pl.width / 2f).roundToInt(), (c.maxHeight - pl.height) / 2)
+                        }
+                    },
+                )
+            }
+        }
+    }
+    Box(
+        Modifier
+            .fillMaxHeight()
+            .width(touchWidth)
+            .offset { IntOffset((centerX() - touchWidth.toPx() / 2f).roundToInt(), 0) }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = {
+                        onDragStart()
+                        haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        scope.launch { blurAnim.animateTo(1f, androidx.compose.animation.core.tween(140)) }
+                    },
+                    onDragEnd = {
+                        onDragEnd()
+                        scope.launch { blurAnim.animateTo(0f, androidx.compose.animation.core.tween(240)) }
+                    },
+                    onDragCancel = {
+                        onDragEnd()
+                        scope.launch { blurAnim.animateTo(0f, androidx.compose.animation.core.tween(240)) }
+                    },
+                    onHorizontalDrag = { change, dx ->
+                        change.consume()
+                        onDrag(dx)
+                    },
+                )
+            }
+            .pointerInput(Unit) {
+                detectTapGestures(onDoubleTap = { onReset() })
+            }
+            .drawBehind {
+                val w = (4.dp + 2.dp * grow).toPx()
+                val h = (48.dp + 16.dp * grow).toPx()
+                drawRoundRect(
+                    color = handleColor.copy(alpha = 0.55f + 0.4f * grow),
+                    topLeft = androidx.compose.ui.geometry.Offset((size.width - w) / 2f, (size.height - h) / 2f),
+                    size = androidx.compose.ui.geometry.Size(w, h),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w / 2f),
+                )
+            },
+    )
+}

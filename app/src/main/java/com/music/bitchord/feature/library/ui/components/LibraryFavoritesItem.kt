@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -107,7 +106,7 @@ fun LibraryFavoritesItem(
             if (songCount > 0) {
                 IconButton(onClick = onPlay) {
                     Icon(
-                        imageVector = Icons.Rounded.PlayArrow,
+                        imageVector = com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
                         contentDescription = stringResource(R.string.play),
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(28.dp),

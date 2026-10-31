@@ -1269,4 +1269,16 @@
     <string name="font_error_typeface">Couldn\'t load this as a font</string>
     <string name="beta_player_layout">Beta player layout</string>
     <string name="beta_player_layout_subtitle">Gathers the controls at the bottom, shows bigger artwork, and shows lyrics inside the player</string>
+    <string name="large_screen_player">Player on large screens</string>
+    <string name="large_screen_player_subtitle">Choose how the player is laid out on a tablet or an unfolded phone. Side by side falls back to two columns when the window is too narrow.</string>
+    <string name="large_screen_player_two_column">Two columns</string>
+    <string name="large_screen_player_side_by_side">Side by side</string>
+    <string name="divider_page">Page</string>
+    <string name="divider_player">Player</string>
+    <string name="equalizer_forget_device">Remove from list</string>
+    <string name="equalizer_forget_device_title">Remove %1$s?</string>
+    <string name="equalizer_forget_device_body">Its equalizer settings and automatic preset will be removed too. It will appear again the next time it is connected.</string>
+    <string name="large_screen_player_landscape">Landscape</string>
+    <string name="large_screen_player_portrait">Portrait</string>
+    <string name="large_screen_player_phone">Like a phone</string>
 </resources>

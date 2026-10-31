@@ -19,27 +19,6 @@ object BitChordIcons {
     private const val STROKE = 2.2f
     private val stroke = SolidColor(Color.Black)
 
-    val Play: ImageVector by lazy {
-        ImageVector.Builder(
-            name = "bc_play",
-            defaultWidth = 24.dp, defaultHeight = 24.dp,
-            viewportWidth = 24f, viewportHeight = 24f,
-        ).apply {
-            path(
-                stroke = stroke,
-                strokeLineWidth = STROKE,
-                strokeLineCap = StrokeCap.Round,
-                strokeLineJoin = StrokeJoin.Round,
-                fill = stroke,
-            ) {
-                moveTo(6.8f, 4.8f)
-                lineTo(19.2f, 12f)
-                lineTo(6.8f, 19.2f)
-                close()
-            }
-        }.build()
-    }
-
     // ---- Now Playing transport ----
     //
     // Filled outlines, drawn as true straight lines and circular arcs (the

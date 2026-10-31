@@ -19,7 +19,6 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -121,7 +120,7 @@ fun LibraryPlaylistCard(
                         ),
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.PlayArrow,
+                            imageVector = com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
                             contentDescription = stringResource(R.string.play),
                             modifier = Modifier.size(24.dp),
                         )

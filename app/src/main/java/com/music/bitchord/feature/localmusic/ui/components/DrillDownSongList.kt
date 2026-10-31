@@ -358,8 +358,17 @@ fun DrillDownActionRow(
     onMore: (() -> Unit)? = null,
     reorderEnabled: Boolean = false,
     onReorderToggle: (() -> Unit)? = null,
+    /** The colour of the page behind the row; the play button is cut from it. */
+    pageColor: Color? = null,
     modifier: Modifier = Modifier,
 ) {
+    // Play is the one thing on the page most likely to be wanted, so it is the
+    // one solid button: white on a dark page, with the page's own colour for
+    // its ink, and the other way round on a light one.
+    val page = pageColor ?: MaterialTheme.colorScheme.background
+    val darkPage = page.luminance() < 0.5f
+    val playContainer = if (darkPage) Color.White else androidx.compose.ui.graphics.lerp(page, Color.Black, 0.82f)
+    val playInk = if (darkPage) androidx.compose.ui.graphics.lerp(page, Color.Black, 0.35f) else Color.White
     val buttonBackground = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
     val buttonBorder = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
     val buttonContentColor = MaterialTheme.colorScheme.onSurface
@@ -391,24 +400,24 @@ fun DrillDownActionRow(
             modifier = Modifier
                 .height(50.dp)
                 .clip(CircleShape)
-                .background(buttonBackground)
-                .border(0.5.dp, buttonBorder, CircleShape)
+                .background(playContainer)
                 .clickable { if (songs.isNotEmpty()) onSongClick(songs, 0) }
                 .padding(horizontal = 32.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
         ) {
             Icon(
-                BitChordIcons.Play,
+                BitChordIcons.TransportPlay,
                 contentDescription = null,
-                tint = buttonContentColor,
-                modifier = Modifier.size(18.dp),
+                tint = playInk,
+                modifier = Modifier.size(20.dp),
             )
             Spacer(Modifier.width(6.dp))
             Text(
                 text = stringResource(R.string.play),
                 style = MaterialTheme.typography.titleMedium,
-                color = buttonContentColor,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                color = playInk,
             )
         }
         if (onViewTypeToggle != null && viewType != null) {
@@ -691,6 +700,7 @@ fun DrillDownSongList(
                 }
                 if (!selectionMode) item(span = { GridItemSpan(maxLineSpan) }) {
                     DrillDownActionRow(
+                        pageColor = if (fullScreenArtwork) artworkPalette.wash else MaterialTheme.colorScheme.background,
                         songs = songs,
                         viewType = viewType,
                         onViewTypeToggle = onViewTypeToggle,
@@ -801,6 +811,7 @@ fun DrillDownSongList(
                 }
                 if (!selectionMode) item {
                     DrillDownActionRow(
+                        pageColor = if (fullScreenArtwork) artworkPalette.wash else MaterialTheme.colorScheme.background,
                         songs = songs,
                         viewType = viewType,
                         onViewTypeToggle = onViewTypeToggle,

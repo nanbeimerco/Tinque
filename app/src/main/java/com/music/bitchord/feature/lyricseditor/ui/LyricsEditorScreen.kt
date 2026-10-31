@@ -37,7 +37,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Sync
@@ -480,7 +479,7 @@ fun LyricsEditorScreen(
                                             modifier = Modifier.size(36.dp),
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Rounded.PlayArrow,
+                                                imageVector = com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
                                                 contentDescription = stringResource(R.string.lyrics_sync_preview_line),
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
@@ -662,7 +661,7 @@ private fun SyncPlaybackBar(
         ) {
             IconButton(onClick = onPlayPause, enabled = enabled) {
                 Icon(
-                    imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                    imageVector = if (isPlaying) com.music.bitchord.ui.icons.BitChordIcons.TransportPause else com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
                     contentDescription = stringResource(if (isPlaying) R.string.lyrics_sync_pause else R.string.lyrics_sync_play),
                     modifier = Modifier.size(27.dp),
                 )

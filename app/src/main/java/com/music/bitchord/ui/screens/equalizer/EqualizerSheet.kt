@@ -42,6 +42,8 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -417,6 +419,7 @@ private fun DeviceAutoPresetSection(
     }
 
     var editingDevice by remember { mutableStateOf<KnownOutputDevice?>(null) }
+    var forgettingDevice by remember { mutableStateOf<KnownOutputDevice?>(null) }
 
     EqGroup(title = stringResource(R.string.equalizer_device_auto_preset_title)) {
         row {
@@ -463,6 +466,17 @@ private fun DeviceAutoPresetSection(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+                        // Not on the device playing now: it is back in the list
+                        // as soon as the route is read again.
+                        if (!isConnected) {
+                            IconButton(onClick = { forgettingDevice = device }) {
+                                Icon(
+                                    Icons.Rounded.Close,
+                                    contentDescription = stringResource(R.string.equalizer_forget_device),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
                         Icon(
                             Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                             contentDescription = null,
@@ -472,6 +486,39 @@ private fun DeviceAutoPresetSection(
                 }
             }
         }
+    }
+
+    forgettingDevice?.let { device ->
+        GlassAlertDialog(
+            onDismissRequest = { forgettingDevice = null },
+            shape = RoundedCornerShape(28.dp),
+            title = {
+                Text(
+                    text = stringResource(R.string.equalizer_forget_device_title, device.label),
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            },
+            text = {
+                Text(
+                    text = stringResource(R.string.equalizer_forget_device_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    EqualizerSettings.forgetDevice(device.key)
+                    forgettingDevice = null
+                }) {
+                    Text(text = stringResource(R.string.remove), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { forgettingDevice = null }) {
+                    Text(text = stringResource(android.R.string.cancel))
+                }
+            },
+        )
     }
 
     val targetDevice = editingDevice

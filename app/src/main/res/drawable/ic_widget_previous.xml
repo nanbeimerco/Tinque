@@ -1,20 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Skip to previous: ic_widget_next mirrored. See ic_widget_play. -->
+<!--
+  Skip back. The same outline as the player's own button (BitChordIcons.TransportPrevious),
+  so the widget, the app and the player draw one shape.
+
+  White, not tinted: this only ever draws over darkened album art, so there is
+  no theme for it to follow.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:pathData="M7,7.4L7,16.6"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeLineCap="round"
-        android:strokeWidth="2.4" />
-    <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M16.6,7.7L16.6,16.3L10.7,12Z"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:strokeWidth="2.4" />
+        android:pathData="M10.373,5.537A1.222,1.222 0 0,1 12.206,6.595L12.206,11.172L21.967,5.537A1.222,1.222 0 0,1 23.8,6.595L23.8,17.405A1.222,1.222 0 0,1 21.967,18.463L12.206,12.828L12.206,17.405A1.222,1.222 0 0,1 10.373,18.463L1.011,13.058A1.222,1.222 0 0,1 1.011,10.942Z" />
 </vector>

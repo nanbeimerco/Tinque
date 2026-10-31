@@ -1,14 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Play. Rounded rather than sharp, to sit alongside the Icons.Rounded glyphs the
-  mini player and the full player use.
-
-  The rounding is a round-joined stroke of the fill's own colour laid over an
-  inset triangle, rather than arcs written by hand: the stroke extends half its
-  width past the path and caps every corner with a radius of exactly that half,
-  so insetting the triangle by the same amount lands the finished glyph back on
-  the bounds Material's own play_arrow occupies. Hand-authored arcs would give
-  the same picture with three more chances to get a control point wrong.
+  Play. The same outline as the player's own button (BitChordIcons.TransportPlay),
+  so the widget, the app and the player draw one shape.
 
   White, not tinted: this only ever draws over darkened album art, so there is
   no theme for it to follow.
@@ -20,9 +13,5 @@
     android:viewportHeight="24">
     <path
         android:fillColor="#FFFFFFFF"
-        android:pathData="M8.4,6.4L8.4,17.6L17.6,12Z"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:strokeWidth="2.6" />
+        android:pathData="M7.381,3.823L18.143,9.259C20.859,10.631 21.417,10.938 21.417,12C21.417,13.062 20.859,13.369 18.143,14.741L7.381,20.177A1.79,1.79 0 0,1 4.783,18.579L4.783,5.421A1.79,1.79 0 0,1 7.381,3.823Z" />
 </vector>

@@ -319,6 +319,22 @@ object EqualizerSettings {
         persistKnownDevices(current)
     }
 
+    /**
+     * Forgets an output device: its entry in the list, the EQ profile kept for it
+     * and its automatic preset. The device that is playing now is left alone —
+     * it would be recorded again the moment the route is next read.
+     */
+    fun forgetDevice(deviceKey: String) {
+        if (deviceKey == activeDeviceKey || !isValidDeviceKey(deviceKey)) return
+        val known = _knownDevices.value.filterNot { it.key == deviceKey }
+        _knownDevices.value = known
+        persistKnownDevices(known)
+        val assignments = _devicePresetAssignments.value - deviceKey
+        _devicePresetAssignments.value = assignments
+        persistDevicePresetAssignments(assignments)
+        prefs.edit().remove(PROFILE_PREFIX + deviceKey).apply()
+    }
+
     /** Persist and activate an EQ profile for the routed output device. */
     fun activateOutputProfile(deviceKey: String, label: String) {
         if (!this::prefs.isInitialized) return

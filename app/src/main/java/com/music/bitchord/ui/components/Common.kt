@@ -17,7 +17,6 @@ import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -498,7 +497,7 @@ private fun SongRowContent(
                     SelectionMark(selected = selected)
                 } else if (isCurrent) {
                     Icon(
-                        imageVector = if (isPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
+                        imageVector = if (isPlaying) Icons.Rounded.GraphicEq else com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
                         contentDescription = stringResource(R.string.now_playing),
                         tint = activeTint,
                         modifier = Modifier.size(22.dp),
@@ -562,7 +561,7 @@ private fun SongRowContent(
         if (isCurrent && trackNumber == null) {
             Spacer(Modifier.width(8.dp))
             Icon(
-                imageVector = if (isPlaying) Icons.Rounded.GraphicEq else Icons.Rounded.PlayArrow,
+                imageVector = if (isPlaying) Icons.Rounded.GraphicEq else com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
                 contentDescription = stringResource(R.string.now_playing),
                 tint = activeTint,
                 modifier = Modifier.size(20.dp),

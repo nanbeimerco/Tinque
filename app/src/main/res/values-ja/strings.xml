@@ -1177,4 +1177,16 @@
     <string name="beta_player_layout">ベータ版プレイヤーレイアウト</string>
     <string name="beta_player_layout_subtitle">操作を画面の下にまとめ、アートを大きく表示します。歌詞は再生画面の中に表示します</string>
     <string name="favorites">お気に入りの曲</string>
+    <string name="large_screen_player">大きい画面での再生画面</string>
+    <string name="large_screen_player_subtitle">タブレットや、開いた折りたたみスマホでの再生画面の形を選びます。「並べる」でも幅が足りないときは 2 カラムになります。</string>
+    <string name="large_screen_player_two_column">2 カラム</string>
+    <string name="large_screen_player_side_by_side">並べる</string>
+    <string name="divider_page">ページ</string>
+    <string name="divider_player">再生画面</string>
+    <string name="equalizer_forget_device">一覧から削除</string>
+    <string name="equalizer_forget_device_title">%1$s を一覧から削除しますか?</string>
+    <string name="equalizer_forget_device_body">この機器用の EQ の設定と自動プリセットも消えます。次につないだときに、また一覧に出ます。</string>
+    <string name="large_screen_player_landscape">横向き</string>
+    <string name="large_screen_player_portrait">縦向き</string>
+    <string name="large_screen_player_phone">スマホと同じ</string>
 </resources>

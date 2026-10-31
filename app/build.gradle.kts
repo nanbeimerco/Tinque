@@ -51,8 +51,8 @@ android {
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
         targetSdk = 36
-        versionCode = 59
-        versionName = "2.4.13"
+        versionCode = 60
+        versionName = "2.4.14"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -206,6 +206,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
+    // Google's window size classes: where a window counts as large. Already on
+    // the classpath through Compose; named here because the player layout uses it.
+    implementation("androidx.window:window-core:1.5.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // ---- Media playback: Media3 / ExoPlayer ----

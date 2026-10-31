@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -102,7 +101,7 @@ fun LibraryFavoritesCard(
                         ),
                     ) {
                         Icon(
-                            imageVector = Icons.Rounded.PlayArrow,
+                            imageVector = com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
                             contentDescription = stringResource(R.string.shuffle),
                             modifier = Modifier.size(24.dp),
                         )

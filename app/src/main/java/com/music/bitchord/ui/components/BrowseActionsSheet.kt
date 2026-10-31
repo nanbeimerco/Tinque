@@ -17,7 +17,6 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -173,7 +172,7 @@ fun BrowseActionsSheet(
         BrowseSheetHeader(target)
         HorizontalDivider(thickness = 0.5.dp, color = MaterialTheme.colorScheme.outline)
 
-        onPlay?.let { ActionRow(Icons.Rounded.PlayArrow, stringResource(R.string.play), onClick = it) }
+        onPlay?.let { ActionRow(com.music.bitchord.ui.icons.BitChordIcons.TransportPlay, stringResource(R.string.play), onClick = it) }
         onShuffle?.let { ActionRow(com.music.bitchord.ui.icons.PlayerControlIcons.Shuffle, stringResource(R.string.shuffle), onClick = it) }
         ActionRow(
             Icons.AutoMirrored.Rounded.PlaylistPlay,

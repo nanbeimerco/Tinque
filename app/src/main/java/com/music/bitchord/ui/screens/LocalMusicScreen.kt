@@ -65,7 +65,6 @@ import androidx.compose.material.icons.rounded.LibraryMusic
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Shuffle
@@ -1543,7 +1542,7 @@ private fun ArtistRow(
             )
         }
         Icon(
-            imageVector = Icons.Rounded.PlayArrow,
+            imageVector = com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(20.dp),
@@ -1995,7 +1994,7 @@ private fun AlbumRow(
             com.music.bitchord.ui.components.SelectionMark(selected = selected)
         } else {
             Icon(
-                imageVector = Icons.Rounded.PlayArrow,
+                imageVector = com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(20.dp),

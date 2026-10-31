@@ -257,6 +257,12 @@ enum class MainNavigationTab(val index: Int) {
 
 enum class ScreenOrientationMode { SYSTEM, PORTRAIT, LANDSCAPE }
 
+/** What a large landscape window does with the player. */
+enum class LandscapePlayerLayout { SIDE_BY_SIDE, TWO_COLUMN }
+
+/** What a large portrait (or near-square) window does with the player. */
+enum class PortraitPlayerLayout { TWO_COLUMN, PHONE }
+
 /** Player shortcuts shown immediately to the left of the favorite action. */
 enum class PlayerQuickAction {
     LYRICS,
@@ -587,6 +593,10 @@ object AppSettings {
     /** Keeps the display awake while the full lyrics panel is open. */
     val keepScreenOnDuringLyrics = MutableStateFlow(true)
     val screenOrientationMode = MutableStateFlow(ScreenOrientationMode.SYSTEM)
+    val landscapePlayerLayout = MutableStateFlow(LandscapePlayerLayout.SIDE_BY_SIDE)
+    val portraitPlayerLayout = MutableStateFlow(PortraitPlayerLayout.TWO_COLUMN)
+    /** The page's share of a side-by-side window, as the divider was left; null is the default split. */
+    val dockedPageFraction = MutableStateFlow<Float?>(null)
     val favoriteUsesStar = MutableStateFlow(false)
     val playerQuickActions = MutableStateFlow<List<PlayerQuickAction>>(emptyList())
     val hiddenPlayerDetailsActions = MutableStateFlow<Set<PlayerDetailsAction>>(emptySet())
@@ -1166,6 +1176,13 @@ object AppSettings {
         screenOrientationMode.value = runCatching {
             ScreenOrientationMode.valueOf(prefs.getString(KEY_SCREEN_ORIENTATION, ScreenOrientationMode.SYSTEM.name) ?: ScreenOrientationMode.SYSTEM.name)
         }.getOrDefault(ScreenOrientationMode.SYSTEM)
+        landscapePlayerLayout.value = runCatching {
+            LandscapePlayerLayout.valueOf(prefs.getString(KEY_LANDSCAPE_PLAYER_LAYOUT, null) ?: LandscapePlayerLayout.SIDE_BY_SIDE.name)
+        }.getOrDefault(LandscapePlayerLayout.SIDE_BY_SIDE)
+        portraitPlayerLayout.value = runCatching {
+            PortraitPlayerLayout.valueOf(prefs.getString(KEY_PORTRAIT_PLAYER_LAYOUT, null) ?: PortraitPlayerLayout.TWO_COLUMN.name)
+        }.getOrDefault(PortraitPlayerLayout.TWO_COLUMN)
+        dockedPageFraction.value = prefs.getFloat(KEY_DOCKED_PAGE_FRACTION, -1f).takeIf { it in 0.05f..0.95f }
         favoriteUsesStar.value = prefs.getBoolean(KEY_FAVORITE_USES_STAR, false)
         playerQuickActions.value = readPlayerQuickActions()
         hiddenPlayerDetailsActions.value = readHiddenPlayerDetailsActions()
@@ -1953,6 +1970,21 @@ object AppSettings {
     fun setKeepScreenOnDuringLyrics(value: Boolean) {
         keepScreenOnDuringLyrics.value = value
         prefs.edit().putBoolean(KEY_KEEP_SCREEN_ON_DURING_LYRICS, value).apply()
+    }
+
+    fun setLandscapePlayerLayout(value: LandscapePlayerLayout) {
+        landscapePlayerLayout.value = value
+        prefs.edit().putString(KEY_LANDSCAPE_PLAYER_LAYOUT, value.name).apply()
+    }
+
+    fun setPortraitPlayerLayout(value: PortraitPlayerLayout) {
+        portraitPlayerLayout.value = value
+        prefs.edit().putString(KEY_PORTRAIT_PLAYER_LAYOUT, value.name).apply()
+    }
+
+    fun setDockedPageFraction(value: Float?) {
+        dockedPageFraction.value = value
+        prefs.edit().apply { if (value == null) remove(KEY_DOCKED_PAGE_FRACTION) else putFloat(KEY_DOCKED_PAGE_FRACTION, value) }.apply()
     }
 
     fun setScreenOrientationMode(value: ScreenOrientationMode) {
@@ -3090,6 +3122,9 @@ object AppSettings {
     private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
     private const val KEY_KEEP_SCREEN_ON_DURING_LYRICS = "keep_screen_on_during_lyrics"
     private const val KEY_SCREEN_ORIENTATION = "screen_orientation_mode"
+    private const val KEY_LANDSCAPE_PLAYER_LAYOUT = "landscape_player_layout"
+    private const val KEY_PORTRAIT_PLAYER_LAYOUT = "portrait_player_layout"
+    private const val KEY_DOCKED_PAGE_FRACTION = "docked_page_fraction"
     private const val KEY_FAVORITE_USES_STAR = "favorite_uses_star"
     private const val KEY_PLAYER_QUICK_ACTIONS = "player_quick_actions"
     private const val KEY_HIDDEN_PLAYER_DETAILS_ACTIONS = "hidden_player_details_actions"

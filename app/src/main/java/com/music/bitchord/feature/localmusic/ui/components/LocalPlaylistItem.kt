@@ -19,7 +19,6 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -190,7 +189,7 @@ fun LocalPlaylistItem(
                     DropdownMenuItem(
                         text = { Text("Play") },
                         leadingIcon = {
-                            Icon(imageVector = Icons.Rounded.PlayArrow, contentDescription = null)
+                            Icon(imageVector = com.music.bitchord.ui.icons.BitChordIcons.TransportPlay, contentDescription = null)
                         },
                         onClick = {
                             menuOpen = false

@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Pause. Two bars drawn as round-capped lines rather than as rounded rectangles:
-  a line of stroke width w with a round cap *is* a bar w wide with fully rounded
-  ends, which is what the rounded icon set's pause looks like, and it needs four
-  numbers instead of a dozen. See ic_widget_play for why the glyphs are white.
+  Pause. The same outline as the player's own button (BitChordIcons.TransportPause),
+  so the widget, the app and the player draw one shape.
+
+  White, not tinted: this only ever draws over darkened album art, so there is
+  no theme for it to follow.
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
@@ -11,13 +12,6 @@
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:pathData="M8.2,6.8L8.2,17.2"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeLineCap="round"
-        android:strokeWidth="3.6" />
-    <path
-        android:pathData="M15.8,6.8L15.8,17.2"
-        android:strokeColor="#FFFFFFFF"
-        android:strokeLineCap="round"
-        android:strokeWidth="3.6" />
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7,3.91L9.281,3.91A1.625,1.625 0 0,1 10.906,5.535L10.906,18.465A1.625,1.625 0 0,1 9.281,20.09L7,20.09A1.625,1.625 0 0,1 5.374,18.465L5.374,5.535A1.625,1.625 0 0,1 7,3.91ZM14.719,3.91L17,3.91A1.625,1.625 0 0,1 18.626,5.535L18.626,18.465A1.625,1.625 0 0,1 17,20.09L14.719,20.09A1.625,1.625 0 0,1 13.094,18.465L13.094,5.535A1.625,1.625 0 0,1 14.719,3.91Z" />
 </vector>

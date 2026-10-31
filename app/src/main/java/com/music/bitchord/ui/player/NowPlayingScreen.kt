@@ -124,7 +124,6 @@ import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.rounded.Pause
-import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -404,28 +403,8 @@ private val ART_BOX_TOP_PAD = 8.dp
  */
 private const val HERO_FADE_FRACTION = 0.42f
 
-/**
- * The page's colours where it meets a docked player, top and foot. The pane's
- * left edge starts from them and runs into its own backdrop over
- * [DOCK_SEAM_WIDTH], so the two meet without an edge.
- */
-@androidx.compose.runtime.Immutable
-data class DockSeam(
-    val top: Color,
-    val bottom: Color,
-    /** The page's bottom scrim (see BottomFadeScrim): its colour and height. */
-    val footColor: Color = bottom,
-    val footHeight: androidx.compose.ui.unit.Dp = 0.dp,
-)
-
-
-val LocalDockSeam = androidx.compose.runtime.staticCompositionLocalOf<DockSeam?> { null }
-
-/** How far into a docked pane the page's colour runs before the player's own takes over. */
-private val DOCK_SEAM_WIDTH = 96.dp
-
-/** At least this wide and this tall, a full-screen player splits into two columns. */
-private val TWO_COLUMN_MIN_SIZE = 600.dp
+/** The tallest a two-column banner gets, as a multiple of the column's width. */
+private const val TWO_COLUMN_BANNER_ASPECT = 1.2f
 
 /** The left column's share: artwork and controls. The lyrics take the rest. */
 private const val TWO_COLUMN_LEFT_FRACTION = 0.52f
@@ -681,17 +660,82 @@ private fun playerFillsWindow(windowWidth: Dp): Boolean =
  * raise the sheet at all.
  */
 fun dockedPlayerAvailable(windowWidth: Dp): Boolean =
-    windowWidth >= DOCKED_PAGE_MIN_WIDTH + DOCKED_PLAYER_MIN_WIDTH
+    windowWidth >= DOCKED_PAGE_MIN_WIDTH + DOCKED_PLAYER_MIN_WIDTH + DOCK_DIVIDER_GAP
 
-/** How wide that pane is. Only meaningful where [dockedPlayerAvailable] is true. */
-fun dockedPlayerWidth(windowWidth: Dp): Dp =
-    (windowWidth * DOCKED_PLAYER_FRACTION)
-        .coerceIn(DOCKED_PLAYER_MIN_WIDTH, DOCKED_PLAYER_MAX_WIDTH)
+/** How the player is laid out in a window: see [playerLayoutFor]. */
+enum class PlayerLayout { PHONE, TWO_COLUMN, DOCKED }
+
+/**
+ * Which layout a window of this size gets.
+ *
+ * The window's *shape* decides between the two large layouts, not its width:
+ * a portrait tablet is wider than the 700dp a side-by-side split needs, and
+ * deciding on width alone stood the page beside the player in a window that
+ * is taller than it is wide. Landscape stands them side by side; portrait and
+ * near-square windows get the two-column player. Size only decides whether the
+ * window is large at all — Google's medium window class, the line every
+ * adaptive app draws — and whether a split physically fits.
+ *
+ * Both numbers are of the app's *window*, measured, so a split-screen half of
+ * a tablet is laid out as the phone-sized window it is.
+ */
+fun playerLayoutFor(
+    windowWidth: Dp,
+    windowHeight: Dp,
+    landscapeLayout: com.music.bitchord.data.settings.LandscapePlayerLayout,
+    portraitLayout: com.music.bitchord.data.settings.PortraitPlayerLayout,
+): PlayerLayout {
+    val size = androidx.window.core.layout.WindowSizeClass(windowWidth.value, windowHeight.value)
+    val twoColumnFits =
+        size.isWidthAtLeastBreakpoint(androidx.window.core.layout.WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND) &&
+            size.isHeightAtLeastBreakpoint(androidx.window.core.layout.WindowSizeClass.HEIGHT_DP_MEDIUM_LOWER_BOUND)
+    val dockFits = dockedPlayerAvailable(windowWidth)
+    return if (windowWidth > windowHeight) {
+        when (landscapeLayout) {
+            com.music.bitchord.data.settings.LandscapePlayerLayout.SIDE_BY_SIDE -> when {
+                dockFits -> PlayerLayout.DOCKED
+                twoColumnFits -> PlayerLayout.TWO_COLUMN
+                else -> PlayerLayout.PHONE
+            }
+            com.music.bitchord.data.settings.LandscapePlayerLayout.TWO_COLUMN -> when {
+                twoColumnFits -> PlayerLayout.TWO_COLUMN
+                dockFits -> PlayerLayout.DOCKED
+                else -> PlayerLayout.PHONE
+            }
+        }
+    } else {
+        when (portraitLayout) {
+            com.music.bitchord.data.settings.PortraitPlayerLayout.TWO_COLUMN ->
+                if (twoColumnFits) PlayerLayout.TWO_COLUMN else PlayerLayout.PHONE
+            com.music.bitchord.data.settings.PortraitPlayerLayout.PHONE -> PlayerLayout.PHONE
+        }
+    }
+}
+
+/** Whether a window this size is large enough to offer the large-screen layout choices at all. */
+fun largeScreenPlayerChoiceAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
+    dockedPlayerAvailable(windowWidth) ||
+        androidx.window.core.layout.WindowSizeClass(windowWidth.value, windowHeight.value)
+            .isWidthAtLeastBreakpoint(androidx.window.core.layout.WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND)
+
+/** The gap between the page and a docked player. */
+val DOCK_DIVIDER_GAP = 12.dp
+
+/**
+ * How wide that pane is. Only meaningful where [dockedPlayerAvailable] is true.
+ *
+ * [pageFraction] is where the divider was left (the page's share of the
+ * window), or null for the default split.
+ */
+fun dockedPlayerWidth(windowWidth: Dp, pageFraction: Float? = null): Dp =
+    (if (pageFraction != null) windowWidth * (1f - pageFraction) - DOCK_DIVIDER_GAP / 2 else windowWidth * DOCKED_PLAYER_FRACTION)
+        .coerceAtLeast(DOCKED_PLAYER_MIN_WIDTH)
+        .let { if (pageFraction != null) it else it.coerceAtMost(DOCKED_PLAYER_MAX_WIDTH) }
         // Never at the page's expense. The floor above is what the player wants;
         // this is what it may actually have, and where the two disagree the page
         // wins — [dockedPlayerAvailable] is the promise that they only disagree
         // in windows narrow enough that there is no pane at all.
-        .coerceAtMost(windowWidth - DOCKED_PAGE_MIN_WIDTH)
+        .coerceAtMost(windowWidth - DOCKED_PAGE_MIN_WIDTH - DOCK_DIVIDER_GAP)
 
 /**
  * How far back the part of the playing line that hasn't been sung yet is held.
@@ -962,6 +1006,8 @@ fun NowPlayingScreen(
      * cover edge to edge exactly as a phone does — see [fullBleedArtworkAvailable].
      */
     docked: Boolean = false,
+    /** Whether the full-screen player splits into two columns — see [playerLayoutFor]. */
+    twoColumnLayout: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     // Its own window: give the sheets and menus opened in it their glass.
@@ -1260,14 +1306,12 @@ fun NowPlayingScreen(
     // right, always there. With no border: one backdrop runs under both, and
     // the artwork melts into it. The lyrics and queue toggles then choose what
     // the right column shows instead of folding the sleeve away.
-    val windowHeight = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp
-    val twoColumn = !docked && windowWidth >= TWO_COLUMN_MIN_SIZE && windowHeight >= TWO_COLUMN_MIN_SIZE
+    val twoColumn = !docked && twoColumnLayout
     val leftColumnWidth = windowWidth * TWO_COLUMN_LEFT_FRACTION
     // In two columns the toggle row stands at the foot of the right column.
     // It is still built where it always is (it reads half the player's state);
     // the left column hands it across instead of drawing it.
     val twoColumnToggles = remember { mutableStateOf<List<ToggleSegment>>(emptyList()) }
-    val dockSeam = if (docked) LocalDockSeam.current else null
     // The classic lyrics page, and the beta layout's in-player lyrics. Only one
     // of them answers to [lyricsOpen] at a time, chosen by the layout.
     // The full lyrics page is gone: lyrics open inside the player, as in the
@@ -1788,41 +1832,6 @@ fun NowPlayingScreen(
             }
         }
 
-        if (dockSeam != null) {
-            // The page's colours, running from the pane's left edge into the
-            // backdrop. Under everything the pane draws, so nothing of the
-            // player is covered: only the backdrop gives way to the page.
-            val seamTop by animateColorAsState(dockSeam.top, tween(400), label = "seamTop")
-            val seamBottom by animateColorAsState(dockSeam.bottom, tween(400), label = "seamBottom")
-            val seamFoot by animateColorAsState(dockSeam.footColor, tween(400), label = "seamFoot")
-            val footHeight = dockSeam.footHeight
-            Box(
-                Modifier
-                    .align(Alignment.CenterStart)
-                    .fillMaxHeight()
-                    .width(DOCK_SEAM_WIDTH)
-                    .then(backdropModifier)
-                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                    .drawBehind {
-                        drawRect(Brush.verticalGradient(listOf(seamTop, seamBottom)))
-                        if (footHeight > 0.dp) {
-                            // The page's bottom scrim, carried on across the seam.
-                            val top = size.height - footHeight.toPx()
-                            drawRect(
-                                brush = com.music.bitchord.ui.components.bottomFadeBrush(seamFoot, top, size.height),
-                                topLeft = androidx.compose.ui.geometry.Offset(0f, top),
-                            )
-                        }
-                        drawRect(
-                            brush = Brush.horizontalGradient(
-                                listOf(Color.Black, Color.Black.copy(alpha = 0.55f), Color.Transparent),
-                            ),
-                            blendMode = BlendMode.DstIn,
-                        )
-                    },
-            )
-        }
-
         if (heroHeight > 0.dp) {
             // Motion artwork over the banner, in the same frame.
             //
@@ -2170,10 +2179,22 @@ fun NowPlayingScreen(
                 val expandedArtHeight = fullArt * minOf(1f, 1f / sleeveAspectRatio)
                 val spare = (maxHeight - expandedArtHeight - ART_TITLE_GAP - HEADER_HEIGHT)
                     .coerceAtLeast(0.dp)
-                val groupTop = if (betaLayout && heroMode) 0.dp else spare / 2
-                // Extra room between the artwork and the title row (beta only:
-                // the title row sits on the controls there).
-                val titleDrop = if (betaLayout) spare - groupTop else 0.dp
+                // Two columns on a tall window (a portrait tablet): centring the
+                // block would run the full-bleed banner most of the way down a
+                // narrow column, and the cover would be cropped to a sliver of
+                // itself. Held to a little taller than the column is wide; the
+                // rest opens between the artwork and the title instead.
+                val twoColumnTopCap = if (twoColumn && heroMode) {
+                    (leftColumnWidth * TWO_COLUMN_BANNER_ASPECT - statusBarTop - topStrip - ART_BOX_TOP_PAD -
+                        expandedArtHeight - ART_TITLE_GAP / 2).coerceAtLeast(0.dp)
+                } else {
+                    null
+                }
+                val centredTop = if (betaLayout && heroMode) 0.dp else spare / 2
+                val groupTop = twoColumnTopCap?.let { minOf(it, centredTop) } ?: centredTop
+                // Extra room between the artwork and the title row (beta, and a
+                // capped two-column banner: the title row sits on the controls there).
+                val titleDrop = if (betaLayout || groupTop < centredTop) spare - groupTop else 0.dp
 
                 var settledArtWidth by remember { mutableStateOf(expandedArtWidth) }
                 var settledArtHeight by remember { mutableStateOf(expandedArtHeight) }
