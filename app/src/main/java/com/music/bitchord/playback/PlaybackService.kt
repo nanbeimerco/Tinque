@@ -1062,6 +1062,8 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            // A changed queue may have a new next song; have its gain ready.
+            scope.launch { computeUpcomingGains() }
             if (externalPreviewReturnState != null) {
                 if (isExternalPreviewPlaying(exoPlayer)) {
                     retainQueueAddsDuringExternalPreview(exoPlayer)
@@ -1291,6 +1293,17 @@ class PlaybackService : MediaLibraryService() {
                 triggerNotificationUpdate()
             }
         }
+
+        // AutoPlay switched on, off, or to another source (Settings, or the
+        // session command): what it queued from the old source goes, and the
+        // new one fills the queue from the song playing now.
+        scope.launch {
+            AppSettings.autoplaySource.drop(1).distinctUntilChanged().collect { applyAutoplaySource() }
+        }
+
+        // The audio reached a song before its gain was worked out: work it out
+        // now; the processor holds that song's start until it arrives.
+        TrackGain.onGainNeeded = { mediaId -> computeGainNow(mediaId) }
 
         // The player screen toggles QueueShuffle directly on its MediaController.
         // Observe the shared state here so the notification's Shuffle icon and
@@ -1728,24 +1741,22 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun toggleAutoplayFromNotification() {
-        val enabled = !AppSettings.autoplay.value
-        AppSettings.setAutoplay(enabled)
-        if (enabled) {
-            autoplayLoadJob?.cancel()
-            autoplayLoadJob = null
-            autoplaySeed = null
-            loadAutoplayForCurrentTrack()
-        } else {
-            autoplayLoadJob?.cancel()
-            autoplayLoadJob = null
-            autoplaySeed = null
-            dropAutoplayTracksFromQueue()
-            // Switching AutoPlay off is the listener saying they don't want
-            // those tracks; leaving a stash behind would put them back the next
-            // time repeat-all ended.
-            repeatAllStash = emptyList()
-            repeatAllStashSeed = null
-        }
+        // The change itself is applied by the autoplaySource collector.
+        AppSettings.setAutoplay(!AppSettings.autoplay.value)
+    }
+
+    /** Brings the queue in line with the AutoPlay source just chosen. */
+    private fun applyAutoplaySource() {
+        autoplayLoadJob?.cancel()
+        autoplayLoadJob = null
+        autoplaySeed = null
+        // Whatever the old source queued goes: switched off, the listener does
+        // not want it; switched over, it is the other source's choice. Nor is a
+        // repeat-all stash kept, which would put it back when the loop ended.
+        dropAutoplayTracksFromQueue()
+        repeatAllStash = emptyList()
+        repeatAllStashSeed = null
+        if (AppSettings.autoplay.value) loadAutoplayForCurrentTrack()
         mediaSession?.setCustomLayout(notificationButtons())
     }
 
@@ -1772,6 +1783,7 @@ class PlaybackService : MediaLibraryService() {
         if (needed <= 0) return
         if (autoplaySeed == current.videoId) return
         autoplaySeed = current.videoId
+        val source = AppSettings.autoplaySource.value
         autoplayLoadJob = scope.launch {
             val queueSongs = (0 until exoPlayer.mediaItemCount)
                 .map { exoPlayer.getMediaItemAt(it).toSong() }
@@ -1780,10 +1792,10 @@ class PlaybackService : MediaLibraryService() {
             } else {
                 queueSongs
             }
-            loadAutoplayTracks(existing, current, needed)
+            loadAutoplayTracks(existing, current, needed, source, this@PlaybackService)
                 .onSuccess { resolved ->
                     val activePlayer = player ?: return@onSuccess
-                    if (!AppSettings.autoplay.value ||
+                    if (AppSettings.autoplaySource.value != source ||
                         activePlayer.currentMediaItem?.mediaId != current.videoId
                     ) {
                         return@onSuccess
@@ -1943,23 +1955,14 @@ class PlaybackService : MediaLibraryService() {
         )
 
         val song = item.toSong()
-        if (bitPerfect || !AppSettings.replayGainEnabled.value ||
-            (song.localUri.isNullOrBlank() && song.localPath.isNullOrBlank())
-        ) return
+        if (bitPerfect) return
 
         spareReplayGainJob?.cancel()
         spareReplayGainJob = scope.launch {
-            val gain = withContext(Dispatchers.IO) {
-                ReplayGainReader.readGainDb(
-                    context = applicationContext,
-                    song = song,
-                    useAlbumGain = AppSettings.replayGainAlbumMode.value,
-                    preampDb = AppSettings.replayGainPreampDb.value,
-                    preventClipping = preventClipping,
-                )
-            }
+            val gain = withContext(Dispatchers.IO) { TrackGain.compute(applicationContext, song).totalDb }
+            TrackGain.gains[item.mediaId] = gain
             if (isActive && spare === target && target.currentMediaItem?.mediaId == item.mediaId) {
-                chain.replayGain.gainDb = gain
+                applyGainIfPlaying(chain.replayGain, item.mediaId, gain)
             }
         }
     }
@@ -2092,36 +2095,89 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /** Reads local tags off the playback thread and applies the result only if this track is still current. */
+    /**
+     * Sets the last stage's gain for the playing song: levelling plus the
+     * listener's trim, for the device in use — see [TrackGain]. Applies to
+     * streamed songs as well as files: attenuate-only levelling and the trim
+     * both do, standard ReplayGain only has figures for files.
+     */
     private fun updateReplayGainForCurrentTrack(force: Boolean = false) {
         val mediaItem = player?.currentMediaItem
         val song = mediaItem?.toSong()
         val mediaId = mediaItem?.mediaId
-        val enabled = AppSettings.replayGainEnabled.value
-        val bitPerfect = AppSettings.bitPerfectPlayback.value
-        val albumMode = AppSettings.replayGainAlbumMode.value
-        val preampDb = AppSettings.replayGainPreampDb.value
         val preventClipping = AppSettings.replayGainPreventClipping.value
-        val token = listOf(mediaId, song?.localUri, song?.localPath, enabled, bitPerfect, albumMode, preampDb, preventClipping)
-            .joinToString("|")
+        val token = listOf(mediaId, song?.localUri, song?.localPath, TrackGain.settingsToken()).joinToString("|")
         if (!force && token == replayGainConfigToken) return
 
         replayGainConfigToken = token
         replayGainLookupJob?.cancel()
-        activeAudioChain.replayGain.gainDb = 0f
         activeAudioChain.replayGain.preventClipping = preventClipping
-        if (!enabled || bitPerfect || song == null || (song.localUri.isNullOrBlank() && song.localPath.isNullOrBlank())) return
+        if (song == null) {
+            activeAudioChain.replayGain.gainDb = 0f
+            TrackGain.current.value = null
+            return
+        }
 
         replayGainLookupJob = scope.launch {
-            val gain = ReplayGainReader.readGainDb(
-                context = applicationContext,
-                song = song,
-                useAlbumGain = albumMode,
-                preampDb = preampDb,
-                preventClipping = preventClipping,
-            )
+            val breakdown = withContext(Dispatchers.IO) { TrackGain.compute(applicationContext, song) }
             if (isActive && player?.currentMediaItem?.mediaId == mediaId && replayGainConfigToken == token) {
-                activeAudioChain.replayGain.gainDb = gain
+                mediaId?.let { TrackGain.gains[it] = breakdown.totalDb }
+                applyGainIfPlaying(activeAudioChain.replayGain, mediaId, breakdown.totalDb)
+                TrackGain.current.value = breakdown
             }
+            // The songs coming up, so each starts at its own gain from its first
+            // sample instead of at this one's.
+            computeUpcomingGains()
+        }
+    }
+
+    /** How many songs past the current one have their gain worked out ahead. */
+    private val gainLookahead = 2
+
+    /** Works out and stores the gain of the next few queued songs. */
+    private suspend fun computeUpcomingGains() {
+        val exoPlayer = player ?: return
+        val start = exoPlayer.currentMediaItemIndex
+        val items = (1..gainLookahead).mapNotNull { offset ->
+            val index = start + offset
+            if (index in 0 until exoPlayer.mediaItemCount) exoPlayer.getMediaItemAt(index) else null
+        }
+        for (item in items) {
+            val breakdown = withContext(Dispatchers.IO) { TrackGain.compute(applicationContext, item.toSong()) }
+            // A guess is not stored ahead: by the time the song is reached its
+            // loudness may be known (a streamed song resolves first), and the
+            // processor asks again then.
+            if (breakdown.provisional) {
+                TrackGain.gains.remove(item.mediaId)
+                continue
+            }
+            TrackGain.gains[item.mediaId] = breakdown.totalDb
+            applyGainIfPlaying(activeAudioChain.replayGain, item.mediaId, breakdown.totalDb)
+        }
+    }
+
+    /**
+     * Hands [processor] a gain for [mediaId] — only if that song's audio is the
+     * audio going through it now (or it has not been told which song that is).
+     * Late in a song its successor may already be in the processor; a gain
+     * meant for the song still being heard must not land on that one.
+     */
+    private fun applyGainIfPlaying(processor: ReplayGainAudioProcessor, mediaId: String?, db: Float) {
+        val passing = processor.currentMediaId
+        if (passing == null || passing == mediaId) processor.gainDb = db
+    }
+
+    /** A song's gain the processor reached before it was ready: work it out now. */
+    private fun computeGainNow(mediaId: String) {
+        scope.launch {
+            val exoPlayer = player ?: return@launch
+            val item = (0 until exoPlayer.mediaItemCount)
+                .map { exoPlayer.getMediaItemAt(it) }
+                .firstOrNull { it.mediaId == mediaId }
+                ?: spare?.currentMediaItem?.takeIf { it.mediaId == mediaId }
+                ?: return@launch
+            val total = withContext(Dispatchers.IO) { TrackGain.compute(applicationContext, item.toSong()).totalDb }
+            TrackGain.gains[mediaId] = total
         }
     }
 
@@ -4725,6 +4781,24 @@ class PlaybackService : MediaLibraryService() {
                     spare?.currentMediaItem?.let(::prepareCrossfadeIncoming)
                 }
         }
+        // The rest of what the song's gain depends on: the output device, the
+        // listener's trims and reference, a reference being set right now, and
+        // which kind of levelling and trim are on.
+        scope.launch {
+            combine(
+                com.music.bitchord.data.settings.EqualizerSettings.activeDeviceKeyFlow,
+                com.music.bitchord.data.settings.SongGainStore.revision,
+                TrackGain.calibrationOffsetDb,
+                TrackGain.calibrationMeasured,
+                combine(AppSettings.levelingMode, AppSettings.songTrimEnabled) { mode, trim -> mode to trim },
+            ) { device, revision, offset, measured, settings -> listOf(device, revision, offset, measured, settings) }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect {
+                    updateReplayGainForCurrentTrack(force = true)
+                    spare?.currentMediaItem?.let(::prepareCrossfadeIncoming)
+                }
+        }
         scope.launch {
             AppSettings.skipSilence.collect { on ->
                 eachPlayer { it.skipSilenceEnabled = on && !AppSettings.bitPerfectPlayback.value }
@@ -5216,6 +5290,7 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
+        TrackGain.onGainNeeded = null
         externalAudioPopupWindow?.dismiss()
         externalAudioPopupWindow = null
         runCatching { contentResolver.unregisterContentObserver(systemVolumeObserver) }

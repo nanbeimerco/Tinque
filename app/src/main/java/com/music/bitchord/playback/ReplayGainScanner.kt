@@ -18,6 +18,7 @@ import com.music.bitchord.download.Downloads
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.currentCoroutineContext
@@ -153,6 +154,21 @@ object ReplayGainScanner {
 
     fun cancel() {
         synchronized(lock) { scanJob?.cancel() }
+    }
+
+    /**
+     * Measures one local track now, unless it is tagged or already measured,
+     * and keeps the result. True when the track has a figure afterwards.
+     */
+    suspend fun measureOne(context: Context, song: Song): Boolean = withContext(Dispatchers.IO) {
+        val appContext = context.applicationContext
+        runCatching {
+            when {
+                ReplayGainScanStore.read(appContext, song) != null -> true
+                ReplayGainReader.hasReplayGainTags(appContext, song) -> true
+                else -> decodeAndMeasure(appContext, song)?.also { ReplayGainScanStore.write(appContext, song, it) } != null
+            }
+        }.getOrDefault(false)
     }
 
     internal fun cachedProperties(context: Context, song: Song): Map<String, Array<String>>? =

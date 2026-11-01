@@ -30,6 +30,10 @@ fun ReplayGainControls(
     scanState: ReplayGainScanState,
     onScan: () -> Unit,
     onCancelScan: () -> Unit,
+    attenuateOnly: Boolean = false,
+    onAttenuateOnlyChange: (Boolean) -> Unit = {},
+    songTrimEnabled: Boolean = true,
+    onSongTrimEnabledChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     EqGroup(modifier = modifier, title = stringResource(R.string.replaygain)) {
@@ -42,7 +46,39 @@ fun ReplayGainControls(
                 icon = Icons.Rounded.GraphicEq,
             )
         }
+        // How songs are evened out: the standard way, or by cutting only.
         row {
+            EqRowContent(enabled = enabled) {
+                Text(
+                    stringResource(R.string.leveling_mode),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    stringResource(if (attenuateOnly) R.string.leveling_mode_attenuate_description else R.string.leveling_mode_standard_description),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val modes = listOf(
+                    stringResource(R.string.leveling_mode_standard) to false,
+                    stringResource(R.string.leveling_mode_attenuate) to true,
+                )
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    modes.forEachIndexed { index, (label, attenuate) ->
+                        SegmentedButton(
+                            selected = attenuateOnly == attenuate,
+                            onClick = { onAttenuateOnlyChange(attenuate) },
+                            enabled = enabled,
+                            shape = SegmentedButtonDefaults.itemShape(index, modes.size),
+                            colors = eqSegmentedColors(),
+                            label = { Text(label, maxLines = 1) },
+                        )
+                    }
+                }
+            }
+        }
+        if (attenuateOnly) attenuateLevelingRows(enabled)
+        if (!attenuateOnly) row {
             EqRowContent(enabled = enabled) {
                 val options = listOf(
                     stringResource(R.string.track_gain) to false,
@@ -62,7 +98,7 @@ fun ReplayGainControls(
                 }
             }
         }
-        row {
+        if (!attenuateOnly) row {
             EqSliderRow(
                 label = stringResource(R.string.replaygain_preamp),
                 valueText = "${"%.1f".format(preampDb)} dB",
@@ -73,12 +109,20 @@ fun ReplayGainControls(
                 enabled = enabled,
             )
         }
-        row {
+        if (!attenuateOnly) row {
             EqSwitchRow(
                 title = stringResource(R.string.replaygain_prevent_clipping),
                 checked = preventClipping,
                 onCheckedChange = onPreventClippingChange,
                 enabled = enabled,
+            )
+        }
+        row {
+            EqSwitchRow(
+                title = stringResource(R.string.song_trim_setting),
+                subtitle = stringResource(R.string.song_trim_setting_description),
+                checked = songTrimEnabled,
+                onCheckedChange = onSongTrimEnabledChange,
             )
         }
         row {

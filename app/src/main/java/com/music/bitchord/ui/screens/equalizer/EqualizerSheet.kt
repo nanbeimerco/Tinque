@@ -202,6 +202,8 @@ private fun EqualizerPage(
     val devicePresetAssignments by EqualizerSettings.devicePresetAssignments.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val replayGainEnabled by AppSettings.replayGainEnabled.collectAsStateWithLifecycle()
+    val levelingMode by AppSettings.levelingMode.collectAsStateWithLifecycle()
+    val songTrimEnabled by AppSettings.songTrimEnabled.collectAsStateWithLifecycle()
     val replayGainAlbumMode by AppSettings.replayGainAlbumMode.collectAsStateWithLifecycle()
     val replayGainPreampDb by AppSettings.replayGainPreampDb.collectAsStateWithLifecycle()
     val replayGainPreventClipping by AppSettings.replayGainPreventClipping.collectAsStateWithLifecycle()
@@ -335,6 +337,15 @@ private fun EqualizerPage(
                 scanState = replayGainScanState,
                 onScan = { ReplayGainScanner.start(context) },
                 onCancelScan = ReplayGainScanner::cancel,
+                attenuateOnly = levelingMode == com.music.bitchord.data.settings.LevelingMode.ATTENUATE_ONLY,
+                onAttenuateOnlyChange = {
+                    AppSettings.setLevelingMode(
+                        if (it) com.music.bitchord.data.settings.LevelingMode.ATTENUATE_ONLY
+                        else com.music.bitchord.data.settings.LevelingMode.STANDARD,
+                    )
+                },
+                songTrimEnabled = songTrimEnabled,
+                onSongTrimEnabledChange = AppSettings::setSongTrimEnabled,
             )
 
             Spacer(Modifier.height(24.dp))

@@ -80,10 +80,10 @@ private val GLYPH_SLOT = 40.dp
 private val GLYPH_SIZE = 32.dp
 
 /**
- * Transport glyph sizes, in the full player's proportions (skip 46 : play 66
- * ≈ 0.7), so play/pause reads as the main control here too.
+ * Transport glyph sizes: skip at the same size as play/pause, so the three
+ * read as one row of equals in a bar this small.
  */
-private val SKIP_GLYPH_SIZE = 21.dp
+private val SKIP_GLYPH_SIZE = 30.dp
 private val PLAY_GLYPH_SIZE = 30.dp
 
 /** The spinner that stands in for the play glyph, kept in proportion to it. */

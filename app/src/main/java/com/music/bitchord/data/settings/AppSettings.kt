@@ -258,6 +258,12 @@ enum class MainNavigationTab(val index: Int) {
 enum class ScreenOrientationMode { SYSTEM, PORTRAIT, LANDSCAPE }
 
 /** What a large landscape window does with the player. */
+/** How ReplayGain evens songs out: the standard way, or by cutting only. */
+enum class LevelingMode { STANDARD, ATTENUATE_ONLY }
+
+/** Where AutoPlay finds the songs it adds to the queue, or OFF for no AutoPlay at all. */
+enum class AutoplaySource { OFF, YOUTUBE_MUSIC, DEVICE }
+
 enum class LandscapePlayerLayout { SIDE_BY_SIDE, TWO_COLUMN }
 
 /** What a large portrait (or near-square) window does with the player. */
@@ -500,8 +506,12 @@ object AppSettings {
     val frostedPlayerDetails = MutableStateFlow(true)
     val frostedCompactLyrics = MutableStateFlow(true)
 
-    /** Keep playing similar music once the queue runs out. */
-    val autoplay = MutableStateFlow(true)
+    /**
+     * Keep playing similar music once the queue runs out. Follows
+     * [autoplaySource]: on whenever a source is chosen.
+     */
+    val autoplay = MutableStateFlow(false)
+    val autoplaySource = MutableStateFlow(AutoplaySource.OFF)
 
     /** Whether the queue is held in shuffled order (Mix button). */
     val shuffleEnabled = MutableStateFlow(false)
@@ -672,6 +682,11 @@ object AppSettings {
     val replayGainAlbumMode = MutableStateFlow(false)
     val replayGainPreampDb = MutableStateFlow(0f)
     val replayGainPreventClipping = MutableStateFlow(true)
+    val levelingMode = MutableStateFlow(LevelingMode.STANDARD)
+    /** The per-song trim on the player's volume bar. */
+    val songTrimEnabled = MutableStateFlow(true)
+    /** The trim bar where the volume bar is, and the system volume behind a long press. */
+    val songTrimFirst = MutableStateFlow(false)
 
     /** Places the favorite action beside the track menu instead of under playback controls. */
     val favoriteBesideTrackMenu = MutableStateFlow(false)
@@ -991,6 +1006,7 @@ object AppSettings {
     fun init(context: Context) {
         appContext = context.applicationContext
         prefs = appContext.getSharedPreferences("bitchord_settings", Context.MODE_PRIVATE)
+        SongGainStore.init(appContext)
         authStore = AuthStore(appContext)
         applyFirstInstallDefaults()
         readAll()
@@ -1125,7 +1141,13 @@ object AppSettings {
         frostedQueueManager.value = prefs.getBoolean(KEY_FROSTED_QUEUE_MANAGER, true)
         frostedPlayerDetails.value = prefs.getBoolean(KEY_FROSTED_PLAYER_DETAILS, true)
         frostedCompactLyrics.value = prefs.getBoolean(KEY_FROSTED_COMPACT_LYRICS, true)
-        autoplay.value = prefs.getBoolean(KEY_AUTOPLAY, true)
+        // Off unless a source has been chosen: before the choice existed the
+        // switch was on but did nothing, so carrying it over would start
+        // adding songs nobody asked for.
+        autoplaySource.value = runCatching {
+            AutoplaySource.valueOf(prefs.getString(KEY_AUTOPLAY_SOURCE, null) ?: AutoplaySource.OFF.name)
+        }.getOrDefault(AutoplaySource.OFF)
+        autoplay.value = autoplaySource.value != AutoplaySource.OFF
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
         audioFocusLevel.value = prefs.getInt(KEY_AUDIO_FOCUS_LEVEL, 1).coerceIn(0, 4)
         repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
@@ -1176,6 +1198,11 @@ object AppSettings {
         screenOrientationMode.value = runCatching {
             ScreenOrientationMode.valueOf(prefs.getString(KEY_SCREEN_ORIENTATION, ScreenOrientationMode.SYSTEM.name) ?: ScreenOrientationMode.SYSTEM.name)
         }.getOrDefault(ScreenOrientationMode.SYSTEM)
+        levelingMode.value = runCatching {
+            LevelingMode.valueOf(prefs.getString(KEY_LEVELING_MODE, null) ?: LevelingMode.STANDARD.name)
+        }.getOrDefault(LevelingMode.STANDARD)
+        songTrimEnabled.value = prefs.getBoolean(KEY_SONG_TRIM_ENABLED, true)
+        songTrimFirst.value = prefs.getBoolean(KEY_SONG_TRIM_FIRST, false)
         landscapePlayerLayout.value = runCatching {
             LandscapePlayerLayout.valueOf(prefs.getString(KEY_LANDSCAPE_PLAYER_LAYOUT, null) ?: LandscapePlayerLayout.SIDE_BY_SIDE.name)
         }.getOrDefault(LandscapePlayerLayout.SIDE_BY_SIDE)
@@ -1439,9 +1466,22 @@ object AppSettings {
         }
     }
 
+    /** On or off without choosing a source: on picks up the last one used. */
     fun setAutoplay(value: Boolean) {
-        autoplay.value = value
-        prefs.edit().putBoolean(KEY_AUTOPLAY, value).apply()
+        val last = runCatching {
+            AutoplaySource.valueOf(prefs.getString(KEY_AUTOPLAY_LAST_SOURCE, null) ?: AutoplaySource.DEVICE.name)
+        }.getOrDefault(AutoplaySource.DEVICE)
+        setAutoplaySource(if (value) last else AutoplaySource.OFF)
+    }
+
+    fun setAutoplaySource(value: AutoplaySource) {
+        autoplaySource.value = value
+        autoplay.value = value != AutoplaySource.OFF
+        prefs.edit().apply {
+            putString(KEY_AUTOPLAY_SOURCE, value.name)
+            putBoolean(KEY_AUTOPLAY, value != AutoplaySource.OFF)
+            if (value != AutoplaySource.OFF) putString(KEY_AUTOPLAY_LAST_SOURCE, value.name)
+        }.apply()
     }
 
     fun setShuffleEnabled(value: Boolean) {
@@ -1972,6 +2012,22 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_KEEP_SCREEN_ON_DURING_LYRICS, value).apply()
     }
 
+    fun setLevelingMode(value: LevelingMode) {
+        levelingMode.value = value
+        prefs.edit().putString(KEY_LEVELING_MODE, value.name).apply()
+        saveReplayGainProfile()
+    }
+
+    fun setSongTrimEnabled(value: Boolean) {
+        songTrimEnabled.value = value
+        prefs.edit().putBoolean(KEY_SONG_TRIM_ENABLED, value).apply()
+    }
+
+    fun setSongTrimFirst(value: Boolean) {
+        songTrimFirst.value = value
+        prefs.edit().putBoolean(KEY_SONG_TRIM_FIRST, value).apply()
+    }
+
     fun setLandscapePlayerLayout(value: LandscapePlayerLayout) {
         landscapePlayerLayout.value = value
         prefs.edit().putString(KEY_LANDSCAPE_PLAYER_LAYOUT, value.name).apply()
@@ -2203,22 +2259,72 @@ object AppSettings {
     fun setReplayGainEnabled(value: Boolean) {
         replayGainEnabled.value = value
         prefs.edit().putBoolean(KEY_REPLAYGAIN_ENABLED, value).apply()
+        saveReplayGainProfile()
     }
 
     fun setReplayGainAlbumMode(value: Boolean) {
         replayGainAlbumMode.value = value
         prefs.edit().putBoolean(KEY_REPLAYGAIN_ALBUM_MODE, value).apply()
+        saveReplayGainProfile()
     }
 
     fun setReplayGainPreampDb(value: Float) {
         val normalized = value.coerceIn(-12f, 12f)
         replayGainPreampDb.value = normalized
         prefs.edit().putFloat(KEY_REPLAYGAIN_PREAMP_DB, normalized).apply()
+        saveReplayGainProfile()
     }
 
     fun setReplayGainPreventClipping(value: Boolean) {
         replayGainPreventClipping.value = value
         prefs.edit().putBoolean(KEY_REPLAYGAIN_PREVENT_CLIPPING, value).apply()
+        saveReplayGainProfile()
+    }
+
+    /** The output device whose ReplayGain settings the flows above hold. */
+    private var replayGainDevice: String? = null
+
+    /**
+     * Swaps in [device]'s ReplayGain settings — on or off, how to level, and the
+     * standard mode's options — the way the EQ swaps in its own per device. A
+     * device met for the first time starts with ReplayGain off, except the one
+     * in use when these became per-device, which keeps what was set before.
+     */
+    fun applyReplayGainProfile(device: String) {
+        if (!this::prefs.isInitialized) return
+        replayGainDevice = device
+        val raw = prefs.getString(KEY_REPLAYGAIN_PROFILE_PREFIX + device, null)
+        if (raw == null) {
+            if (!prefs.getBoolean(KEY_REPLAYGAIN_PROFILES_MIGRATED, false)) {
+                prefs.edit().putBoolean(KEY_REPLAYGAIN_PROFILES_MIGRATED, true).apply()
+            } else {
+                replayGainEnabled.value = false
+                levelingMode.value = LevelingMode.STANDARD
+                replayGainAlbumMode.value = false
+                replayGainPreampDb.value = 0f
+                replayGainPreventClipping.value = true
+            }
+            saveReplayGainProfile()
+            return
+        }
+        runCatching { org.json.JSONObject(raw) }.getOrNull()?.let { json ->
+            replayGainEnabled.value = json.optBoolean("enabled", false)
+            levelingMode.value = runCatching { LevelingMode.valueOf(json.optString("mode")) }.getOrDefault(LevelingMode.STANDARD)
+            replayGainAlbumMode.value = json.optBoolean("album", false)
+            replayGainPreampDb.value = json.optDouble("preamp", 0.0).toFloat().coerceIn(-12f, 12f)
+            replayGainPreventClipping.value = json.optBoolean("clip", true)
+        }
+    }
+
+    private fun saveReplayGainProfile() {
+        val device = replayGainDevice ?: return
+        val json = org.json.JSONObject()
+            .put("enabled", replayGainEnabled.value)
+            .put("mode", levelingMode.value.name)
+            .put("album", replayGainAlbumMode.value)
+            .put("preamp", replayGainPreampDb.value.toDouble())
+            .put("clip", replayGainPreventClipping.value)
+        prefs.edit().putString(KEY_REPLAYGAIN_PROFILE_PREFIX + device, json.toString()).apply()
     }
 
     fun setFavoriteBesideTrackMenu(value: Boolean) {
@@ -3084,6 +3190,8 @@ object AppSettings {
     private const val KEY_FROSTED_PLAYER_DETAILS = "frosted_player_details"
     private const val KEY_FROSTED_COMPACT_LYRICS = "frosted_compact_lyrics"
     private const val KEY_AUTOPLAY = "autoplay"
+    private const val KEY_AUTOPLAY_SOURCE = "autoplay_source"
+    private const val KEY_AUTOPLAY_LAST_SOURCE = "autoplay_last_source"
     private const val KEY_SHUFFLE_ENABLED = "shuffle_enabled"
     private const val KEY_AUDIO_FOCUS_LEVEL = "audio_focus_level"
     private const val KEY_REPEAT_MODE = "repeat_mode"
@@ -3123,6 +3231,11 @@ object AppSettings {
     private const val KEY_KEEP_SCREEN_ON_DURING_LYRICS = "keep_screen_on_during_lyrics"
     private const val KEY_SCREEN_ORIENTATION = "screen_orientation_mode"
     private const val KEY_LANDSCAPE_PLAYER_LAYOUT = "landscape_player_layout"
+    private const val KEY_LEVELING_MODE = "leveling_mode"
+    private const val KEY_REPLAYGAIN_PROFILE_PREFIX = "replaygain_profile_"
+    private const val KEY_REPLAYGAIN_PROFILES_MIGRATED = "replaygain_profiles_migrated"
+    private const val KEY_SONG_TRIM_ENABLED = "song_trim_enabled"
+    private const val KEY_SONG_TRIM_FIRST = "song_trim_first"
     private const val KEY_PORTRAIT_PLAYER_LAYOUT = "portrait_player_layout"
     private const val KEY_DOCKED_PAGE_FRACTION = "docked_page_fraction"
     private const val KEY_FAVORITE_USES_STAR = "favorite_uses_star"

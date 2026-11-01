@@ -2119,6 +2119,7 @@ private fun BitChordApp(
             LocalEditLyricsAction provides openLyricsEditor,
             LocalSongSelection provides songSelection,
             com.music.bitchord.ui.screens.equalizer.LocalOpenEqualizer provides openEqualizer,
+            com.music.bitchord.ui.screens.equalizer.components.LocalSkipToNext provides { controller?.seekToNextMediaItem() },
         ) {
         // The divider between the page and a docked player: where it was left,
         // and, while a finger is on it, how far it has been pulled. A drag does

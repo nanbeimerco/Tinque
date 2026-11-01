@@ -9,6 +9,15 @@ object ReplayGainValues {
             key.endsWith("REPLAYGAIN_ALBUM_GAIN", ignoreCase = true)
     }
 
+    /** The raw track gain a file was tagged (or measured) with, before any preamp; null without one. */
+    fun trackGainDb(properties: Map<String, Array<String>>): Float? {
+        fun value(suffix: String): String? = properties.entries
+            .firstOrNull { (key, _) -> key.equals(suffix, ignoreCase = true) || key.endsWith(suffix, ignoreCase = true) }
+            ?.value?.firstOrNull()?.trim()
+        val raw = value("REPLAYGAIN_TRACK_GAIN") ?: value("REPLAYGAIN_ALBUM_GAIN") ?: return null
+        return raw.replace(Regex("(?i)\\s*dB\\s*$"), "").trim().toFloatOrNull()
+    }
+
     fun calculateDb(
         properties: Map<String, Array<String>>,
         useAlbumGain: Boolean,

@@ -85,6 +85,7 @@ object EqualizerSettings {
         prefs = appCtx.getSharedPreferences(PREF_FILE, Context.MODE_PRIVATE)
         activeDeviceKey = prefs.getString(KEY_ACTIVE_DEVICE, "default") ?: "default"
         _activeDeviceKeyFlow.value = activeDeviceKey
+        AppSettings.applyReplayGainProfile(activeDeviceKey)
         readAll()
         registerDeviceCallbackIfNeeded(appCtx)
         refreshConnectedDevices(appCtx)
@@ -350,6 +351,7 @@ object EqualizerSettings {
         activeDeviceKey = key
         _activeDeviceKeyFlow.value = key
         prefs.edit().putString(KEY_ACTIVE_DEVICE, key).apply()
+        AppSettings.applyReplayGainProfile(key)
         if (!loadProfile(key)) persistCurrentProfile()
         val assignedPreset = _devicePresetAssignments.value[key]
         if (!assignedPreset.isNullOrBlank()) {

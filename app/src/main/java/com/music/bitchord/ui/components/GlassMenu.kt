@@ -78,11 +78,15 @@ class GlassMenuController {
     /** The window the host draws in; a caller in another window cannot use it. */
     internal var hostView: android.view.View? = null
 
-    /** Opens [content] by [anchor] (root coordinates); returns a token for [dismiss]. */
-    fun show(anchor: Rect, onDismiss: () -> Unit, content: @Composable () -> Unit): Long {
+    /**
+     * Opens [content] by [anchor] (root coordinates); returns a token for [dismiss].
+     * [wide]: the full width of the screen (less its margins) and above the
+     * anchor rather than below it — a strip of controls over a bar, not a menu.
+     */
+    fun show(anchor: Rect, onDismiss: () -> Unit, wide: Boolean = false, content: @Composable () -> Unit): Long {
         request?.onDismiss?.invoke()
         val id = ++nextId
-        request = GlassMenuRequest(id, anchor, onDismiss, content)
+        request = GlassMenuRequest(id, anchor, onDismiss, content, wide)
         return id
     }
 
@@ -105,6 +109,7 @@ internal class GlassMenuRequest(
     val anchor: Rect,
     val onDismiss: () -> Unit,
     val content: @Composable () -> Unit,
+    val wide: Boolean = false,
 )
 
 /** The screen's menu host, or null where there is none (menus then fall back to M3). */
@@ -170,18 +175,20 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
                     val maxW = (constraints.maxWidth - margin * 2).coerceAtLeast(0)
                     val placeable = measurable.measure(
                         Constraints(
-                            minWidth = MENU_MIN_WIDTH.roundToPx().coerceAtMost(maxW),
-                            maxWidth = MENU_MAX_WIDTH.roundToPx().coerceAtMost(maxW),
+                            minWidth = if (menu.wide) maxW else MENU_MIN_WIDTH.roundToPx().coerceAtMost(maxW),
+                            maxWidth = if (menu.wide) maxW else MENU_MAX_WIDTH.roundToPx().coerceAtMost(maxW),
                             maxHeight = (constraints.maxHeight - top - margin * 2).coerceAtLeast(0),
                         ),
                     )
                     val w = placeable.width
                     val h = placeable.height
                     // Right edge on the button's right edge, below it if it fits, else above.
-                    val x = (anchor.right.toInt() - w).coerceIn(margin, (constraints.maxWidth - w - margin).coerceAtLeast(margin))
+                    // A wide one spans the screen and sits above its anchor if it fits.
+                    val x = if (menu.wide) margin else (anchor.right.toInt() - w).coerceIn(margin, (constraints.maxWidth - w - margin).coerceAtLeast(margin))
                     val below = anchor.bottom.toInt() + gap
+                    val above = anchor.top.toInt() - gap - h
                     val fitsBelow = below + h <= constraints.maxHeight - margin
-                    val y = (if (fitsBelow) below else anchor.top.toInt() - gap - h)
+                    val y = (if (menu.wide) { if (above >= top) above else below } else if (fitsBelow) below else above)
                         .coerceIn(top, (constraints.maxHeight - h - margin).coerceAtLeast(top))
                     pivot = TransformOrigin(
                         ((anchor.center.x - x) / w.coerceAtLeast(1)).coerceIn(0f, 1f),

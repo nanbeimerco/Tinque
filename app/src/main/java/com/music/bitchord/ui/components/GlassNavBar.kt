@@ -480,7 +480,7 @@ private fun GlassNowPlaying(
                             imageVector = BitChordIcons.TransportPrevious,
                             contentDescription = stringResource(R.string.widget_previous),
                             tint = contentColor,
-                            modifier = Modifier.size(21.dp),
+                            modifier = Modifier.size(30.dp),
                         )
                     }
                 }
@@ -526,7 +526,7 @@ private fun GlassNowPlaying(
                             imageVector = BitChordIcons.TransportNext,
                             contentDescription = stringResource(R.string.widget_next),
                             tint = contentColor,
-                            modifier = Modifier.size(21.dp),
+                            modifier = Modifier.size(30.dp),
                         )
                     }
                 }

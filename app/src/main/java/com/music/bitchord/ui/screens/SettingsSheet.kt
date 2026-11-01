@@ -397,9 +397,12 @@ fun SettingsScreen(
     val replayGenres by AppSettings.replayGenres.collectAsStateWithLifecycle()
     val stopOnTaskRemoved by AppSettings.stopOnTaskRemoved.collectAsStateWithLifecycle()
     val hideVolumeBar by AppSettings.hideVolumeBar.collectAsStateWithLifecycle()
+    val songTrimEnabled by AppSettings.songTrimEnabled.collectAsStateWithLifecycle()
+    val songTrimFirst by AppSettings.songTrimFirst.collectAsStateWithLifecycle()
     val betaPlayerLayout by AppSettings.betaPlayerLayout.collectAsStateWithLifecycle()
     val swipeToPlayNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
     val dontRepeatSuggestions by AppSettings.dontRepeatSuggestions.collectAsStateWithLifecycle()
+    val autoplaySource by AppSettings.autoplaySource.collectAsStateWithLifecycle()
     val filterNonMusicAudio by AppSettings.filterNonMusicAudio.collectAsStateWithLifecycle()
     val showPlaylistSongArtwork by AppSettings.showPlaylistSongArtwork.collectAsStateWithLifecycle()
     val highPerformanceMode by AppSettings.highPerformanceMode.collectAsStateWithLifecycle()
@@ -3648,21 +3651,40 @@ fun SettingsScreen(
             )
             RowDivider()
             SettingsRow(
-                icon = Icons.Rounded.History,
-                title = stringResource(R.string.dont_repeat_songs),
-                subtitle = stringResource(R.string.dont_repeat_songs_subtitle),
-                trailing = {
-                    Switch(
-                        checked = dontRepeatSuggestions,
-                        onCheckedChange = AppSettings::setDontRepeatSuggestions,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setDontRepeatSuggestions(!dontRepeatSuggestions) },
+                icon = com.music.bitchord.ui.icons.BitChordIcons.Infinity,
+                title = stringResource(R.string.autoplay),
+                subtitle = stringResource(R.string.autoplay_settings_subtitle),
             )
+            SegmentedControl(
+                options = listOf(
+                    stringResource(R.string.autoplay_source_off),
+                    stringResource(R.string.autoplay_source_youtube_music),
+                    stringResource(R.string.autoplay_source_device),
+                ),
+                selectedIndex = com.music.bitchord.data.settings.AutoplaySource.entries.indexOf(autoplaySource),
+                onSelect = { AppSettings.setAutoplaySource(com.music.bitchord.data.settings.AutoplaySource.entries[it]) },
+                modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+            )
+            // Only AutoPlay suggests anything, so with it off this has nothing to govern.
+            if (autoplaySource != com.music.bitchord.data.settings.AutoplaySource.OFF) {
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.History,
+                    title = stringResource(R.string.dont_repeat_songs),
+                    subtitle = stringResource(R.string.dont_repeat_songs_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = dontRepeatSuggestions,
+                            onCheckedChange = AppSettings::setDontRepeatSuggestions,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setDontRepeatSuggestions(!dontRepeatSuggestions) },
+                )
+            }
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.MusicOff,
@@ -3697,6 +3719,25 @@ fun SettingsScreen(
                 },
                 onClick = { AppSettings.setHideVolumeBar(!hideVolumeBar) },
             )
+            if (songTrimEnabled && !hideVolumeBar) {
+                RowDivider()
+                SettingsRow(
+                    icon = Icons.Rounded.VolumeOff,
+                    title = stringResource(R.string.song_trim_first),
+                    subtitle = stringResource(R.string.song_trim_first_subtitle),
+                    trailing = {
+                        Switch(
+                            checked = songTrimFirst,
+                            onCheckedChange = AppSettings::setSongTrimFirst,
+                            colors = SwitchDefaults.colors(
+                                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                checkedBorderColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        )
+                    },
+                    onClick = { AppSettings.setSongTrimFirst(!songTrimFirst) },
+                )
+            }
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.Science,

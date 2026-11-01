@@ -40,8 +40,45 @@ fun ThinSlider(
     activeHeight: Dp = 12.dp,
     activeColor: Color = Color.White.copy(alpha = 0.92f),
     inactiveColor: Color = Color.White.copy(alpha = 0.26f),
+    /**
+     * Moves by how far the finger moves instead of jumping to it, so a finger
+     * resting on the bar changes nothing — see [relativeSliderGestures]. The
+     * long press callbacks only apply here.
+     */
+    relative: Boolean = false,
+    onLongPress: (() -> Unit)? = null,
+    onLongPressDrag: ((deltaFraction: Float, fineDistancePx: Float) -> Unit)? = null,
+    onLongPressEnd: (() -> Unit)? = null,
 ) {
     var dragging by remember { mutableStateOf(false) }
+    val latestValue = androidx.compose.runtime.rememberUpdatedState(value)
+    val latestChange = androidx.compose.runtime.rememberUpdatedState(onValueChange)
+    val latestFinished = androidx.compose.runtime.rememberUpdatedState(onValueChangeFinished)
+    val latestLongPress = androidx.compose.runtime.rememberUpdatedState(onLongPress)
+    val latestLongPressDrag = androidx.compose.runtime.rememberUpdatedState(onLongPressDrag)
+    val latestLongPressEnd = androidx.compose.runtime.rememberUpdatedState(onLongPressEnd)
+    val listener = remember {
+        object : RelativeSliderListener {
+            var held = 0f
+            override fun onDragStart() {
+                dragging = true
+                held = latestValue.value
+            }
+            override fun onDrag(deltaFraction: Float, fineDistancePx: Float) {
+                held = (held + deltaFraction).coerceIn(0f, 1f)
+                latestChange.value(held)
+            }
+            override fun onDragEnd() {
+                dragging = false
+                latestFinished.value?.invoke()
+            }
+            override fun onLongPress() { latestLongPress.value?.invoke() }
+            override fun onLongPressDrag(deltaFraction: Float, fineDistancePx: Float) {
+                latestLongPressDrag.value?.invoke(deltaFraction, fineDistancePx)
+            }
+            override fun onLongPressEnd() { latestLongPressEnd.value?.invoke() }
+        }
+    }
     val height by animateDpAsState(
         targetValue = if (dragging) activeHeight else idleHeight,
         animationSpec = spring(
@@ -59,7 +96,12 @@ fun ThinSlider(
             // One gesture loop for both taps and drags. Two separate detectors
             // — a drag one plus a tap one — meant taps never landed: the drag
             // detector took the pointer and a tap has no drag to report.
-            .pointerInput(Unit) {
+            .then(
+                if (relative) Modifier.relativeSliderGestures(listener, longPressEnabled = onLongPress != null)
+                else Modifier,
+            )
+            .pointerInput(relative) {
+                if (relative) return@pointerInput
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     down.consume()

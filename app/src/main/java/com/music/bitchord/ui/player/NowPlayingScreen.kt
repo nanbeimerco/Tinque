@@ -168,6 +168,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.util.lerp
 import androidx.compose.ui.unit.lerp
@@ -454,6 +455,9 @@ private fun Modifier.meltRight(): Modifier = this
  * over well inside the gap, which leaves the backdrop still for most of it.
  */
 private const val MESH_REFRESH_MS = 3_000L
+
+/** How long after the last touch the lyrics go back to following the song. */
+private const val LYRIC_BROWSE_TIMEOUT_MS = 3_000L
 
 /** The player's side margin. Scrollable panels reach back across it. */
 private val PLAYER_GUTTER = 30.dp
@@ -3602,43 +3606,21 @@ fun NowPlayingScreen(
             } else {
                 Spacer(Modifier.height(18.dp + controlSpread / 2))
 
-                // ---- Volume ----
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Rounded.VolumeDown,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    ThinSlider(
-                        value = volume.value,
-                        onValueChange = {
-                            volumeDragging = true
-                            // Follow the finger exactly; only external changes tween.
-                            scope.launch { volume.snapTo(it) }
-                            audioManager?.setStreamVolume(
-                                AudioManager.STREAM_MUSIC,
-                                (it * maxVolume).roundToInt(),
-                                0,
-                            )
-                        },
-                        onValueChangeFinished = { volumeDragging = false },
-                        idleHeight = 6.dp,
-                        activeHeight = 10.dp,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Icon(
-                        Icons.AutoMirrored.Rounded.VolumeUp,
-                        contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.5f),
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
+                // ---- Volume (and the per-song trim behind it) ----
+                PlayerVolumeArea(
+                    volume = volume.value,
+                    onVolumeChange = {
+                        volumeDragging = true
+                        // Follow the finger exactly; only external changes tween.
+                        scope.launch { volume.snapTo(it) }
+                        audioManager?.setStreamVolume(
+                            AudioManager.STREAM_MUSIC,
+                            (it * maxVolume).roundToInt(),
+                            0,
+                        )
+                    },
+                    onVolumeChangeFinished = { volumeDragging = false },
+                )
 
                 Spacer(Modifier.height(24.dp))
             }
@@ -4590,18 +4572,22 @@ private fun LyricsPanel(
             listState.layoutInfo.visibleItemsInfo.any { it.index == currentLine }
         }
     }
-    LaunchedEffect(browsing, activeOnScreen, listState.isScrollInProgress, isPlaying) {
-        if (isPlaying && browsing && activeOnScreen && !listState.isScrollInProgress) {
-            delay(600)
+    // Back to following the song a while after the last touch — not sooner just
+    // because the playing line is still in view: that pulled the earlier line a
+    // listener had scrolled up to out from under the finger about to tap it.
+    var lastTouch by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(browsing, lastTouch, listState.isScrollInProgress, isPlaying) {
+        if (isPlaying && browsing && !listState.isScrollInProgress) {
+            delay(LYRIC_BROWSE_TIMEOUT_MS)
             browsing = false
         }
     }
-
-    LaunchedEffect(browsing, listState.isScrollInProgress, isPlaying) {
-        if (isPlaying && browsing && !listState.isScrollInProgress) {
-            delay(5_000)
-            browsing = false
-        }
+    // A tapped line takes over at once: the lyric clock jumps to it and the
+    // list follows from there, without waiting for the player to report back.
+    val seekToLine: (Long) -> Unit = { timeMs ->
+        clock.longValue = timeMs
+        browsing = false
+        onSeekToLine(timeMs)
     }
 
     var run by remember(lines) { mutableStateOf(ScrollRun(0, 0f, LYRIC_SETTLE_MS)) }
@@ -4657,6 +4643,34 @@ private fun LyricsPanel(
         modifier = modifier
             .bleedHorizontally(PLAYER_GUTTER)
             .nestedScroll(keepScroll)
+            .pointerInput(lines, isSynced) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    lastTouch = System.currentTimeMillis()
+                    val wasMoving = listState.isScrollInProgress
+                    val slop = viewConfiguration.touchSlop
+                    var moved = false
+                    var up: Offset? = null
+                    while (true) {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if ((change.position - down.position).getDistance() > slop) moved = true
+                        if (!change.pressed) {
+                            up = change.position
+                            break
+                        }
+                    }
+                    lastTouch = System.currentTimeMillis()
+                    val at = up
+                    if (wasMoving && !moved && at != null && isSynced) {
+                        listState.layoutInfo.visibleItemsInfo
+                            .firstOrNull { at.y.toInt() in it.offset until it.offset + it.size }
+                            ?.index
+                            ?.let { lines.getOrNull(it) }
+                            ?.let { seekToLine(it.timeMs) }
+                    }
+                }
+            }
             .fadingEdges(),
         contentPadding = PaddingValues(
             top = 40.dp - GLOW_ROOM,
@@ -4752,7 +4766,7 @@ private fun LyricsPanel(
                         modifier = Modifier
                             .blur(blur, BlurredEdgeTreatment.Unbounded)
                             .clip(RoundedCornerShape(10.dp))
-                            .clickable(enabled = isSynced) { onSeekToLine(line.timeMs) }
+                            .clickable(enabled = isSynced) { seekToLine(line.timeMs) }
                             .padding(GLOW_ROOM)
                             .size(
                                 width = GAP_DOT_SIZE * 3 + GAP_DOT_GAP * 2,
@@ -4867,7 +4881,7 @@ private fun LyricsPanel(
                         enabled = isSynced,
                         interactionSource = interaction,
                         indication = LocalIndication.current,
-                    ) { onSeekToLine(line.timeMs) }
+                    ) { seekToLine(line.timeMs) }
 
                 val backingOpen = line.background?.let { backing ->
                     val due by remember(backing, clock) {

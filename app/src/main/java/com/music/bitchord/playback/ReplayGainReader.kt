@@ -38,6 +38,20 @@ object ReplayGainReader {
         }.getOrDefault(0f)
     }
 
+    /**
+     * A file's integrated loudness in LUFS, from its own ReplayGain tags or from
+     * this app's measurement of it; null when neither has a figure. Track gain
+     * is read against ReplayGain 2.0's -18 LUFS reference, which is also what
+     * the app's own scanner measures against.
+     */
+    suspend fun trackLufs(context: Context, song: Song): Double? = withContext(Dispatchers.IO) {
+        runCatching {
+            val gain = ReplayGainValues.trackGainDb(readProperties(context, song))
+                ?: ReplayGainScanner.cachedProperties(context, song)?.let(ReplayGainValues::trackGainDb)
+            gain?.let { -18.0 - it }
+        }.getOrNull()
+    }
+
     suspend fun hasReplayGainTags(context: Context, song: Song): Boolean =
         ReplayGainValues.hasGainTags(readProperties(context, song))
 
