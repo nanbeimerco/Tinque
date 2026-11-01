@@ -78,11 +78,13 @@ fun EqGroupScope.attenuateLevelingRows(enabled: Boolean) {
         val label by EqualizerSettings.activeDeviceLabel.collectAsStateWithLifecycle()
         val revision by SongGainStore.revision.collectAsStateWithLifecycle()
         val reference = remember(device, revision) { SongGainStore.reference(device) }
+        val referenceVolume = remember(device, revision) { SongGainStore.referenceVolume(device) }
         var calibrating by remember { mutableStateOf(false) }
         EqActionRow(
             title = stringResource(R.string.leveling_set_reference),
             subtitle = if (reference != null) {
-                stringResource(R.string.leveling_reference_set, label, "%.2f".format(reference))
+                stringResource(R.string.leveling_reference_set, label, "%.2f".format(reference)) +
+                    (referenceVolume?.let { (step, max) -> "\n" + stringResource(R.string.leveling_reference_volume, step, max) } ?: "")
             } else {
                 stringResource(R.string.leveling_reference_unset, label)
             },
@@ -247,7 +249,8 @@ private fun ReferenceCalibrationDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val audio = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
     val maxVol = remember { audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC) }
-    var atMax by remember { mutableStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC) >= maxVol) }
+    var volumeStep by remember { mutableStateOf(audio.getStreamVolume(AudioManager.STREAM_MUSIC)) }
+    val atMax = volumeStep >= maxVol
     val device by EqualizerSettings.activeDeviceKeyFlow.collectAsStateWithLifecycle()
     val label by EqualizerSettings.activeDeviceLabel.collectAsStateWithLifecycle()
     val playing by TrackGain.current.collectAsStateWithLifecycle()
@@ -262,7 +265,7 @@ private fun ReferenceCalibrationDialog(onDismiss: () -> Unit) {
     }
     LaunchedEffect(Unit) {
         while (true) {
-            atMax = audio.getStreamVolume(AudioManager.STREAM_MUSIC) >= maxVol
+            volumeStep = audio.getStreamVolume(AudioManager.STREAM_MUSIC)
             delay(500)
         }
     }
@@ -272,21 +275,28 @@ private fun ReferenceCalibrationDialog(onDismiss: () -> Unit) {
         title = { Text(stringResource(R.string.leveling_set_reference_title, label)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                // Any system volume will do: the levelling between songs does not
+                // depend on it, only what the reference means does. Full volume is
+                // offered (safely) for a reference that is easy to come back to.
+                Text(
+                    stringResource(R.string.leveling_current_volume, volumeStep, maxVol),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 if (!atMax) {
                     Text(
                         stringResource(R.string.leveling_step_max_volume),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     FilledTonalButton(onClick = {
                         TrackGain.calibrationOffsetDb.value = CALIBRATION_START_DB
                         audio.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0)
-                        atMax = true
+                        volumeStep = maxVol
                     }) {
                         Icon(Icons.Rounded.VolumeUp, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.leveling_set_max_volume))
                     }
-                    return@Column
                 }
                 Text(
                     stringResource(R.string.leveling_step_adjust),
@@ -359,6 +369,7 @@ private fun ReferenceCalibrationDialog(onDismiss: () -> Unit) {
                 enabled = samples.isNotEmpty(),
                 onClick = {
                     SongGainStore.setReference(device, samples.map { it.lufs + it.offset }.average().toFloat())
+                    SongGainStore.setReferenceVolume(device, volumeStep, maxVol)
                     onDismiss()
                 },
             ) { Text(stringResource(R.string.leveling_done)) }

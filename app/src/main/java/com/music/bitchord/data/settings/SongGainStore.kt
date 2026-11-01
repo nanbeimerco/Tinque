@@ -75,6 +75,17 @@ object SongGainStore {
         _revision.value++
     }
 
+    /** The system volume step (and its maximum) the reference for [device] was set at, if known. */
+    fun referenceVolume(device: String): Pair<Int, Int>? {
+        val p = prefs ?: return null
+        if (!p.contains("refvol|$device")) return null
+        return p.getInt("refvol|$device", 0) to p.getInt("refvolmax|$device", 0)
+    }
+
+    fun setReferenceVolume(device: String, step: Int, max: Int) {
+        prefs?.edit()?.putInt("refvol|$device", step)?.putInt("refvolmax|$device", max)?.apply()
+    }
+
     fun lift(device: String): Float = prefs?.getFloat("lift|$device", 0f) ?: 0f
 
     fun setLift(device: String, db: Float) {

@@ -1209,11 +1209,11 @@
     <string name="leveling_mode_standard_description">ふつうの ReplayGain。大きい曲は下げ、小さい曲は上げます。</string>
     <string name="leveling_mode_attenuate_description">曲を上げることはしません。基準より大きい曲を、基準まで下げます。基準は機器ごとに決めます。</string>
     <string name="leveling_set_reference">音量の基準を合わせる</string>
-    <string name="leveling_reference_set">%1$s:端末の音量最大で %2$s LUFS</string>
+    <string name="leveling_reference_set">%1$s:%2$s LUFS</string>
     <string name="leveling_reference_unset">%1$s:まだ合わせていません(この機器ではそろえません)</string>
     <string name="leveling_set_reference_title">音量の基準 · %1$s</string>
-    <string name="leveling_step_max_volume">端末の音量を最大にしてください。先に曲の音量を下げるので、急に大きく鳴ることはありません。</string>
-    <string name="leveling_set_max_volume">下げてから最大にする</string>
+    <string name="leveling_step_max_volume">最大で合わせると、あとで合わせ直しても基準がずれません。先に曲の音量を下げるので、急に大きく鳴ることはありません。</string>
+    <string name="leveling_set_max_volume">下げてから最大にする(任意)</string>
     <string name="leveling_step_adjust">ちょうどいいと思うところまで下げて、「この曲で決める」を押します。何曲か続けてください。</string>
     <string name="leveling_use_this_song">この曲で決める</string>
     <string name="leveling_next_song">次の曲</string>
@@ -1229,4 +1229,6 @@
     <string name="leveling_details">詳細</string>
     <string name="leveling_outside_title">0dB で止まっている曲</string>
     <string name="leveling_short_by">あと %1$s dB</string>
+    <string name="leveling_current_volume">端末の音量 %1$d/%2$d で合わせます。どの音量でも合わせられます(基準は「この音量でちょうどいい」になります)。</string>
+    <string name="leveling_reference_volume">端末の音量 %1$d/%2$d で合わせたもの</string>
 </resources>
