@@ -1959,10 +1959,11 @@ class PlaybackService : MediaLibraryService() {
 
         spareReplayGainJob?.cancel()
         spareReplayGainJob = scope.launch {
-            val gain = withContext(Dispatchers.IO) { TrackGain.compute(applicationContext, song).totalDb }
+            val gain = withContext(Dispatchers.IO) { TrackGain.compute(applicationContext, song, item.mediaId, pin = true).totalDb }
             TrackGain.gains[item.mediaId] = gain
             if (isActive && spare === target && target.currentMediaItem?.mediaId == item.mediaId) {
-                applyGainIfPlaying(chain.replayGain, item.mediaId, gain)
+                val passing = chain.replayGain.currentMediaId
+                if (passing == null || passing == item.mediaId) chain.replayGain.gainDb = gain
             }
         }
     }
@@ -2119,10 +2120,10 @@ class PlaybackService : MediaLibraryService() {
         }
 
         replayGainLookupJob = scope.launch {
-            val breakdown = withContext(Dispatchers.IO) { TrackGain.compute(applicationContext, song) }
+            val breakdown = withContext(Dispatchers.IO) { TrackGain.compute(applicationContext, song, mediaId, pin = true) }
             if (isActive && player?.currentMediaItem?.mediaId == mediaId && replayGainConfigToken == token) {
                 mediaId?.let { TrackGain.gains[it] = breakdown.totalDb }
-                applyGainIfPlaying(activeAudioChain.replayGain, mediaId, breakdown.totalDb)
+                applyGainIfPlaying(activeAudioChain.replayGain, mediaId, breakdown.totalDb, "current song")
                 TrackGain.current.value = breakdown
             }
             // The songs coming up, so each starts at its own gain from its first
@@ -2130,6 +2131,9 @@ class PlaybackService : MediaLibraryService() {
             computeUpcomingGains()
         }
     }
+
+    /** Logcat tag for every change to a song's gain, to trace level changes mid-song. */
+    private val GAIN_TAG = "TinqueGain"
 
     /** How many songs past the current one have their gain worked out ahead. */
     private val gainLookahead = 2
@@ -2143,16 +2147,16 @@ class PlaybackService : MediaLibraryService() {
             if (index in 0 until exoPlayer.mediaItemCount) exoPlayer.getMediaItemAt(index) else null
         }
         for (item in items) {
-            val breakdown = withContext(Dispatchers.IO) { TrackGain.compute(applicationContext, item.toSong()) }
+            val breakdown = withContext(Dispatchers.IO) { TrackGain.compute(applicationContext, item.toSong(), item.mediaId) }
             // A guess is not stored ahead: by the time the song is reached its
             // loudness may be known (a streamed song resolves first), and the
             // processor asks again then.
             if (breakdown.provisional) {
-                TrackGain.gains.remove(item.mediaId)
+                if (item.mediaId != exoPlayer.currentMediaItem?.mediaId) TrackGain.gains.remove(item.mediaId)
                 continue
             }
             TrackGain.gains[item.mediaId] = breakdown.totalDb
-            applyGainIfPlaying(activeAudioChain.replayGain, item.mediaId, breakdown.totalDb)
+            applyGainIfPlaying(activeAudioChain.replayGain, item.mediaId, breakdown.totalDb, "worked out ahead")
         }
     }
 
@@ -2162,9 +2166,17 @@ class PlaybackService : MediaLibraryService() {
      * Late in a song its successor may already be in the processor; a gain
      * meant for the song still being heard must not land on that one.
      */
-    private fun applyGainIfPlaying(processor: ReplayGainAudioProcessor, mediaId: String?, db: Float) {
+    private fun applyGainIfPlaying(processor: ReplayGainAudioProcessor, mediaId: String?, db: Float, reason: String) {
         val passing = processor.currentMediaId
-        if (passing == null || passing == mediaId) processor.gainDb = db
+        // Not told which song is passing: only the playing song's own gain may
+        // land, never one worked out ahead for a song still to come.
+        val applies = if (passing != null) passing == mediaId else mediaId != null && mediaId == player?.currentMediaItem?.mediaId
+        if (applies) {
+            if (processor.gainDb != db) {
+                android.util.Log.d(GAIN_TAG, "apply $db dB to $mediaId ($reason; passing=$passing)")
+            }
+            processor.gainDb = db
+        }
     }
 
     /** A song's gain the processor reached before it was ready: work it out now. */
@@ -2176,7 +2188,10 @@ class PlaybackService : MediaLibraryService() {
                 .firstOrNull { it.mediaId == mediaId }
                 ?: spare?.currentMediaItem?.takeIf { it.mediaId == mediaId }
                 ?: return@launch
-            val total = withContext(Dispatchers.IO) { TrackGain.compute(applicationContext, item.toSong()).totalDb }
+            val total = withContext(Dispatchers.IO) {
+                TrackGain.compute(applicationContext, item.toSong(), mediaId, pin = true).totalDb
+            }
+            android.util.Log.d(GAIN_TAG, "worked out at the boundary: $total dB for $mediaId")
             TrackGain.gains[mediaId] = total
         }
     }
@@ -2209,6 +2224,10 @@ class PlaybackService : MediaLibraryService() {
     ) {
         val exoPlayer = player ?: return
         resetCurrentLocalPlayStatsForTrackChange()
+        // A new play: only the song now playing keeps its pinned loudness (set
+        // at its boundary, a moment ago); every earlier play's is let go.
+        val nowPlaying = mediaItem?.mediaId
+        TrackGain.pins.keys.retainAll(setOfNotNull(nowPlaying))
         updateReplayGainForCurrentTrack()
 
         // A crossfade handoff never fires [formatListener] for the entering

@@ -51,13 +51,16 @@ class ReplayGainAudioProcessor : BaseAudioProcessor() {
     /** The linear gain actually applied to the last sample, for easing. */
     private var appliedGain = 1f
 
-    override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat =
-        if (inputAudioFormat.encoding == C.ENCODING_PCM_16BIT ||
-            inputAudioFormat.encoding == C.ENCODING_PCM_FLOAT
-        ) inputAudioFormat else AudioProcessor.AudioFormat.NOT_SET
+    override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
+        val handled = inputAudioFormat.encoding == C.ENCODING_PCM_16BIT || inputAudioFormat.encoding == C.ENCODING_PCM_FLOAT
+        android.util.Log.d("TinqueGain", "configure: $inputAudioFormat -> ${if (handled) "gain applied" else "passed through untouched"}")
+        return if (handled) inputAudioFormat else AudioProcessor.AudioFormat.NOT_SET
+    }
 
     override fun onFlush(streamMetadata: AudioProcessor.StreamMetadata) {
-        val id = mediaIdOf(streamMetadata) ?: return
+        val id = mediaIdOf(streamMetadata)
+        android.util.Log.d("TinqueGain", "boundary: $id (known gain ${id?.let { TrackGain.gains[it] }})")
+        if (id == null) return
         currentMediaId = id
         val known = TrackGain.gains[id]
         if (known != null) {

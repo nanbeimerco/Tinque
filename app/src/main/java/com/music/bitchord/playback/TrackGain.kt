@@ -64,6 +64,15 @@ object TrackGain {
      */
     val gains = ConcurrentHashMap<String, Float>()
 
+    /**
+     * The loudness each song is being levelled by for the play in progress, by
+     * media id, so nothing that happens mid-song — its analysis finishing, a
+     * recompute for any other reason — can move it louder. Settings the listener
+     * changes still apply at once (they are worked from the same loudness). It
+     * may only move quieter mid-song. Cleared for a song when another starts.
+     */
+    val pins = ConcurrentHashMap<String, Double>()
+
     /** Asks the playback service for a song's gain that is not in [gains] yet. */
     @Volatile
     var onGainNeeded: ((String) -> Unit)? = null
@@ -145,7 +154,7 @@ object TrackGain {
         AppSettings.bitPerfectPlayback.value,
     ).joinToString("|")
 
-    suspend fun compute(context: Context, song: Song): Breakdown {
+    suspend fun compute(context: Context, song: Song, mediaId: String? = null, pin: Boolean = false): Breakdown {
         val device = EqualizerSettings.activeDeviceKeyFlow.value
         val deviceLabel = EqualizerSettings.activeDeviceLabel.value
         val key = SongGainStore.songKey(song)
@@ -155,6 +164,14 @@ object TrackGain {
         val needLufs = calibrationOffsetDb.value != null ||
             (AppSettings.replayGainEnabled.value && AppSettings.levelingMode.value == LevelingMode.ATTENUATE_ONLY)
         val lufs = if (needLufs) runCatching { lufsFor(context, song) }.getOrNull() else null
+        val pinned = mediaId?.let { pins[it] }
+        // What this play is levelled by: the pinned figure, unless the real one
+        // is now known and asks for more cut (only ever quieter mid-song).
+        val levelBy = when {
+            pinned == null -> lufs
+            lufs != null && lufs > pinned -> lufs
+            else -> pinned
+        }
 
         var provisional = false
         fun result(levelled: Boolean, attenuate: Boolean, level: Float, trim: Float, min: Float, max: Float, calibrating: Boolean = false, total: Float = level + trim) =
@@ -184,14 +201,15 @@ object TrackGain {
                     val reference = SongGainStore.reference(device)
                     if (reference != null) {
                         attenuate = true
-                        val loudness = lufs ?: run {
+                        val loudness = levelBy ?: run {
                             // Not known yet: played as if very loud (too quiet at
                             // worst, never too loud), measured meanwhile, and
                             // levelled properly from its next play.
-                            provisional = true
                             measureLater(context, song)
                             ASSUMED_LOUD_LUFS
                         }
+                        provisional = lufs == null
+                        if (pin && mediaId != null) pins[mediaId] = loudness
                         level = minOf(0f, (reference + SongGainStore.lift(device) - loudness).toFloat())
                     }
                 }
