@@ -4,6 +4,21 @@ import androidx.compose.runtime.collectAsState
 import com.music.bitchord.data.settings.GridKind
 import com.music.bitchord.ui.components.ScaledGridCells
 import com.music.bitchord.ui.components.pinchToResizeGrid
+import com.music.bitchord.ui.components.gridPulse
+import com.music.bitchord.ui.components.pressBounce
+import com.music.bitchord.ui.components.selectionPlatform
+import androidx.compose.foundation.combinedClickable
+import com.music.bitchord.ui.components.GridTitleOnArt
+import com.music.bitchord.ui.components.reorderDragHost
+import com.music.bitchord.ui.components.gridPinchHeader
+import com.music.bitchord.ui.components.lightweightLiquidGlass
+import androidx.compose.material.icons.automirrored.rounded.Undo
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onPlaced
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import com.music.bitchord.ui.components.rememberGridColumns
 import android.os.Build
 import androidx.compose.animation.core.animateFloatAsState
@@ -14,6 +29,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import com.music.bitchord.ui.utils.debouncedCombinedClickable
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.layout.Arrangement
@@ -348,144 +365,6 @@ private fun FullScreenCollectionHeader(
     }
 }
 
-@Composable
-fun DrillDownActionRow(
-    songs: List<Song>,
-    viewType: LibraryViewType? = null,
-    onViewTypeToggle: (() -> Unit)? = null,
-    onSongClick: (List<Song>, Int) -> Unit,
-    onShuffle: (List<Song>) -> Unit,
-    onMore: (() -> Unit)? = null,
-    reorderEnabled: Boolean = false,
-    onReorderToggle: (() -> Unit)? = null,
-    /** The colour of the page behind the row; the play button is cut from it. */
-    pageColor: Color? = null,
-    modifier: Modifier = Modifier,
-) {
-    // Play is the one thing on the page most likely to be wanted, so it is the
-    // one solid button: white on a dark page, with the page's own colour for
-    // its ink, and the other way round on a light one.
-    val page = pageColor ?: MaterialTheme.colorScheme.background
-    val darkPage = page.luminance() < 0.5f
-    val playContainer = if (darkPage) Color.White else androidx.compose.ui.graphics.lerp(page, Color.Black, 0.82f)
-    val playInk = if (darkPage) androidx.compose.ui.graphics.lerp(page, Color.Black, 0.35f) else Color.White
-    val buttonBackground = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-    val buttonBorder = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-    val buttonContentColor = MaterialTheme.colorScheme.onSurface
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(50.dp)
-                .clip(CircleShape)
-                .background(buttonBackground)
-                .border(0.5.dp, buttonBorder, CircleShape)
-                .clickable { if (songs.isNotEmpty()) onShuffle(songs) },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                com.music.bitchord.ui.icons.PlayerControlIcons.Shuffle,
-                contentDescription = stringResource(R.string.shuffle),
-                tint = buttonContentColor,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-        Row(
-            modifier = Modifier
-                .height(50.dp)
-                .clip(CircleShape)
-                .background(playContainer)
-                .clickable { if (songs.isNotEmpty()) onSongClick(songs, 0) }
-                .padding(horizontal = 32.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            Icon(
-                BitChordIcons.TransportPlay,
-                contentDescription = null,
-                tint = playInk,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = stringResource(R.string.play),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
-                color = playInk,
-            )
-        }
-        if (onViewTypeToggle != null && viewType != null) {
-            Box(
-                modifier = Modifier
-                    .size(50.dp)
-                    .clip(CircleShape)
-                    .background(buttonBackground)
-                    .border(0.5.dp, buttonBorder, CircleShape)
-                    .clickable(onClick = onViewTypeToggle),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = if (viewType == LibraryViewType.GRID) BitChordIcons.ListView else BitChordIcons.GridView,
-                    contentDescription = stringResource(
-                        if (viewType == LibraryViewType.GRID) R.string.switch_to_list_view else R.string.switch_to_grid_view,
-                    ),
-                    tint = buttonContentColor,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
-        if (onReorderToggle != null) {
-            Box(
-                modifier = Modifier
-                    .size(50.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (reorderEnabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                        else buttonBackground,
-                    )
-                    .border(
-                        0.5.dp,
-                        if (reorderEnabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.38f) else buttonBorder,
-                        CircleShape,
-                    )
-                    .clickable(onClick = onReorderToggle),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Rounded.Reorder,
-                    contentDescription = stringResource(R.string.toggle_playlist_reorder),
-                    tint = if (reorderEnabled) MaterialTheme.colorScheme.primary else buttonContentColor,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
-        if (onMore != null) {
-            Box(
-                modifier = Modifier
-                    .size(50.dp)
-                    .clip(CircleShape)
-                    .background(buttonBackground)
-                    .border(0.5.dp, buttonBorder, CircleShape)
-                    .clickable(onClick = onMore),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    Icons.Rounded.MoreHoriz,
-                    contentDescription = stringResource(R.string.more),
-                    tint = buttonContentColor,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-        }
-    }
-    Spacer(Modifier.height(4.dp))
-}
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -493,25 +372,49 @@ fun SongGridCard(
     song: Song,
     selected: Boolean = false,
     isCurrent: Boolean = false,
+    isPlaying: Boolean = false,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    /** Extra content over the artwork's corner (the reorder grip). */
+    artOverlay: (@Composable androidx.compose.foundation.layout.BoxScope.() -> Unit)? = null,
+    /**
+     * Guard taps against a double press. Off while songs are being picked: a
+     * tap then only picks, and quick taps must all count.
+     */
+    debounce: Boolean = true,
 ) {
     val cardCompact = com.music.bitchord.ui.components.rememberCardCompact()
+    val titleOnArt = com.music.bitchord.ui.components.rememberGridTitleOverlay()
+    val selectionActive = com.music.bitchord.ui.components.LocalSongSelection.current?.active == true
     Column(
         modifier = modifier
             .then(cardCompact.measure)
+            .gridPulse()
+            .pressBounce()
             .clip(RoundedCornerShape(com.music.bitchord.ui.components.LocalGridSpacing.current.corner))
-            .debouncedCombinedClickable(onClick = onClick, onLongClick = onLongPress)
+            .then(
+                if (debounce && !selectionActive && !selected) {
+                    Modifier.debouncedCombinedClickable(onClick = onClick, onLongClick = onLongPress)
+                } else {
+                    Modifier.combinedClickable(onClick = onClick, onLongClick = onLongPress)
+                },
+            )
             .padding(com.music.bitchord.ui.components.LocalGridSpacing.current.cardPadding),
     ) {
-        val selectionActive = com.music.bitchord.ui.components.LocalSongSelection.current?.active == true
         val artScale = com.music.bitchord.ui.components.selectionArtScale(selected)
-        val shape = RoundedCornerShape(com.music.bitchord.ui.components.selectionArtCorner(selected, com.music.bitchord.ui.components.LocalGridSpacing.current.corner))
+        val shape = com.music.bitchord.ui.components.rememberArtShape(selected = selected, playing = isCurrent, spinning = isPlaying)
+        // The picked tile's platform and its check sit outside the artwork,
+        // which shrinks onto the platform (M3 Expressive selected state).
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
+                .selectionPlatform(selected),
+        ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
                 .graphicsLayer {
                     scaleX = artScale
                     scaleY = artScale
@@ -535,28 +438,44 @@ fun SongGridCard(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
+            if (titleOnArt) {
+                GridTitleOnArt(
+                    title = song.title,
+                    subtitle = song.artist.ifBlank { stringResource(R.string.unknown_artist) },
+                    tileWidth = cardCompact.width,
+                    highlight = isCurrent,
+                )
+            }
             if (isCurrent) {
                 Icon(
                     Icons.Rounded.GraphicEq,
                     contentDescription = stringResource(R.string.now_playing),
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(28.dp),
+                    tint = if (titleOnArt) Color.White else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .align(if (titleOnArt) Alignment.TopEnd else Alignment.Center)
+                        .padding(if (titleOnArt) 8.dp else 0.dp)
+                        .size(if (cardCompact.compact) 20.dp else 28.dp),
                 )
             }
-            if (selectionActive) {
+            artOverlay?.invoke(this)
+        }
+            if (selectionActive || selected) {
                 com.music.bitchord.ui.components.SelectionMark(
                     selected = selected,
-                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                    size = if (cardCompact.compact) 20.dp else 26.dp,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(if (cardCompact.compact) 2.dp else 4.dp),
                 )
             }
         }
+        if (!titleOnArt) {
         Spacer(Modifier.height(if (cardCompact.compact) 4.dp else 8.dp))
         ExplicitSongTitle(
             song = song,
             style = if (cardCompact.compact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = if (isCurrent || selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
         )
-        if (!cardCompact.compact) {
+        }
+        if (!cardCompact.compact && !titleOnArt) {
             Text(
                 text = song.artist.ifBlank { stringResource(R.string.unknown_artist) },
                 style = MaterialTheme.typography.bodySmall,
@@ -594,6 +513,8 @@ fun DrillDownSongList(
     reorderEnabled: Boolean = false,
     onReorderToggle: (() -> Unit)? = null,
     onReorderComplete: ((List<Song>) -> Unit)? = null,
+    /** Drops the whole selection (a drag ends it: the picked songs have moved). */
+    onClearSelection: (() -> Unit)? = null,
     onBack: (() -> Unit)? = null,
     contentPadding: PaddingValues = PaddingValues(0.dp),
     songDropdownMenu: (@Composable (Song) -> Unit)? = null,
@@ -646,36 +567,221 @@ fun DrillDownSongList(
     }
     val selectionToolbarContentColor = selectionToolbarBackground.highContrastBlackOrWhite()
 
-    if (viewType == LibraryViewType.GRID) {
-        val gridState = rememberLazyGridState()
-        BoxWithConstraints(
-            modifier = modifier
-                .fillMaxSize()
-                .background(if (fullScreenArtwork) artworkPalette.wash else MaterialTheme.colorScheme.background),
-        ) {
-            val artHeight = (maxWidth / COLLECTION_ART_RATIO).coerceAtMost(maxHeight * 0.6f)
-            val artHeightPx = with(LocalDensity.current) { artHeight.toPx() }
-            if (fullScreenArtwork) {
-                CollectionPageBackground(
-                    imageUrl = pageArtworkUrl,
-                    palette = artworkPalette,
-                    artHeight = artHeight,
-                    artTopPx = {
-                        if (gridState.firstVisibleItemIndex == 0) {
-                            -gridState.firstVisibleItemScrollOffset.toFloat()
-                        } else {
-                            -artHeightPx * 2f
-                        }
-                    },
-                )
+    // Reordering: only a playlist's songs have an order of their own to change.
+    val canReorder = isPlaylist && onReorderComplete != null
+    val currentSelectedIds by rememberUpdatedState(selectedIds)
+    val currentLongPress by rememberUpdatedState(onSongLongPress)
+    fun songKeyOf(song: Song): String = song.localUri ?: song.videoId
+    fun isPicked(song: Song): Boolean =
+        songKeyOf(song) in currentSelectedIds || song.videoId in currentSelectedIds
+
+    /**
+     * A long press that selects (as before) and arms the reorder drag: if the
+     * finger then moves, the song is lifted and dragged. A song this press
+     * picked out of no selection is let go again after the drag, so moving
+     * one song does not leave the page in selection mode; a long press on an
+     * already-picked song unpicks it only if it was not dragged.
+     */
+    fun armedLongPress(arm: com.music.bitchord.ui.components.ReorderArm, song: Song) {
+        if (!canReorder) {
+            currentLongPress(song)
+            return
+        }
+        arm.arm(songKeyOf(song))
+        if (!isPicked(song)) {
+            currentLongPress(song)
+        } else {
+            arm.onNoDrag = { currentLongPress(song) }
+        }
+    }
+
+    // Both layouts' scroll states live here, so a list/grid switch can carry
+    // the place over; and the list/grid icon's animation outlives the button
+    // row, which each layout builds anew.
+    val gridState = rememberLazyGridState()
+    val listState = rememberLazyListState()
+    val viewMorph = remember {
+        List(4) { androidx.compose.animation.core.Animatable(if (viewType == LibraryViewType.GRID) 0f else 1f) }
+    }
+    val switchScope = rememberCoroutineScope()
+    val screenWidthPx = with(LocalDensity.current) {
+        androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp.toPx()
+    }
+    val switchColumns = rememberGridColumns(GridKind.COLLECTION_SONGS)
+    val currentViewType by rememberUpdatedState(viewType)
+    val headerItems = 1 + (if (!selectionMode) 1 else 0) + (if (selectionToolbar != null) 1 else 0)
+    val currentHeaderItems by rememberUpdatedState(headerItems)
+    val animatedViewToggle: (() -> Unit)? = onViewTypeToggle?.let { toggle ->
+        {
+            switchScope.launch {
+                val fromGrid = currentViewType == LibraryViewType.GRID
+                val index = if (fromGrid) gridState.firstVisibleItemIndex else listState.firstVisibleItemIndex
+                val offset = if (fromGrid) gridState.firstVisibleItemScrollOffset else listState.firstVisibleItemScrollOffset
+                // Within the header (same in both layouts): keep it exactly.
+                // In the songs: the song at the top stays at the top.
+                val keep = if (index < currentHeaderItems) offset else 0
+                com.music.bitchord.ui.components.animateGridSwitch(
+                    rippleFrom = Offset(screenWidthPx / 2f, 0f),
+                    cellPx = screenWidthPx / switchColumns.coerceAtLeast(1),
+                ) {
+                    if (fromGrid) listState.requestScrollToItem(index, keep) else gridState.requestScrollToItem(index, keep)
+                    toggle()
+                }
             }
+            Unit
+        }
+    }
+
+    // Each drag offers "Undo" for that one move (the app shows it in its
+    // floating glass layer), and ends the selection.
+    var orderBeforeDrag by remember { mutableStateOf<List<Song>?>(null) }
+    val currentReorderComplete by rememberUpdatedState(onReorderComplete)
+    val currentClearSelection by rememberUpdatedState(onClearSelection)
+    fun noteDragStart(current: List<Song>) {
+        orderBeforeDrag = current
+    }
+    fun noteDragEnd() {
+        val before = orderBeforeDrag
+        orderBeforeDrag = null
+        currentClearSelection?.invoke()
+        if (before != null) {
+            com.music.bitchord.ui.components.ReorderUndo.show { currentReorderComplete?.invoke(before) }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { com.music.bitchord.ui.components.ReorderUndo.clear() }
+    }
+
+    // The page art lives here, outside both layouts, so a list/grid switch
+    // neither rebuilds nor reloads it.
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .background(if (fullScreenArtwork) artworkPalette.wash else MaterialTheme.colorScheme.background),
+    ) {
+    val outerArtHeight = (maxWidth / COLLECTION_ART_RATIO).coerceAtMost(maxHeight * 0.6f)
+    val outerArtHeightPx = with(LocalDensity.current) { outerArtHeight.toPx() }
+    if (fullScreenArtwork) {
+        CollectionPageBackground(
+            imageUrl = pageArtworkUrl,
+            palette = artworkPalette,
+            artHeight = outerArtHeight,
+            artTopPx = {
+                val atTop = if (currentViewType == LibraryViewType.GRID) {
+                    gridState.firstVisibleItemIndex == 0
+                } else {
+                    listState.firstVisibleItemIndex == 0
+                }
+                val offset = if (currentViewType == LibraryViewType.GRID) {
+                    gridState.firstVisibleItemScrollOffset
+                } else {
+                    listState.firstVisibleItemScrollOffset
+                }
+                if (atTop) -offset.toFloat() else -outerArtHeightPx * 2f
+            },
+        )
+    }
+
+    if (viewType == LibraryViewType.GRID) {
+        var gridSongs by remember(songs) { mutableStateOf(songs) }
+        val stack = remember { GroupDragStack() }
+        val stackScope = rememberCoroutineScope()
+        val tileCoords = remember { mutableMapOf<String, androidx.compose.ui.layout.LayoutCoordinates>() }
+        val gridCoords = remember { arrayOfNulls<androidx.compose.ui.layout.LayoutCoordinates>(1) }
+        var groupOrder by remember { mutableStateOf<List<Song>>(emptyList()) }
+        val reorder = com.music.bitchord.ui.components.rememberGridReorderState(gridState)
+        val gridArm = remember { com.music.bitchord.ui.components.ReorderArm() }
+        var groupKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
+        reorder.onMove = { fromKey, toKey ->
+            val list = gridSongs
+            val from = list.indexOfFirst { songKeyOf(it) == fromKey }
+            val to = list.indexOfFirst { songKeyOf(it) == toKey }
+            if (from >= 0 && to >= 0 && from != to) {
+                gridSongs = list.toMutableList().apply { add(to, removeAt(from)) }
+            }
+        }
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val artHeight = (maxWidth / COLLECTION_ART_RATIO).coerceAtMost(maxHeight * 0.6f)
             val gridCols = rememberGridColumns(GridKind.COLLECTION_SONGS)
-            val gridSpacing = com.music.bitchord.ui.components.gridSpacingFor(gridCols)
-            androidx.compose.runtime.CompositionLocalProvider(com.music.bitchord.ui.components.LocalGridSpacing provides gridSpacing) {
+            val gridSpacing = com.music.bitchord.ui.components.rememberGridSpacing(gridCols)
+            androidx.compose.runtime.CompositionLocalProvider(
+                com.music.bitchord.ui.components.LocalGridSpacing provides gridSpacing,
+                com.music.bitchord.ui.components.LocalSelectionPlatformColor provides
+                    if (fullScreenArtwork) artworkPalette.accent.copy(alpha = 0.38f) else Color.Unspecified,
+            ) {
             LazyVerticalGrid(
                 columns = ScaledGridCells(gridCols),
                 state = gridState,
-                modifier = Modifier.fillMaxSize().pinchToResizeGrid(GridKind.COLLECTION_SONGS, gridCols),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onPlaced { gridCoords[0] = it }
+                    .then(
+                        if (canReorder) {
+                            Modifier.reorderDragHost(
+                                arm = gridArm,
+                                onStart = { key, position ->
+                                    val lead = gridSongs.firstOrNull { songKeyOf(it) == key }
+                                    groupKeys = if (lead != null && isPicked(lead)) {
+                                        gridSongs.filter { isPicked(it) }.map { songKeyOf(it) }.toSet()
+                                    } else {
+                                        emptySet()
+                                    }
+                                    noteDragStart(gridSongs)
+                                    val started = reorder.start(key, position)
+                                    if (started && lead != null && groupKeys.size > 1) {
+                                        // The rest of the pick leaves its places (the
+                                        // grid closes up) and flies in under the finger.
+                                        groupOrder = gridSongs.filter { songKeyOf(it) in groupKeys }
+                                        val others = groupOrder.filter { songKeyOf(it) != key }
+                                        val starts = others.associate {
+                                            songKeyOf(it) to positionIn(gridCoords[0], tileCoords[songKeyOf(it)])
+                                        }
+                                        val leadCoordinates = tileCoords[key]
+                                        val heldStart = positionIn(gridCoords[0], leadCoordinates) ?: position
+                                        val size = leadCoordinates?.size ?: androidx.compose.ui.unit.IntSize.Zero
+                                        gridSongs = gridSongs.filterNot { songKeyOf(it) in groupKeys && songKeyOf(it) != key }
+                                        stackScope.launch {
+                                            stack.begin(lead, others, heldStart, size, { starts[it] }, position)
+                                        }
+                                    }
+                                    started
+                                },
+                                onDrag = { delta, position ->
+                                    reorder.drag(delta, position)
+                                    if (stack.active) stack.finger = position
+                                },
+                                onEnd = {
+                                    val lead = reorder.draggedKey
+                                    reorder.end()
+                                    if (lead != null && stack.active && groupOrder.size > 1) {
+                                        // The pick goes back in, in its own order, where
+                                        // the held song landed; the stack comes apart.
+                                        val at = gridSongs.indexOfFirst { songKeyOf(it) == lead }
+                                        if (at >= 0) {
+                                            gridSongs = gridSongs.take(at) + groupOrder + gridSongs.drop(at + 1)
+                                        }
+                                        onReorderComplete?.invoke(gridSongs)
+                                        stackScope.launch {
+                                            stack.drop(
+                                                placeOf = { k -> positionIn(gridCoords[0], tileCoords[k]) },
+                                                onDone = {
+                                                    groupKeys = emptySet()
+                                                    groupOrder = emptyList()
+                                                },
+                                            )
+                                        }
+                                    } else {
+                                        groupKeys = emptySet()
+                                        onReorderComplete?.invoke(gridSongs)
+                                    }
+                                    noteDragEnd()
+                                },
+                            )
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .pinchToResizeGrid(GridKind.COLLECTION_SONGS, gridCols),
                 contentPadding = PaddingValues(
                     start = PAGE_GUTTER,
                     end = PAGE_GUTTER,
@@ -696,14 +802,19 @@ fun DrillDownSongList(
                         fullScreenArtwork = fullScreenArtwork,
                         artHeight = artHeight,
                         palette = artworkPalette,
+                        modifier = Modifier.gridHeaderBleed(gridSpacing.vertical).gridPinchHeader(),
                     )
                 }
                 if (!selectionMode) item(span = { GridItemSpan(maxLineSpan) }) {
                     DrillDownActionRow(
+                        modifier = Modifier
+                            .gridHeaderBleed(gridSpacing.vertical, extraBottom = (4.dp - gridSpacing.cardPadding).coerceAtLeast(0.dp))
+                            .gridPinchHeader(),
                         pageColor = if (fullScreenArtwork) artworkPalette.wash else MaterialTheme.colorScheme.background,
                         songs = songs,
                         viewType = viewType,
-                        onViewTypeToggle = onViewTypeToggle,
+                        onViewTypeToggle = animatedViewToggle,
+                        viewMorph = viewMorph,
                         onSongClick = onSongClick,
                         onShuffle = onShuffle,
                         onMore = onMore,
@@ -712,20 +823,62 @@ fun DrillDownSongList(
                     )
                 }
                 if (selectionToolbar != null) {
-                    item(span = { GridItemSpan(maxLineSpan) }) { selectionToolbar(selectionToolbarContentColor) }
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Box(Modifier.gridHeaderBleed(gridSpacing.vertical).gridPinchHeader()) {
+                            selectionToolbar(selectionToolbarContentColor)
+                        }
+                    }
                 }
-                itemsIndexed(songs) { index, song ->
+                itemsIndexed(gridSongs, key = { _, song -> songKeyOf(song) }) { index, song ->
+                    val songKey = songKeyOf(song)
+                    val lifted = reorder.draggedKey == songKey
+                    val settling = reorder.droppingKey == songKey
+                    val lift by animateFloatAsState(
+                        if (lifted) 1.06f else 1f,
+                        androidx.compose.animation.core.spring(0.6f, 800f),
+                        label = "gridLift",
+                    )
                     SongGridCard(
-                        modifier = Modifier.animateItem(),
+                        debounce = !selectionMode && selectedIds.isEmpty(),
+                        modifier = Modifier
+                            .onPlaced { tileCoords[songKey] = it }
+                            .then(if (lifted || settling) Modifier else Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null))
+                            .zIndex(if (lifted || settling) 2f else 0f)
+                            .graphicsLayer {
+                                val offset = reorder.offsetOf(songKey)
+                                translationX = offset.x
+                                translationY = offset.y
+                                scaleX = lift
+                                scaleY = lift
+                                alpha = if (stack.covers(songKey)) 0f else 1f
+                                shadowElevation = ((lift - 1f) / 0.06f).coerceIn(0f, 1f) * 12.dp.toPx()
+                                shape = RoundedCornerShape(16.dp)
+                            },
                         song = song,
-                        selected = song.videoId in selectedIds || (song.localUri ?: song.videoId) in selectedIds,
+                        selected = song.videoId in selectedIds || songKey in selectedIds,
                         isCurrent = song.isSameTrackAs(currentSong),
+                        isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
                         onClick = {
-                            if (selectionMode) onSelectionToggle?.invoke(song) else onSongClick(songs, index)
+                            if (selectionMode) onSelectionToggle?.invoke(song) else onSongClick(gridSongs, index)
                         },
-                        onLongPress = { onSongLongPress(song) },
+                        onLongPress = { armedLongPress(gridArm, song) },
+                        artOverlay = if (canReorder && reorderEnabled) {
+                            { ReorderGrip(onTouch = { gridArm.arm(songKey, immediate = true) }) }
+                        } else {
+                            null
+                        },
                     )
                 }
+            }
+            GroupDragStackOverlay(stack) { song, tileModifier ->
+                SongGridCard(
+                    modifier = tileModifier,
+                    song = song,
+                    selected = true,
+                    isCurrent = song.isSameTrackAs(currentSong),
+                    isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
+                    onClick = {},
+                )
             }
             }
             FastScroller(
@@ -740,7 +893,6 @@ fun DrillDownSongList(
             )
         }
     } else {
-        val listState = rememberLazyListState()
         var displayedSongs by remember(songs) { mutableStateOf(songs) }
         val dragState = rememberPlaylistSongDragState(listState, displayedSongs.size) { from, to, draggedKey, insertAfter, groupedKeys ->
             val current = displayedSongs
@@ -770,30 +922,45 @@ fun DrillDownSongList(
             displayedSongs = reordered
             insertionIndex + anchorOrder
         }
-        BoxWithConstraints(
-            modifier = modifier
-                .fillMaxSize()
-                .background(if (fullScreenArtwork) artworkPalette.wash else MaterialTheme.colorScheme.background),
-        ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val artHeight = (maxWidth / COLLECTION_ART_RATIO).coerceAtMost(maxHeight * 0.6f)
-            val artHeightPx = with(LocalDensity.current) { artHeight.toPx() }
-            if (fullScreenArtwork) {
-                CollectionPageBackground(
-                    imageUrl = pageArtworkUrl,
-                    palette = artworkPalette,
-                    artHeight = artHeight,
-                    artTopPx = {
-                        if (listState.firstVisibleItemIndex == 0) {
-                            -listState.firstVisibleItemScrollOffset.toFloat()
-                        } else {
-                            -artHeightPx * 2f
-                        }
-                    },
-                )
-            }
+            val listArm = remember { com.music.bitchord.ui.components.ReorderArm() }
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(
+                        if (canReorder) {
+                            Modifier.reorderDragHost(
+                                arm = listArm,
+                                onStart = { key, _ ->
+                                    val index = displayedSongs.indexOfFirst { songKeyOf(it) == key }
+                                    if (index < 0) {
+                                        false
+                                    } else {
+                                        val lead = displayedSongs[index]
+                                        val group = if (isPicked(lead)) {
+                                            displayedSongs.filter { isPicked(it) }.map { songKeyOf(it) }.toSet()
+                                        } else {
+                                            emptySet()
+                                        }
+                                        noteDragStart(displayedSongs)
+                                        dragState.onDragStart(key, group, index)
+                                        true
+                                    }
+                                },
+                                onDrag = { delta, _ -> dragState.onDrag(delta.y) },
+                                onEnd = {
+                                    if (dragState.isGroupDrag) dragState.finishGroupedDrag()
+                                    dragState.onDragEnd()
+                                    onReorderComplete?.invoke(displayedSongs)
+                                    noteDragEnd()
+                                },
+                            )
+                        } else {
+                            Modifier
+                        },
+                    ),
                 contentPadding = pageContentPadding,
             ) {
                 item {
@@ -814,7 +981,8 @@ fun DrillDownSongList(
                         pageColor = if (fullScreenArtwork) artworkPalette.wash else MaterialTheme.colorScheme.background,
                         songs = songs,
                         viewType = viewType,
-                        onViewTypeToggle = onViewTypeToggle,
+                        onViewTypeToggle = animatedViewToggle,
+                        viewMorph = viewMorph,
                         onSongClick = onSongClick,
                         onShuffle = onShuffle,
                         onMore = onMore,
@@ -842,6 +1010,7 @@ fun DrillDownSongList(
                         })
                         Row(
                             modifier = Modifier
+                                .then(com.music.bitchord.ui.components.GridSwitchBlurFeel)
                                 .zIndex(if (isDragGroupMember) 1f else 0f)
                                 .graphicsLayer {
                                     translationY = if (isDragGroupMember) dragState.renderOffset else 0f
@@ -867,7 +1036,8 @@ fun DrillDownSongList(
                                         if (selectionMode) onSelectionToggle?.invoke(song)
                                         else onSongClick(displayedSongs, index)
                                     },
-                                    onLongPress = { onSongLongPress(song) },
+                                    onLongPress = { armedLongPress(listArm, song) },
+                                    debounce = !selectionMode && selectedIds.isEmpty(),
                                     onMore = onSongMore?.let { more -> { more(song) } },
                                     onSwipeToQueue = null,
                                     dropdownMenu = songDropdownMenu?.let { menu -> { menu(song) } },
@@ -912,6 +1082,20 @@ fun DrillDownSongList(
                             )
                         }
                     } else {
+                        val songKey = song.localUri ?: song.videoId
+                        val isDragGroupMember = canReorder && dragState.isDragMember(songKey)
+                        Box(
+                            modifier = Modifier
+                                .then(com.music.bitchord.ui.components.GridSwitchBlurFeel)
+                                .zIndex(if (isDragGroupMember) 1f else 0f)
+                                .graphicsLayer {
+                                    translationY = if (isDragGroupMember) dragState.renderOffset else 0f
+                                }
+                                .background(
+                                    if (isDragGroupMember) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                    else Color.Transparent,
+                                ),
+                        ) {
                         SongRow(
                             song = song,
                             rowBackground = rowBackground,
@@ -925,11 +1109,13 @@ fun DrillDownSongList(
                             onClick = {
                                 if (selectionMode) onSelectionToggle?.invoke(song) else onSongClick(displayedSongs, index)
                             },
-                            onLongPress = { onSongLongPress(song) },
+                            onLongPress = { armedLongPress(listArm, song) },
+                            debounce = !selectionMode && selectedIds.isEmpty(),
                             onMore = onSongMore?.let { more -> { more(song) } },
                             onSwipeToQueue = if (selectionMode) null else { { onSongSwipe(song) } },
                             dropdownMenu = songDropdownMenu?.let { menu -> { menu(song) } },
                         )
+                        }
                     }
                     if (index < songs.lastIndex) {
                         HorizontalDivider(
@@ -949,6 +1135,7 @@ fun DrillDownSongList(
             )
         }
     }
+    }
 }
 
 @Composable
@@ -961,7 +1148,7 @@ private fun CollectionPageBackground(
     // The sleeve stays sharp with only the wash below it. A blurred copy used
     // to fade in over its lower half ~280ms after opening, which read as the
     // page "going blurry" a beat late; the first frame is the intended look.
-    Box(Modifier.fillMaxSize().clipToBounds()) {
+    Box(Modifier.fillMaxSize().clipToBounds().then(com.music.bitchord.ui.components.GridPinchBackdropFeel)) {
         if (!imageUrl.isNullOrBlank()) {
             Box(
                 Modifier
@@ -1186,4 +1373,53 @@ private class PlaylistSongDragState(
         }
         if (autoScrollDir != direction) autoScrollDir = direction
     }
+}
+
+
+/**
+ * The grip a grid tile shows while Move is on: hold it and drag straight
+ * away, no long press. Everywhere else on the tile still scrolls the grid.
+ */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.ReorderGrip(onTouch: () -> Unit) {
+    val touch by rememberUpdatedState(onTouch)
+    Box(
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(5.dp)
+            .size(30.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.88f))
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    touch()
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.DragHandle,
+            contentDescription = stringResource(R.string.drag_to_reorder_song),
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+
+/**
+ * In the grid: a header row (title, buttons, toolbar) laid out exactly as in
+ * the list — out past the grid's side padding to the full page width, and
+ * with the grid's row gap under it taken back — so switching views moves
+ * none of it.
+ */
+private fun Modifier.gridHeaderBleed(gap: Dp, extraBottom: Dp = 0.dp): Modifier = this.layout { measurable, constraints ->
+    val extra = (PAGE_GUTTER * 2).roundToPx()
+    val width = constraints.maxWidth + extra
+    val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+    // [extraBottom]: tiles carry their own inset, smaller in dense grids; this
+    // tops it up so the first artwork sits as far below as the list's does.
+    val height = (placeable.height - gap.roundToPx() + extraBottom.roundToPx()).coerceAtLeast(0)
+    layout(constraints.maxWidth, height) { placeable.place(-extra / 2, 0) }
 }

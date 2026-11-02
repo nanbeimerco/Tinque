@@ -3049,6 +3049,15 @@ private fun BitChordApp(
                         )
                     }
                 }
+                // "Undo" after a reorder, in the same floating glass layer.
+                com.music.bitchord.ui.components.ReorderUndoHost(
+                    glassBackdrop = glassSamplesBackdrop && useCollapsibleNavBar,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .offset {
+                            IntOffset(0, -(floatingBarsHeight.intValue + 10.dp.roundToPx()))
+                        },
+                )
                 // The selection's actions, floating over the bottom bars.
                 androidx.compose.animation.AnimatedVisibility(
                     visible = songSelection.active,

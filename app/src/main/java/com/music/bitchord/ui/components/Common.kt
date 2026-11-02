@@ -303,6 +303,11 @@ fun SongRow(
     /** True while a Downloads row belongs to the current multi-selection. */
     selected: Boolean = false,
     dropdownMenu: (@Composable () -> Unit)? = null,
+    /**
+     * Guard taps against a double press (see ClickDebounce). Off while songs
+     * are being picked: a tap then only picks, and quick taps must all count.
+     */
+    debounce: Boolean = true,
 ) {
     val haptics = rememberHaptics()
     val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
@@ -326,6 +331,7 @@ fun SongRow(
 
     if (onSwipeToQueue == null) {
         SongRowContent(
+            debounce = debounce,
             song = song,
             onClick = onClick,
             onLongPress = onLongPress,
@@ -373,6 +379,7 @@ fun SongRow(
         backgroundContent = { QueueSwipeBackground(swipeState) },
     ) {
         SongRowContent(
+            debounce = debounce,
             song = song,
             onClick = onClick,
             onLongPress = onLongPress,
@@ -453,6 +460,7 @@ private fun SongRowContent(
     activeTint: Color = MaterialTheme.colorScheme.primary,
     selected: Boolean = false,
     dropdownMenu: (@Composable () -> Unit)? = null,
+    debounce: Boolean = true,
 ) {
     val titleColor by animateColorAsState(
         targetValue = if (isCurrent) activeTint else MaterialTheme.colorScheme.onBackground,
@@ -485,7 +493,13 @@ private fun SongRowContent(
                     )
                 }
             }
-            .debouncedCombinedClickable(onClick = onClick, onLongClick = onLongPress)
+            .then(
+                if (debounce && !selectionActive) {
+                    Modifier.debouncedCombinedClickable(onClick = onClick, onLongClick = onLongPress)
+                } else {
+                    Modifier.combinedClickable(onClick = onClick, onLongClick = onLongPress)
+                },
+            )
             .padding(horizontal = PAGE_GUTTER, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

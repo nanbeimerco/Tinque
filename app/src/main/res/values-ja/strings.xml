@@ -1231,4 +1231,10 @@
     <string name="leveling_short_by">あと %1$s dB</string>
     <string name="leveling_current_volume">端末の音量 %1$d/%2$d で合わせます。どの音量でも合わせられます(基準は「この音量でちょうどいい」になります)。</string>
     <string name="leveling_reference_volume">端末の音量 %1$d/%2$d で合わせたもの</string>
+    <string name="grid_titles">グリッドのタイトル</string>
+    <string name="grid_titles_subtitle">ジャケットの下に出すか、ジャケットに重ねて正方形に並べるか。重ねると曲名は2行まで出ます</string>
+    <string name="grid_titles_below">ジャケットの下</string>
+    <string name="grid_titles_on_art">ジャケットに重ねる</string>
+    <string name="reorder_bar_undo">元に戻す</string>
+    <string name="reorder_bar_done">完了</string>
 </resources>

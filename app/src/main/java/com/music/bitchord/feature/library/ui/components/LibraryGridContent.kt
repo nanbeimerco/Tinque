@@ -46,7 +46,7 @@ fun LibraryGridContent(
     header: @Composable () -> Unit = {},
 ) {
     val gridCols = rememberGridColumns(GridKind.LIBRARY)
-    val gridSpacing = com.music.bitchord.ui.components.gridSpacingFor(gridCols)
+    val gridSpacing = com.music.bitchord.ui.components.rememberGridSpacing(gridCols)
     androidx.compose.runtime.CompositionLocalProvider(com.music.bitchord.ui.components.LocalGridSpacing provides gridSpacing) {
     LazyVerticalGrid(
         columns = ScaledGridCells(gridCols),
@@ -64,7 +64,7 @@ fun LibraryGridContent(
         item(key = "library_header", span = { GridItemSpan(maxLineSpan) }) {
             // Undo the grid's side padding so the header lines up with the list layout.
             androidx.compose.foundation.layout.Box(
-                Modifier.layout { measurable, constraints ->
+                Modifier.then(com.music.bitchord.ui.components.GridPinchHeaderFeel).layout { measurable, constraints ->
                     val extra = 32.dp.roundToPx()
                     val placeable = measurable.measure(
                         constraints.copy(
@@ -84,7 +84,7 @@ fun LibraryGridContent(
         if (showFavorites) {
             item(key = "library_favorites") {
                 LibraryFavoritesCard(
-                    modifier = Modifier.animateItem(),
+                    modifier = Modifier.animateItem().then(com.music.bitchord.ui.components.GridTileFeel),
                     songCount = favoriteSongCount,
                     onClick = onFavoritesClick,
                     onPlay = onFavoritesPlay,
@@ -96,7 +96,7 @@ fun LibraryGridContent(
             items(playlists, key = { it.id }) { playlist ->
                 val index = playlists.indexOfFirst { it.id == playlist.id }
                 LibraryPlaylistCard(
-                    modifier = Modifier.animateItem(),
+                    modifier = Modifier.animateItem().then(com.music.bitchord.ui.components.GridTileFeel),
                     playlist = playlist,
                     onClick = { onPlaylistClick(playlist) },
                     onPlay = { onPlaylistPlay(playlist) },
@@ -114,7 +114,7 @@ fun LibraryGridContent(
 
             item(key = "library_create_playlist") {
                 LibraryCreatePlaylistCard(
-                    modifier = Modifier.animateItem(),
+                    modifier = Modifier.animateItem().then(com.music.bitchord.ui.components.GridTileFeel),
                     onClick = onCreatePlaylist,
                 )
             }

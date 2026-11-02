@@ -4450,6 +4450,22 @@ private fun GridSizeSettingsRows() {
             )
         }
     }
+    // Where a grid tile's title goes: under the artwork, or on it (square tiles).
+    val titleOverlay by AppSettings.gridTitleOverlay.collectAsStateWithLifecycle()
+    SettingsRow(
+        icon = Icons.Rounded.ViewStream,
+        title = stringResource(R.string.grid_titles),
+        subtitle = stringResource(R.string.grid_titles_subtitle),
+    )
+    SegmentedControl(
+        options = listOf(
+            stringResource(R.string.grid_titles_below),
+            stringResource(R.string.grid_titles_on_art),
+        ),
+        selectedIndex = if (titleOverlay) 1 else 0,
+        onSelect = { AppSettings.setGridTitleOverlay(it == 1) },
+        modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
+    )
 }
 
 /**

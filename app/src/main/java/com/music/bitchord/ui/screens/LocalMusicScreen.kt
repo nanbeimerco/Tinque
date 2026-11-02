@@ -9,6 +9,10 @@ import androidx.compose.animation.animateColorAsState
 import com.music.bitchord.data.settings.GridKind
 import com.music.bitchord.ui.components.ScaledGridCells
 import com.music.bitchord.ui.components.pinchToResizeGrid
+import com.music.bitchord.ui.components.gridPulse
+import com.music.bitchord.ui.components.pressBounce
+import com.music.bitchord.ui.components.GridTitleOnArt
+import com.music.bitchord.ui.components.gridPinchHeader
 import com.music.bitchord.ui.components.rememberGridColumns
 import com.music.bitchord.ui.components.rememberCardCompact
 import androidx.activity.compose.BackHandler
@@ -1201,9 +1205,10 @@ private fun LogoThenHeader(
     showLogo: Boolean,
     listTopPadding: Dp,
     horizontalInset: Dp = 0.dp,
+    modifier: Modifier = Modifier,
     header: @Composable () -> Unit,
 ) {
-    Column {
+    Column(modifier) {
         if (showLogo) TabLogoHeader(listTopPadding = listTopPadding, horizontalInset = horizontalInset)
         header()
     }
@@ -1234,7 +1239,7 @@ private fun SongsTab(
         val gridState = rememberLazyGridState()
         Box(modifier = Modifier.fillMaxSize()) {
             val gridCols = rememberGridColumns(GridKind.SONGS)
-            val gridSpacing = com.music.bitchord.ui.components.gridSpacingFor(gridCols)
+            val gridSpacing = com.music.bitchord.ui.components.rememberGridSpacing(gridCols)
             androidx.compose.runtime.CompositionLocalProvider(com.music.bitchord.ui.components.LocalGridSpacing provides gridSpacing) {
             LazyVerticalGrid(
                 columns = ScaledGridCells(gridCols),
@@ -1250,7 +1255,7 @@ private fun SongsTab(
                 verticalArrangement = Arrangement.spacedBy(gridSpacing.vertical),
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    LogoThenHeader(showLogo, contentPadding.calculateTopPadding() + 6.dp, horizontalInset = PAGE_GUTTER) {
+                    LogoThenHeader(showLogo, contentPadding.calculateTopPadding() + 6.dp, horizontalInset = PAGE_GUTTER, modifier = Modifier.gridPinchHeader()) {
                     SectionHeader(
                         icon = Icons.Rounded.LibraryMusic,
                         title = pluralStringResource(R.plurals.song_count_plural, songs.size, songs.size),
@@ -1272,6 +1277,8 @@ private fun SongsTab(
                         song = song,
                         selected = song.videoId in selectedIds,
                         isCurrent = song.isSameTrackAs(currentSong),
+                        isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
+                        debounce = selectedIds.isEmpty(),
                         onClick = { onSongClick(songs, index) },
                         onLongPress = { onSongLongPress(song) },
                     )
@@ -1322,6 +1329,7 @@ private fun SongsTab(
                         selected = song.videoId in selectedIds,
                         isCurrent = song.isSameTrackAs(currentSong),
                         isPlaying = song.isSameTrackAs(currentSong) && isPlaying,
+                        debounce = selectedIds.isEmpty(),
                         onClick = { onSongClick(songs, index) },
                         onLongPress = { onSongLongPress(song) },
                         onMore = onSongMore?.let { more -> { more(song) } },
@@ -1365,7 +1373,7 @@ private fun ArtistsTab(
         val gridState = rememberLazyGridState()
         Box(modifier = Modifier.fillMaxSize()) {
             val gridCols = rememberGridColumns(GridKind.ARTISTS)
-            val gridSpacing = com.music.bitchord.ui.components.gridSpacingFor(gridCols)
+            val gridSpacing = com.music.bitchord.ui.components.rememberGridSpacing(gridCols)
             androidx.compose.runtime.CompositionLocalProvider(com.music.bitchord.ui.components.LocalGridSpacing provides gridSpacing) {
             LazyVerticalGrid(
                 columns = ScaledGridCells(gridCols),
@@ -1381,7 +1389,7 @@ private fun ArtistsTab(
                 verticalArrangement = Arrangement.spacedBy(gridSpacing.vertical),
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    LogoThenHeader(showLogo, contentPadding.calculateTopPadding() + 6.dp, horizontalInset = PAGE_GUTTER) {
+                    LogoThenHeader(showLogo, contentPadding.calculateTopPadding() + 6.dp, horizontalInset = PAGE_GUTTER, modifier = Modifier.gridPinchHeader()) {
                     SectionHeader(
                         icon = Icons.Rounded.Person,
                         title = pluralStringResource(R.plurals.artist_count, artists.size, artists.size),
@@ -1566,6 +1574,8 @@ private fun ArtistGridCard(
     Column(
         modifier = modifier
             .then(cardCompact.measure)
+            .gridPulse()
+            .pressBounce()
             .clip(RoundedCornerShape(com.music.bitchord.ui.components.LocalGridSpacing.current.corner))
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(com.music.bitchord.ui.components.LocalGridSpacing.current.cardPadding),
@@ -1723,7 +1733,7 @@ private fun AlbumsTab(
         val gridState = rememberLazyGridState()
         Box(modifier = Modifier.fillMaxSize()) {
             val gridCols = rememberGridColumns(GridKind.ALBUMS)
-            val gridSpacing = com.music.bitchord.ui.components.gridSpacingFor(gridCols)
+            val gridSpacing = com.music.bitchord.ui.components.rememberGridSpacing(gridCols)
             androidx.compose.runtime.CompositionLocalProvider(com.music.bitchord.ui.components.LocalGridSpacing provides gridSpacing) {
             LazyVerticalGrid(
                 columns = ScaledGridCells(gridCols),
@@ -1739,7 +1749,7 @@ private fun AlbumsTab(
                 verticalArrangement = Arrangement.spacedBy(gridSpacing.vertical),
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    LogoThenHeader(showLogo, contentPadding.calculateTopPadding() + 6.dp, horizontalInset = PAGE_GUTTER) {
+                    LogoThenHeader(showLogo, contentPadding.calculateTopPadding() + 6.dp, horizontalInset = PAGE_GUTTER, modifier = Modifier.gridPinchHeader()) {
                     SectionHeader(
                         icon = Icons.Rounded.Album,
                         title = pluralStringResource(R.plurals.album_count, albums.size, albums.size),
@@ -1848,20 +1858,43 @@ private fun AlbumGridCard(
     modifier: Modifier = Modifier,
 ) {
     val cardCompact = rememberCardCompact()
+    val titleOnArt = com.music.bitchord.ui.components.rememberGridTitleOverlay()
     Column(
         modifier = modifier
             .then(cardCompact.measure)
+            .gridPulse()
+            .pressBounce()
             .clip(RoundedCornerShape(com.music.bitchord.ui.components.LocalGridSpacing.current.corner))
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(com.music.bitchord.ui.components.LocalGridSpacing.current.cardPadding),
     ) {
         val selectionActive = com.music.bitchord.ui.components.LocalSongSelection.current?.active == true
         val artScale = com.music.bitchord.ui.components.selectionArtScale(selected)
-        val shape = RoundedCornerShape(com.music.bitchord.ui.components.selectionArtCorner(selected, com.music.bitchord.ui.components.LocalGridSpacing.current.corner))
+        val shape = com.music.bitchord.ui.components.rememberArtShape(selected = selected, playing = false, spinning = false)
+        val songCount = pluralStringResource(
+            R.plurals.song_count_plural,
+            entry.songs.size,
+            entry.songs.size,
+        )
+        val playlistLabel = stringResource(R.string.playlist)
+        val subtitle = buildString {
+            if (entry.playlist) {
+                append(playlistLabel)
+                append(" · ")
+            } else if (entry.artist.isNotBlank() && entry.artist != entry.title) {
+                append("${entry.artist} · ")
+            }
+            append(songCount)
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(1f)
+                .then(com.music.bitchord.ui.components.selectionPlatformFeel(selected)),
+        ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
                 .graphicsLayer {
                     scaleX = artScale
                     scaleY = artScale
@@ -1885,37 +1918,34 @@ private fun AlbumGridCard(
                     modifier = Modifier.fillMaxSize(),
                 )
             }
-            if (selectionActive) {
-                com.music.bitchord.ui.components.SelectionMark(
-                    selected = selected,
-                    modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+            if (titleOnArt) {
+                GridTitleOnArt(
+                    title = entry.title,
+                    subtitle = subtitle,
+                    tileWidth = cardCompact.width,
                 )
             }
         }
+            if (selectionActive || selected) {
+                com.music.bitchord.ui.components.SelectionMark(
+                    selected = selected,
+                    size = if (cardCompact.compact) 20.dp else 26.dp,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(if (cardCompact.compact) 2.dp else 4.dp),
+                )
+            }
+        }
+        if (!titleOnArt) {
         Spacer(Modifier.height(if (cardCompact.compact) 4.dp else 8.dp))
         Text(
             text = entry.title,
             style = if (cardCompact.compact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        val songCount = pluralStringResource(
-            R.plurals.song_count_plural,
-            entry.songs.size,
-            entry.songs.size,
-        )
-        val playlistLabel = stringResource(R.string.playlist)
-        if (!cardCompact.compact) Text(
-            text = buildString {
-                if (entry.playlist) {
-                    append(playlistLabel)
-                    append(" · ")
-                } else if (entry.artist.isNotBlank() && entry.artist != entry.title) {
-                    append("${entry.artist} · ")
-                }
-                append(songCount)
-            },
+        }
+        if (!cardCompact.compact && !titleOnArt) Text(
+            text = subtitle,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,

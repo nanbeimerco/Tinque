@@ -518,8 +518,20 @@ fun LibraryScreen(
     // top bar shows a back button for them.
     val inSubPage = inDrillDown || inHistoryView
     val collectionNavigationCallback = rememberUpdatedState(onCollectionNavigationChanged)
+    // Back (the system gesture, the edge swipe, the top bar's arrow) first
+    // leaves Move or the playlist's selection, and only then the page: moves
+    // are saved as they happen, so this loses nothing.
+    val inPlaylistMode = inDrillDown && (playlistReorderEnabled || playlistSelectionMode)
     val currentCollectionBackHandler = rememberUpdatedState<() -> Unit>({
-        if (inDrillDown) leaveDrillDown() else { selectedFilter = LibraryFilter.ALL }
+        when {
+            inPlaylistMode -> {
+                playlistReorderEnabled = false
+                playlistSelectionMode = false
+                selectedPlaylistSongIds = emptySet()
+            }
+            inDrillDown -> leaveDrillDown()
+            else -> selectedFilter = LibraryFilter.ALL
+        }
     })
     val collectionBackHandler = remember { { currentCollectionBackHandler.value() } }
     LaunchedEffect(inSubPage) {
@@ -533,7 +545,7 @@ fun LibraryScreen(
     }
 
     BackHandler(enabled = inDrillDown || inHistoryView) {
-        if (inDrillDown) leaveDrillDown() else selectedFilter = LibraryFilter.ALL
+        currentCollectionBackHandler.value()
     }
 
     val libraryMenu: @Composable (Song, String?, String?) -> Unit = { song, playlistId, section ->
@@ -715,13 +727,17 @@ fun LibraryScreen(
                             if (playlistReorderEnabled) {
                                 playlistReorderEnabled = false
                             } else {
-                                if (songsViewType != LibraryViewType.LIST) {
-                                    AppSettings.setLibrarySongsViewType(LibraryViewType.LIST)
-                                }
+                                // The grid reorders in place (grips on the tiles),
+                                // so Move no longer switches to the list.
                                 playlistReorderEnabled = true
                             }
                         }
                     } else null,
+                    // A drag ends the playlist's selection: the picked songs have moved.
+                    onClearSelection = {
+                        playlistSelectionMode = false
+                        selectedPlaylistSongIds = emptySet()
+                    },
                     onReorderComplete = { reorderedSongs ->
                         val playlistId = drillDownPlaylistId
                         if (playlistId != null) {
@@ -739,14 +755,15 @@ fun LibraryScreen(
                 val isRecent = key == "history:recent"
                 val historySongs = if (isRecent) recentlyPlayedSongs else mostPlayedSongs
                 // A sub-page now (back button in the top bar), so no filter
-                // header here: the list's own title says what it is.
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(top = contentPadding.calculateTopPadding()),
-                ) {
+                // header here: the list's own title says what it is. The list
+                // takes the top inset as its own content padding, so it scrolls
+                // under the translucent bar instead of stopping short of it.
+                Column(modifier = Modifier.fillMaxSize()) {
                     if (historySongs.isEmpty()) {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(top = contentPadding.calculateTopPadding()),
+                            contentAlignment = androidx.compose.ui.Alignment.Center,
+                        ) {
                             Text(
                                 text = stringResource(R.string.no_play_history),
                                 color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
@@ -774,7 +791,10 @@ fun LibraryScreen(
                             onShuffle = onShuffle,
                             showArtworkInList = showPlaylistSongArtwork,
                             onBack = { selectedFilter = LibraryFilter.ALL },
-                            contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
+                            contentPadding = PaddingValues(
+                                top = contentPadding.calculateTopPadding(),
+                                bottom = contentPadding.calculateBottomPadding(),
+                            ),
                             songDropdownMenu = { song -> libraryMenu(song, null, null) },
                             modifier = Modifier.weight(1f),
                         )
