@@ -1241,4 +1241,8 @@
     <string name="volume_handoff_subtitle">Tinque とほかのアプリで、機器ごとに音量を別々に覚えます。Tinque で再生すると Tinque の音量に、止めるとほかのアプリの音量に戻すので、ほかのアプリが Tinque の音量で鳴りません</string>
     <string name="volume_handoff_bluetooth">Bluetooth をつないだときも下げる</string>
     <string name="volume_handoff_bluetooth_subtitle">「付近のデバイス」を許可すると、Tinque を開いていないときに Bluetooth 機器をつないでも、ほかのアプリの音量に下げます</string>
+    <string name="bottom_bar_bounce">ボトムバーを弾ませる</string>
+    <string name="bottom_bar_bounce_subtitle">縮む・広がるときに、止まり際で軽く弾みます</string>
+    <string name="leveling_lift_window_down">低い方を表示</string>
+    <string name="leveling_lift_window_up">高い方を表示</string>
 </resources>

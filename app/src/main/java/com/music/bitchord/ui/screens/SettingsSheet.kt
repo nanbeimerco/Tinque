@@ -103,6 +103,7 @@ import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Science
 import androidx.compose.material.icons.rounded.Waves
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.activity.result.contract.ActivityResultContracts
@@ -2707,6 +2708,26 @@ fun SettingsScreen(
                     },
                     onClick = { AppSettings.setLockBottomBarExpanded(!lockBottomBarExpanded) },
                 )
+                if (!lockBottomBarExpanded) {
+                    val bottomBarBounce by AppSettings.bottomBarBounce.collectAsStateWithLifecycle()
+                    RowDivider()
+                    SettingsRow(
+                        icon = Icons.Rounded.Animation,
+                        title = stringResource(R.string.bottom_bar_bounce),
+                        subtitle = stringResource(R.string.bottom_bar_bounce_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = bottomBarBounce,
+                                onCheckedChange = AppSettings::setBottomBarBounce,
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setBottomBarBounce(!bottomBarBounce) },
+                    )
+                }
                 if (lockBottomBarExpanded) {
                     RowDivider()
                     SettingsRow(

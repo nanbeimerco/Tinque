@@ -1,5 +1,9 @@
 package com.music.bitchord.ui.screens.equalizer.components
 
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import android.content.Context
 import android.media.AudioManager
 import androidx.compose.foundation.layout.Arrangement
@@ -134,19 +138,65 @@ private fun LiftRow(enabled: Boolean) {
         // Past here every song is back at 0 dB: the same as no levelling.
         val allOut = songs?.maxOfOrNull { it.lufs - reference }?.toFloat()
             ?.takeIf { it in SongGainStore.LIFT_MIN_DB..SongGainStore.LIFT_MAX_DB }
-        ExpressiveGainSlider(
-            valueDb = lift,
-            minDb = SongGainStore.LIFT_MIN_DB,
-            maxDb = SongGainStore.LIFT_MAX_DB,
-            onValueChange = { lift = it; SongGainStore.setLift(device, it) },
-            activeColor = MaterialTheme.colorScheme.primary,
-            inactiveColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-            handleColor = MaterialTheme.colorScheme.primary,
-            showCutIcon = false,
-            bubble = ::formatDb,
-            tickDb = allOut,
-            fineLabel = stringResource(R.string.song_trim_fine),
-        )
+        // The slider ends where no song is cut any more (nothing changes past
+        // it); until the library is counted, at the old +15.
+        val rangeMin = SongGainStore.LIFT_MIN_DB
+        val rangeMax = (allOut?.let { kotlin.math.ceil(it * 2f) / 2f } ?: 15f)
+            .coerceIn(rangeMin + 1f, SongGainStore.LIFT_MAX_DB)
+            .coerceAtLeast(lift.coerceAtMost(SongGainStore.LIFT_MAX_DB))
+        // A window of the old 30 dB width, so a finger moves the sound as much
+        // as it always did; the arrows move it along when the range is wider.
+        val window = SongGainStore.LIFT_WINDOW_DB
+        val wide = rangeMax - rangeMin > window
+        var windowStart by remember(device) {
+            mutableStateOf(
+                if (lift <= rangeMin + window) rangeMin else (lift - window / 2f),
+            )
+        }
+        windowStart = if (wide) windowStart.coerceIn(rangeMin, rangeMax - window) else rangeMin
+        val windowEnd = if (wide) windowStart + window else rangeMax
+        if (wide) {
+            LiftOverview(
+                rangeMin = rangeMin,
+                rangeMax = rangeMax,
+                windowStart = windowStart,
+                windowEnd = windowEnd,
+                value = lift,
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (wide) {
+                androidx.compose.material3.IconButton(
+                    onClick = { windowStart = (windowStart - window / 2f).coerceAtLeast(rangeMin) },
+                    enabled = windowStart > rangeMin,
+                ) {
+                    Icon(Icons.AutoMirrored.Rounded.KeyboardArrowLeft, contentDescription = stringResource(R.string.leveling_lift_window_down))
+                }
+            }
+            Box(Modifier.weight(1f)) {
+                ExpressiveGainSlider(
+                    valueDb = lift.coerceIn(windowStart, windowEnd),
+                    minDb = windowStart,
+                    maxDb = windowEnd,
+                    onValueChange = { lift = it; SongGainStore.setLift(device, it) },
+                    activeColor = MaterialTheme.colorScheme.primary,
+                    inactiveColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    handleColor = MaterialTheme.colorScheme.primary,
+                    showCutIcon = false,
+                    bubble = ::formatDb,
+                    tickDb = allOut?.takeIf { it in windowStart..windowEnd },
+                    fineLabel = stringResource(R.string.song_trim_fine),
+                )
+            }
+            if (wide) {
+                androidx.compose.material3.IconButton(
+                    onClick = { windowStart = (windowStart + window / 2f).coerceAtMost(rangeMax - window) },
+                    enabled = windowEnd < rangeMax,
+                ) {
+                    Icon(Icons.AutoMirrored.Rounded.KeyboardArrowRight, contentDescription = stringResource(R.string.leveling_lift_window_up))
+                }
+            }
+        }
         if (allOut != null) {
             Text(
                 stringResource(R.string.leveling_all_out_mark, formatDb(allOut).removeSuffix(" dB")),
@@ -378,4 +428,41 @@ private fun ReferenceCalibrationDialog(onDismiss: () -> Unit) {
             TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
         },
     )
+}
+
+
+/**
+ * The whole lift range as a thin bar over the slider: the part the slider
+ * shows now, and where the lift sits, so a 30 dB window on a range of up to
+ * 75 dB still says where it is.
+ */
+@Composable
+private fun LiftOverview(rangeMin: Float, rangeMax: Float, windowStart: Float, windowEnd: Float, value: Float) {
+    val track = MaterialTheme.colorScheme.surfaceContainerHighest
+    val shown = MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+    val mark = MaterialTheme.colorScheme.primary
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 12.dp)) {
+        Text(formatDb(rangeMin), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        androidx.compose.foundation.Canvas(
+            Modifier
+                .weight(1f)
+                .height(10.dp)
+                .padding(horizontal = 8.dp),
+        ) {
+            val span = (rangeMax - rangeMin).coerceAtLeast(0.01f)
+            fun x(db: Float) = (db - rangeMin) / span * size.width
+            val h = 4.dp.toPx()
+            val y = (size.height - h) / 2f
+            val r = androidx.compose.ui.geometry.CornerRadius(h / 2f)
+            drawRoundRect(track, topLeft = androidx.compose.ui.geometry.Offset(0f, y), size = androidx.compose.ui.geometry.Size(size.width, h), cornerRadius = r)
+            drawRoundRect(
+                shown,
+                topLeft = androidx.compose.ui.geometry.Offset(x(windowStart), y),
+                size = androidx.compose.ui.geometry.Size(x(windowEnd) - x(windowStart), h),
+                cornerRadius = r,
+            )
+            drawCircle(mark, radius = 4.dp.toPx(), center = androidx.compose.ui.geometry.Offset(x(value.coerceIn(rangeMin, rangeMax)), size.height / 2f))
+        }
+        Text(formatDb(rangeMax), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }

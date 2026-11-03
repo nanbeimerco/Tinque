@@ -504,8 +504,11 @@ object AppSettings {
     val launcherIcon = MutableStateFlow(LauncherIcon.PINK)
     val frostedQueueManager = MutableStateFlow(true)
 
+    /** The bottom bar's fold settles with a small M3 Expressive bounce. */
+    val bottomBarBounce = MutableStateFlow(false)
+
     /** Keep a media volume for Tinque apart from the other apps' (see VolumeHandoff). */
-    val volumeHandoff = MutableStateFlow(true)
+    val volumeHandoff = MutableStateFlow(false)
 
     /** Grid titles drawn over the bottom of the artwork (square tiles), not below it. */
     val gridTitleOverlay = MutableStateFlow(false)
@@ -1146,7 +1149,8 @@ object AppSettings {
         }.getOrDefault(LauncherIcon.PINK)
         frostedQueueManager.value = prefs.getBoolean(KEY_FROSTED_QUEUE_MANAGER, true)
         gridTitleOverlay.value = prefs.getBoolean(KEY_GRID_TITLE_OVERLAY, false)
-        volumeHandoff.value = prefs.getBoolean(KEY_VOLUME_HANDOFF, true)
+        volumeHandoff.value = prefs.getBoolean(KEY_VOLUME_HANDOFF, false)
+        bottomBarBounce.value = prefs.getBoolean(KEY_BOTTOM_BAR_BOUNCE, false)
         frostedPlayerDetails.value = prefs.getBoolean(KEY_FROSTED_PLAYER_DETAILS, true)
         frostedCompactLyrics.value = prefs.getBoolean(KEY_FROSTED_COMPACT_LYRICS, true)
         // Off unless a source has been chosen: before the choice existed the
@@ -1593,6 +1597,11 @@ object AppSettings {
     fun setMiniPlayerPlayPauseOnly(value: Boolean) {
         miniPlayerPlayPauseOnly.value = value
         prefs.edit().putBoolean(KEY_MINI_PLAYER_PLAY_PAUSE_ONLY, value).apply()
+    }
+
+    fun setBottomBarBounce(value: Boolean) {
+        bottomBarBounce.value = value
+        prefs.edit().putBoolean(KEY_BOTTOM_BAR_BOUNCE, value).apply()
     }
 
     fun setVolumeHandoff(value: Boolean) {
@@ -3207,6 +3216,7 @@ object AppSettings {
     private const val KEY_FROSTED_QUEUE_MANAGER = "frosted_queue_manager"
     private const val KEY_GRID_TITLE_OVERLAY = "grid_title_overlay"
     private const val KEY_VOLUME_HANDOFF = "volume_handoff"
+    private const val KEY_BOTTOM_BAR_BOUNCE = "bottom_bar_bounce"
     private const val KEY_FROSTED_PLAYER_DETAILS = "frosted_player_details"
     private const val KEY_FROSTED_COMPACT_LYRICS = "frosted_compact_lyrics"
     private const val KEY_AUTOPLAY = "autoplay"

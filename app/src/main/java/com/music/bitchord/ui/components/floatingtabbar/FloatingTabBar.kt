@@ -233,6 +233,8 @@ fun FloatingTabBar(
 ) {
     val scope = remember(contentKey) { FloatingTabBarScopeImpl().apply { content() } }
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val bounce by AppSettings.bottomBarBounce.collectAsStateWithLifecycle()
+    val currentBounce by rememberUpdatedState(bounce)
 
     val fold = remember { Animatable(if (scrollConnection.isInline) 1f else 0f) }
     val morph = remember { BarMorph { fold.value } }
@@ -248,7 +250,7 @@ fun FloatingTabBar(
                 // Each launch takes over from the last: [Animatable.animateTo]
                 // starts from the current value and velocity, so a fold
                 // turned around midway heads back without a jolt.
-                animationScope.launch { fold.animateTo(target, FoldSpring) }
+                animationScope.launch { fold.animateTo(target, if (currentBounce) BounceSpring else FoldSpring) }
             }
         }
     }
@@ -354,6 +356,15 @@ class BarMorph internal constructor(
     /** The whole fold: 0 = expanded, 1 = inline. */
     val fold: Float get() = foldValue().coerceIn(0f, 1f)
 
+    /**
+     * How far a bouncy fold has overshot an end (above 0 past inline, below 0
+     * past expanded). Kept out of every staged position above, whose easing
+     * has come to rest by the ends — extrapolating them made the tab circle
+     * shudder as it settled. Shown instead as a scale of each finished
+     * surface; see [bounceScale].
+     */
+    val overshoot: Float get() = foldValue() - fold
+
     /** The tab group and the standalone tab shrinking to circles. */
     val tabs: Float get() = smoothStep(segment(fold, 0f, TABS_END))
 
@@ -382,6 +393,15 @@ class BarMorph internal constructor(
         internal set
 }
 
+/**
+ * A surface's scale for [BarMorph.overshoot]: a little smaller past inline,
+ * a little larger past expanded, about its bottom edge, which stays put.
+ */
+private fun bounceScale(overshoot: Float): Float =
+    if (overshoot > 0f) 1f - overshoot * 0.55f else 1f - overshoot * 0.3f
+
+private val BounceOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 1f)
+
 private fun segment(value: Float, start: Float, end: Float): Float =
     ((value - start) / (end - start)).coerceIn(0f, 1f)
 
@@ -407,6 +427,13 @@ private const val ACCESSORY_DROP_START = 0.1f
 private val FoldSpring = spring(
     dampingRatio = 0.85f,
     stiffness = 438.6f,
+    visibilityThreshold = 0.0005f,
+)
+
+/** Settings › bounce: the same fold, on a spring that overshoots and settles. */
+private val BounceSpring = spring(
+    dampingRatio = 0.58f,
+    stiffness = 520f,
     visibilityThreshold = 0.0005f,
 )
 
@@ -534,10 +561,18 @@ private fun MorphingBar(
 
         val tabsH = maxOf(groupP?.height ?: 0, standaloneP?.height ?: 0)
         val height = maxOf(tabsH, if (accessoryP != null) (accessoryLift + accessoryH).roundToInt() else 0)
+        // A bounce past either end of the fold scales each finished surface
+        // (read in the layer, so it costs no relayout).
+        val bounceLayer: androidx.compose.ui.graphics.GraphicsLayerScope.() -> Unit = {
+            val s = bounceScale(morph.overshoot)
+            scaleX = s
+            scaleY = s
+            transformOrigin = BounceOrigin
+        }
         layout(width, height) {
-            groupP?.placeRelative(groupX.roundToInt(), height - groupP.height)
-            standaloneP?.placeRelative(standaloneX.roundToInt(), height - standaloneP.height)
-            accessoryP?.placeRelative(accessoryX.roundToInt(), (height - accessoryLift - accessoryH).roundToInt())
+            groupP?.placeRelativeWithLayer(groupX.roundToInt(), height - groupP.height, layerBlock = bounceLayer)
+            standaloneP?.placeRelativeWithLayer(standaloneX.roundToInt(), height - standaloneP.height, layerBlock = bounceLayer)
+            accessoryP?.placeRelativeWithLayer(accessoryX.roundToInt(), (height - accessoryLift - accessoryH).roundToInt(), layerBlock = bounceLayer)
         }
     }
 }

@@ -32,7 +32,15 @@ object SongGainStore {
     const val TRIM_MIN_DB = -12f
 
     /** How far the levelling's overall level can go, either way. */
-    const val LIFT_MAX_DB = 15f
+    /**
+     * The hardest limit on the lift: as far as calibration can cut (60 dB), so
+     * any reference can be lifted back to no levelling. The slider itself
+     * stops sooner, where no song is cut any more (see LevelingControls).
+     */
+    const val LIFT_MAX_DB = 60f
+
+    /** How much of the lift range the slider shows at once (the old full range). */
+    const val LIFT_WINDOW_DB = 30f
     const val LIFT_MIN_DB = -15f
 
     fun init(context: Context) {
