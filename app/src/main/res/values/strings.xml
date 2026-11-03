@@ -1329,4 +1329,8 @@
     <string name="grid_titles_on_art">On the artwork</string>
     <string name="reorder_bar_undo">Undo</string>
     <string name="reorder_bar_done">Done</string>
+    <string name="volume_handoff">Separate volume for Tinque</string>
+    <string name="volume_handoff_subtitle">Keeps one media volume for Tinque and another for other apps, per device. Tinque\'s comes back when it starts playing, the others\' when it stops, so other apps never start at Tinque\'s volume.</string>
+    <string name="volume_handoff_bluetooth">Also when Bluetooth connects</string>
+    <string name="volume_handoff_bluetooth_subtitle">Allow nearby devices so a Bluetooth device that connects while Tinque is closed is turned down to the other apps\' volume.</string>
 </resources>

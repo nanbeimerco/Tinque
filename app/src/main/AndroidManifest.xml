@@ -7,6 +7,11 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- To hear a Bluetooth audio device connect while Tinque is closed, and turn
+         it down if it came back at Tinque's volume (see VolumeHandoff). Optional:
+         asked for from Settings; without it this happens only while Tinque runs. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Saving a track to Music outlives the screen it was asked from. -->
@@ -339,6 +344,16 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_media_mini" />
+        </receiver>
+
+        <!-- Bluetooth audio connecting, even with Tinque closed: see VolumeHandoff. -->
+        <receiver
+            android:name=".playback.VolumeHandoffReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.bluetooth.a2dp.profile.action.CONNECTION_STATE_CHANGED" />
+                <action android:name="android.bluetooth.device.action.ACL_CONNECTED" />
+            </intent-filter>
         </receiver>
 
         <!-- The transport buttons. Reached only by this app's own PendingIntents. -->

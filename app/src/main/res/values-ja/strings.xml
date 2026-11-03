@@ -1237,4 +1237,8 @@
     <string name="grid_titles_on_art">ジャケットに重ねる</string>
     <string name="reorder_bar_undo">元に戻す</string>
     <string name="reorder_bar_done">完了</string>
+    <string name="volume_handoff">Tinque の音量を分ける</string>
+    <string name="volume_handoff_subtitle">Tinque とほかのアプリで、機器ごとに音量を別々に覚えます。Tinque で再生すると Tinque の音量に、止めるとほかのアプリの音量に戻すので、ほかのアプリが Tinque の音量で鳴りません</string>
+    <string name="volume_handoff_bluetooth">Bluetooth をつないだときも下げる</string>
+    <string name="volume_handoff_bluetooth_subtitle">「付近のデバイス」を許可すると、Tinque を開いていないときに Bluetooth 機器をつないでも、ほかのアプリの音量に下げます</string>
 </resources>

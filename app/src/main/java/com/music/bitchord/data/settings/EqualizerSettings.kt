@@ -245,6 +245,18 @@ object EqualizerSettings {
         activateOutputProfile(activeKey, activeLabel)
     }
 
+    /** The output media is routed to now, if it can be told. */
+    fun currentOutputDevice(context: Context): AudioDeviceInfo? {
+        val manager = context.getSystemService(AudioManager::class.java) ?: return null
+        return runCatching {
+            resolveActiveOutputDevice(manager, manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS))
+        }.getOrNull()
+    }
+
+    /** [deviceKeyFor] the output media is routed to now ("default" if unknown). */
+    fun currentOutputKey(context: Context): String =
+        currentOutputDevice(context)?.let(::deviceKeyFor) ?: "default"
+
     fun deviceKeyFor(device: AudioDeviceInfo): String =
         "out-${(device.type.toString() + ":" + device.productName.toString().lowercase()).hashCode().toUInt().toString(16)}"
 

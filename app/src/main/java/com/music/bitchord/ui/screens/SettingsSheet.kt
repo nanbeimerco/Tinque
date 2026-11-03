@@ -103,6 +103,8 @@ import androidx.compose.material.icons.rounded.VolumeOff
 import androidx.compose.material.icons.rounded.Science
 import androidx.compose.material.icons.rounded.Waves
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.material.icons.rounded.Bluetooth
+import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
@@ -3650,6 +3652,8 @@ fun SettingsScreen(
                 onClick = { AppSettings.setSwipeToPlayNext(!swipeToPlayNext) },
             )
             RowDivider()
+            VolumeHandoffRows()
+            RowDivider()
             SettingsRow(
                 icon = com.music.bitchord.ui.icons.BitChordIcons.Infinity,
                 title = stringResource(R.string.autoplay),
@@ -4931,3 +4935,43 @@ private fun SegmentedControl(
 
 /** The old lyrics page's transport settings: off since the page went away. */
 private const val LYRICS_PAGE_TRANSPORT_SETTINGS = false
+
+
+/**
+ * A media volume for Tinque apart from the other apps' (VolumeHandoff), and,
+ * on Android 12+, the "nearby devices" permission that lets it turn a
+ * Bluetooth device back down when it connects with Tinque closed.
+ */
+@Composable
+private fun VolumeHandoffRows() {
+    val context = LocalContext.current
+    val enabled by AppSettings.volumeHandoff.collectAsStateWithLifecycle()
+    var canHear by remember { mutableStateOf(com.music.bitchord.playback.VolumeHandoff.canHearConnections(context)) }
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        canHear = granted
+    }
+    SettingsRow(
+        icon = Icons.Rounded.VolumeUp,
+        title = stringResource(R.string.volume_handoff),
+        subtitle = stringResource(R.string.volume_handoff_subtitle),
+        trailing = {
+            Switch(
+                checked = enabled,
+                onCheckedChange = AppSettings::setVolumeHandoff,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        },
+        onClick = { AppSettings.setVolumeHandoff(!enabled) },
+    )
+    if (enabled && !canHear && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+        SettingsRow(
+            icon = Icons.Rounded.Bluetooth,
+            title = stringResource(R.string.volume_handoff_bluetooth),
+            subtitle = stringResource(R.string.volume_handoff_bluetooth_subtitle),
+            onClick = { permission.launch(android.Manifest.permission.BLUETOOTH_CONNECT) },
+        )
+    }
+}

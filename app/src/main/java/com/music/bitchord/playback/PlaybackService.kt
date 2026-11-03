@@ -420,8 +420,21 @@ class PlaybackService : MediaLibraryService() {
             !extras?.getString(EXTRA_LOCAL_PATH).isNullOrBlank() ||
             scheme == "content" || scheme == "file"
     }
+    /** Headphones out / Bluetooth leaving: hand the volume back before the route moves. */
+    private val volumeNoisyReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: android.content.Intent) {
+            if (intent.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) VolumeHandoff.onBecomingNoisy(this@PlaybackService)
+        }
+    }
+
     private val outputDeviceCallback = object : AudioDeviceCallback() {
-        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) = requestOutputReconfiguration()
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) {
+            requestOutputReconfiguration()
+            // A device that comes back at Tinque's (loud) volume while Tinque
+            // is not playing goes down to the other apps'. After a moment, for
+            // the route to move to it.
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ VolumeHandoff.onOutputConnected(this@PlaybackService) }, 1_200L)
+        }
         override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) = requestOutputReconfiguration()
     }
     private val systemVolumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
@@ -798,6 +811,10 @@ class PlaybackService : MediaLibraryService() {
          */
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             handleAudioFocusPlaybackChange(playWhenReady)
+            // Tinque's own media volume while it plays, the other apps' when it stops.
+            var anyPlaying = false
+            eachPlayer { if (it.playWhenReady && it.playbackSuppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_NONE) anyPlaying = true }
+            VolumeHandoff.update(this@PlaybackService, anyPlaying)
             publishWidgetState(playing = playWhenReady)
             QuickPlayTileState.setActive(this@PlaybackService, playWhenReady)
             if (playWhenReady) player?.let(castPlayback::onLocalStartedPlaying)
@@ -1535,6 +1552,12 @@ class PlaybackService : MediaLibraryService() {
         player = exoPlayer
         spare = sparePlayer
         audioManager?.registerAudioDeviceCallback(outputDeviceCallback, null)
+        androidx.core.content.ContextCompat.registerReceiver(
+            this,
+            volumeNoisyReceiver,
+            android.content.IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         applyOutputRoute()
 
         AppSettings.audioSessionId.value = exoPlayer.audioSessionId
@@ -5309,6 +5332,8 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
+        VolumeHandoff.update(this, false)
+        runCatching { unregisterReceiver(volumeNoisyReceiver) }
         TrackGain.onGainNeeded = null
         externalAudioPopupWindow?.dismiss()
         externalAudioPopupWindow = null
