@@ -99,6 +99,7 @@ import com.music.bitchord.data.innertube.PlaybackTracker
 import com.music.bitchord.data.innertube.StreamResolver
 import com.music.bitchord.data.stats.ListeningRecorder
 import com.music.bitchord.feature.localsongactions.data.LocalPlayStatsStore
+import com.music.bitchord.feature.localmusic.data.LocalFavoritesStore
 import com.music.bitchord.data.model.LikeStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
@@ -1331,8 +1332,14 @@ class PlaybackService : MediaLibraryService() {
                     mediaSession?.setCustomLayout(notificationButtons())
                 }
         }
+        // The like button follows a like from anywhere — YouTube Music ratings,
+        // Tinque's own favourites (the player, a list) — and the heart-or-star setting.
         scope.launch {
-            LikeState.overrides.collectLatest {
+            kotlinx.coroutines.flow.combine(
+                LikeState.overrides,
+                LocalFavoritesStore.favoriteIds,
+                AppSettings.favoriteUsesStar,
+            ) { _, _, _ -> }.collectLatest {
                 mediaSession?.setCustomLayout(notificationButtons())
             }
         }
@@ -1734,11 +1741,17 @@ class PlaybackService : MediaLibraryService() {
      * this service, it just isn't offered as a notification button.
      */
     private fun notificationButtons(): List<CommandButton> {
+        // Liked the way the player decides it: a song on the device by Tinque's
+        // own favourites, a streamed one by its YouTube Music rating. Drawn as
+        // a heart or a star, as the player's is (Settings).
+        val liked = player?.currentMediaItem?.let(::isLikedHere) == true
+        val star = AppSettings.favoriteUsesStar.value
         val favorite = CommandButton.Builder(
-            if (LikeState.overrides.value[player?.currentMediaItem?.mediaId] == LikeStatus.LIKE) {
-                CommandButton.ICON_HEART_FILLED
-            } else {
-                CommandButton.ICON_HEART_UNFILLED
+            when {
+                star && liked -> CommandButton.ICON_STAR_FILLED
+                star -> CommandButton.ICON_STAR_UNFILLED
+                liked -> CommandButton.ICON_HEART_FILLED
+                else -> CommandButton.ICON_HEART_UNFILLED
             },
         )
             .setSessionCommand(favoriteCommand)
@@ -1897,7 +1910,39 @@ class PlaybackService : MediaLibraryService() {
         exoPlayer.addMediaItems(restored)
     }
 
-    private fun toggleFavoriteFromNotification(videoId: String) {
+    private fun isLikedHere(item: MediaItem): Boolean {
+        val localUri = item.mediaMetadata.extras?.getString(EXTRA_LOCAL_URI)?.takeIf(String::isNotBlank)
+        return if (localUri != null) {
+            val favourites = LocalFavoritesStore.favoriteIds.value
+            localUri in favourites || item.mediaId in favourites
+        } else {
+            LikeState.overrides.value[item.mediaId] == LikeStatus.LIKE
+        }
+    }
+
+    /**
+     * The notification's like, doing what the player's does: a song on the
+     * device goes in or out of Tinque's own favourites (it has no YouTube
+     * Music rating to set — sending one failed and undid the tap), a streamed
+     * one is rated on YouTube Music.
+     */
+    private fun toggleFavoriteFromNotification(item: MediaItem) {
+        val localUri = item.mediaMetadata.extras?.getString(EXTRA_LOCAL_URI)?.takeIf(String::isNotBlank)
+        if (localUri != null) {
+            val favourites = LocalFavoritesStore.favoriteIds.value
+            if (localUri !in favourites && item.mediaId in favourites) {
+                // Liked under its old key: unliking takes that one away.
+                LocalFavoritesStore.removeFavorite(item.mediaId)
+            } else {
+                LocalFavoritesStore.toggleFavorite(localUri)
+            }
+            mediaSession?.setCustomLayout(notificationButtons())
+            return
+        }
+        toggleFavoriteOnYouTube(item.mediaId)
+    }
+
+    private fun toggleFavoriteOnYouTube(videoId: String) {
         favoriteActionJob?.cancel()
         val previous = LikeState.overrides.value[videoId] ?: LikeStatus.INDIFFERENT
         val target = if (previous == LikeStatus.LIKE) {
@@ -5864,7 +5909,7 @@ class PlaybackService : MediaLibraryService() {
                         ?: return Futures.immediateFuture(SessionResult(SessionError.ERROR_NOT_SUPPORTED))
                     startExternalAudioPreview(uri)
                 }
-                ACTION_TOGGLE_FAVORITE -> session.player.currentMediaItem?.mediaId?.let {
+                ACTION_TOGGLE_FAVORITE -> session.player.currentMediaItem?.let {
                     toggleFavoriteFromNotification(it)
                 }
                 else -> return Futures.immediateFuture(

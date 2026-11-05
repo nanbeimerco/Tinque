@@ -1,0 +1,10 @@
+{
+  "id": "netease",
+  "name": "NetEase (網易雲音楽)",
+  "version": "2.0.0",
+  "description": "YRC音節同期・LRC行同期・対訳歌詞対応",
+  "author": "Tinque / LyricsForTryptify",
+  "entrypoint": "index.js",
+  "wordSynced": true,
+  "defaultPriority": 5
+}

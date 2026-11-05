@@ -1,0 +1,10 @@
+{
+  "id": "better_lyrics",
+  "name": "BetterLyrics",
+  "version": "2.0.0",
+  "description": "BetterLyrics & Portato QQ TTML音節同期歌詞",
+  "author": "Tinque / LyricsForTryptify",
+  "entrypoint": "index.js",
+  "wordSynced": true,
+  "defaultPriority": 3
+}

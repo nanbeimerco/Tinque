@@ -58,6 +58,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import com.music.bitchord.ui.haptics.Haptic
+import kotlinx.coroutines.launch
 import com.music.bitchord.ui.haptics.rememberHaptics
 
 /**
@@ -74,6 +75,15 @@ class GlassMenuController {
     internal var request by mutableStateOf<GlassMenuRequest?>(null)
         private set
     private var nextId = 0L
+
+    /**
+     * Whether a menu is on screen, closing ones included: true from the open
+     * until the close animation has finished. A window that records its page
+     * for the glass only while a menu is up keeps recording until then, or
+     * the closing menu would lose its glass and flash as an opaque fill.
+     */
+    var visible by mutableStateOf(false)
+        internal set
 
     /** The window the host draws in; a caller in another window cannot use it. */
     internal var hostView: android.view.View? = null
@@ -137,17 +147,38 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
     androidx.compose.runtime.SideEffect { controller.hostView = view }
     val request = controller.request
     var shown by remember { mutableStateOf<GlassMenuRequest?>(null) }
-    val progress = remember { Animatable(0f) }
+    // The menu grows out of its button: from a point on the button's centre,
+    // across first and then down, settling with a slight bounce. It closes the
+    // same way backwards (down first, then across) into that point, without one.
+    val growX = remember { Animatable(0f) }
+    val growY = remember { Animatable(0f) }
+    val fade = remember { Animatable(0f) }
     var hostOrigin by remember { mutableStateOf(Offset.Zero) }
 
     LaunchedEffect(request) {
         if (request != null) {
-            if (shown?.id != request.id) progress.snapTo(0f)
+            if (shown?.id != request.id) {
+                growX.snapTo(0f)
+                growY.snapTo(0f)
+                fade.snapTo(0f)
+            }
             shown = request
-            progress.animateTo(1f, spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow))
+            controller.visible = true
+            kotlinx.coroutines.coroutineScope {
+                // A fine settling threshold: the default (1%) ends the spring by
+                // jumping the last 1% of the menu's size, a visible snap.
+                launch { growX.animateTo(1f, spring(dampingRatio = 0.78f, stiffness = 700f, visibilityThreshold = 0.0005f)) }
+                launch { growY.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = 500f, visibilityThreshold = 0.0005f)) }
+                launch { fade.animateTo(1f, spring(dampingRatio = 1f, stiffness = 900f, visibilityThreshold = 0.0005f)) }
+            }
         } else if (shown != null) {
-            progress.animateTo(0f, tween(130))
+            kotlinx.coroutines.coroutineScope {
+                launch { growY.animateTo(0f, tween(150, easing = androidx.compose.animation.core.FastOutLinearInEasing)) }
+                launch { growX.animateTo(0f, tween(190, easing = androidx.compose.animation.core.FastOutLinearInEasing)) }
+                launch { fade.animateTo(0f, tween(190, easing = androidx.compose.animation.core.LinearEasing)) }
+            }
             shown = null
+            controller.visible = false
         }
     }
     BackHandler(enabled = request != null) { controller.dismiss() }
@@ -190,18 +221,21 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
                     val fitsBelow = below + h <= constraints.maxHeight - margin
                     val y = (if (menu.wide) { if (above >= top) above else below } else if (fitsBelow) below else above)
                         .coerceIn(top, (constraints.maxHeight - h - margin).coerceAtLeast(top))
+                    // The button's centre, even where it lies outside the menu:
+                    // the menu grows out of the button itself.
                     pivot = TransformOrigin(
-                        ((anchor.center.x - x) / w.coerceAtLeast(1)).coerceIn(0f, 1f),
-                        ((anchor.center.y - y) / h.coerceAtLeast(1)).coerceIn(0f, 1f),
+                        (anchor.center.x - x) / w.coerceAtLeast(1),
+                        (anchor.center.y - y) / h.coerceAtLeast(1),
                     )
                     layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(x, y) }
                 }
                 .graphicsLayer {
-                    val p = progress.value
-                    alpha = p.coerceIn(0f, 1f)
-                    val scale = 0.82f + 0.18f * p
-                    scaleX = scale
-                    scaleY = scale
+                    // Gone by the time it is flat, so no hairline of glass edge
+                    // is left behind while it finishes narrowing.
+                    alpha = (fade.value * 3f).coerceIn(0f, 1f) *
+                        (minOf(growX.value, growY.value) * 6f).coerceIn(0f, 1f)
+                    scaleX = growX.value.coerceAtLeast(0.001f)
+                    scaleY = growY.value.coerceAtLeast(0.001f)
                     transformOrigin = pivot
                 },
         ) {
@@ -209,6 +243,11 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
                 CompositionLocalProvider(LocalGlassMenuDismiss provides { controller.dismiss(menu.id) }) {
                     Column(
                         modifier = Modifier
+                            // The rows come in once the glass is most of the way
+                            // out, and are the first thing to go when it closes.
+                            .graphicsLayer {
+                                alpha = ((minOf(growX.value, growY.value) - 0.5f) / 0.4f).coerceIn(0f, 1f)
+                            }
                             .heightIn(max = 520.dp)
                             .nestedScroll(KeepMenuScroll)
                             .verticalScroll(rememberScrollState())

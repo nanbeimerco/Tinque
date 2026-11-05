@@ -1,0 +1,10 @@
+{
+  "id": "petitlyrics",
+  "name": "プチリリ (PetitLyrics)",
+  "version": "2.0.0",
+  "description": "邦楽に強いプチリリ同期・テキスト歌詞",
+  "author": "Tinque",
+  "entrypoint": "index.js",
+  "wordSynced": true,
+  "defaultPriority": 8
+}

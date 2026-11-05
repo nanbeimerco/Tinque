@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.localsongactions.ui
 
+import com.music.bitchord.R
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -22,11 +23,11 @@ object LocalSongActionsHelper {
                 }
                 putExtra(Intent.EXTRA_TEXT, "${song.title} - ${song.artist}")
             }
-            val chooser = Intent.createChooser(intent, "Share")
+            val chooser = Intent.createChooser(intent, context.getString(R.string.l10n_share))
             chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(chooser)
         } catch (_: Throwable) {
-            Toast.makeText(context, "Could not share file", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.l10n_share_failed), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -39,7 +40,7 @@ object LocalSongActionsHelper {
                     ?.takeIf { it.scheme == "content" }
             }.distinct()
             if (uris.isEmpty()) {
-                Toast.makeText(context, "No shareable audio files", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, context.getString(R.string.l10n_nothing_to_share), Toast.LENGTH_SHORT).show()
                 return
             }
             val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
@@ -54,9 +55,9 @@ object LocalSongActionsHelper {
                     uris.drop(1).forEach { clip.addItem(android.content.ClipData.Item(it)) }
                 }
             }
-            context.startActivity(Intent.createChooser(intent, "Share songs").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            context.startActivity(Intent.createChooser(intent, context.getString(R.string.l10n_share_songs)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (_: Throwable) {
-            Toast.makeText(context, "Could not share files", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.l10n_share_failed_many), Toast.LENGTH_SHORT).show()
         }
     }
 }

@@ -507,6 +507,21 @@ object AppSettings {
     /** The bottom bar's fold settles with a small M3 Expressive bounce. */
     val bottomBarBounce = MutableStateFlow(false)
 
+    /** The player's skip and play/pause icons move when tapped (see TransportMotion). */
+    val transportAnimation = MutableStateFlow(true)
+
+    /** How closely automatic lyric lookups must match (a [com.music.bitchord.data.lyrics.LyricsStrictness] name). */
+    val lyricsAutoStrictness = MutableStateFlow("STANDARD")
+
+    /** Saving or embedding word-timed lyrics: as enhanced LRC (on) or line-timed LRC (off). */
+    val lyricsSaveWordSync = MutableStateFlow(true)
+
+    /** Keep a lyric's translation lines when saving or embedding it. */
+    val lyricsKeepTranslation = MutableStateFlow(false)
+
+    /** Keep a lyric's furigana when saving or embedding it. */
+    val lyricsKeepFurigana = MutableStateFlow(false)
+
     /** Keep a media volume for Tinque apart from the other apps' (see VolumeHandoff). */
     val volumeHandoff = MutableStateFlow(false)
 
@@ -1151,6 +1166,11 @@ object AppSettings {
         gridTitleOverlay.value = prefs.getBoolean(KEY_GRID_TITLE_OVERLAY, false)
         volumeHandoff.value = prefs.getBoolean(KEY_VOLUME_HANDOFF, false)
         bottomBarBounce.value = prefs.getBoolean(KEY_BOTTOM_BAR_BOUNCE, false)
+        transportAnimation.value = prefs.getBoolean(KEY_TRANSPORT_ANIMATION, true)
+        lyricsAutoStrictness.value = prefs.getString(KEY_LYRICS_AUTO_STRICTNESS, "STANDARD") ?: "STANDARD"
+        lyricsSaveWordSync.value = prefs.getBoolean(KEY_LYRICS_SAVE_WORD_SYNC, true)
+        lyricsKeepTranslation.value = prefs.getBoolean(KEY_LYRICS_KEEP_TRANSLATION, false)
+        lyricsKeepFurigana.value = prefs.getBoolean(KEY_LYRICS_KEEP_FURIGANA, false)
         frostedPlayerDetails.value = prefs.getBoolean(KEY_FROSTED_PLAYER_DETAILS, true)
         frostedCompactLyrics.value = prefs.getBoolean(KEY_FROSTED_COMPACT_LYRICS, true)
         // Off unless a source has been chosen: before the choice existed the
@@ -1597,6 +1617,31 @@ object AppSettings {
     fun setMiniPlayerPlayPauseOnly(value: Boolean) {
         miniPlayerPlayPauseOnly.value = value
         prefs.edit().putBoolean(KEY_MINI_PLAYER_PLAY_PAUSE_ONLY, value).apply()
+    }
+
+    fun setLyricsAutoStrictness(value: String) {
+        lyricsAutoStrictness.value = value
+        prefs.edit().putString(KEY_LYRICS_AUTO_STRICTNESS, value).apply()
+    }
+
+    fun setLyricsSaveWordSync(value: Boolean) {
+        lyricsSaveWordSync.value = value
+        prefs.edit().putBoolean(KEY_LYRICS_SAVE_WORD_SYNC, value).apply()
+    }
+
+    fun setLyricsKeepTranslation(value: Boolean) {
+        lyricsKeepTranslation.value = value
+        prefs.edit().putBoolean(KEY_LYRICS_KEEP_TRANSLATION, value).apply()
+    }
+
+    fun setLyricsKeepFurigana(value: Boolean) {
+        lyricsKeepFurigana.value = value
+        prefs.edit().putBoolean(KEY_LYRICS_KEEP_FURIGANA, value).apply()
+    }
+
+    fun setTransportAnimation(value: Boolean) {
+        transportAnimation.value = value
+        prefs.edit().putBoolean(KEY_TRANSPORT_ANIMATION, value).apply()
     }
 
     fun setBottomBarBounce(value: Boolean) {
@@ -2467,10 +2512,24 @@ object AppSettings {
      * quietly, and the default when nothing has been saved is "all of them".
      */
     private fun readLyricsSources(allSources: List<LyricsSource>): Set<LyricsSource> {
+        val allIds = allSources.map { it.id }.toSet()
         val stored = prefs.getString(KEY_LYRICS_SOURCES, null)
-            ?: return allSources.toSet()
+        if (stored == null) {
+            prefs.edit().putString("known_lyrics_sources", allIds.joinToString(",")).apply()
+            return allSources.toSet()
+        }
         val ids = stored.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-        val filtered = allSources.filter { it.id in ids }.toSet()
+        val knownRaw = prefs.getString("known_lyrics_sources", null)
+        val knownIds = knownRaw?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet() ?: ids
+        val newlyAddedIds = allIds - knownIds
+        val effectiveIds = ids + newlyAddedIds
+        if (newlyAddedIds.isNotEmpty() || knownRaw == null) {
+            prefs.edit()
+                .putString(KEY_LYRICS_SOURCES, allSources.filter { it.id in effectiveIds }.joinToString(",") { it.id })
+                .putString("known_lyrics_sources", (knownIds + allIds).joinToString(","))
+                .apply()
+        }
+        val filtered = allSources.filter { it.id in effectiveIds }.toSet()
         return filtered.ifEmpty { allSources.toSet() }
     }
 
@@ -3217,6 +3276,11 @@ object AppSettings {
     private const val KEY_GRID_TITLE_OVERLAY = "grid_title_overlay"
     private const val KEY_VOLUME_HANDOFF = "volume_handoff"
     private const val KEY_BOTTOM_BAR_BOUNCE = "bottom_bar_bounce"
+    private const val KEY_TRANSPORT_ANIMATION = "transport_animation"
+    private const val KEY_LYRICS_AUTO_STRICTNESS = "lyrics_auto_strictness"
+    private const val KEY_LYRICS_SAVE_WORD_SYNC = "lyrics_save_word_sync"
+    private const val KEY_LYRICS_KEEP_TRANSLATION = "lyrics_keep_translation"
+    private const val KEY_LYRICS_KEEP_FURIGANA = "lyrics_keep_furigana"
     private const val KEY_FROSTED_PLAYER_DETAILS = "frosted_player_details"
     private const val KEY_FROSTED_COMPACT_LYRICS = "frosted_compact_lyrics"
     private const val KEY_AUTOPLAY = "autoplay"

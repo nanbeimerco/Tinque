@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.tageditor.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import com.music.bitchord.ui.components.GlassDropdownMenu
 import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
@@ -35,7 +37,7 @@ fun TagEditorTopBar(
     TopAppBar(
         title = {
             Text(
-                text = "Tag editor",
+                text = stringResource(R.string.l10n_tag_editor),
                 style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
             )
         },
@@ -43,7 +45,7 @@ fun TagEditorTopBar(
             IconButton(onClick = onBackClick) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.l10n_back),
                 )
             }
         },
@@ -52,7 +54,7 @@ fun TagEditorTopBar(
                 IconButton(onClick = { menuOpen = true }) {
                     Icon(
                         imageVector = Icons.Rounded.MoreVert,
-                        contentDescription = "More options",
+                        contentDescription = stringResource(R.string.l10n_more_options),
                     )
                 }
 
@@ -61,14 +63,14 @@ fun TagEditorTopBar(
                     onDismissRequest = { menuOpen = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text("Search online image") },
+                        text = { Text(stringResource(R.string.l10n_search_image)) },
                         onClick = {
                             menuOpen = false
                             onSearchOnlineImage()
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("Restore original tags") },
+                        text = { Text(stringResource(R.string.l10n_restore_tags)) },
                         onClick = {
                             menuOpen = false
                             onResetTags()

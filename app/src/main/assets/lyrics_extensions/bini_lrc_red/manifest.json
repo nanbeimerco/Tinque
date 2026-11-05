@@ -1,0 +1,10 @@
+{
+  "id": "bini_lrc_red",
+  "name": "BiniLyrics & lrc.red",
+  "version": "2.0.0",
+  "description": "ISRC・TTMLベースの音節同期・行同期歌詞",
+  "author": "Tinque / LyricsForTryptify",
+  "entrypoint": "index.js",
+  "wordSynced": true,
+  "defaultPriority": 4
+}

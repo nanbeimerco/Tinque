@@ -202,8 +202,9 @@ object LocalLyricsManager {
         album: String? = null,
         durationMs: Long = 0L,
         providers: Set<LyricsSource> = AppSettings.lyricsSources.value,
+        onPartialResults: ((List<LyricsSearchResultItem>) -> Unit)? = null,
     ): List<LyricsSearchResultItem> = withContext(Dispatchers.IO) {
-        val results = mutableListOf<LyricsSearchResultItem>()
+        val results = java.util.Collections.synchronizedList(mutableListOf<LyricsSearchResultItem>())
         val primaryArtist = cleanArtistForSearch(artist)
         val normalizedArtist = if (artist.contains(";")) artist.replace(";", ",").trim() else artist.trim()
 
@@ -211,13 +212,44 @@ object LocalLyricsManager {
             val jobs = mutableListOf<Deferred<List<LyricsSearchResultItem>>>()
 
             for (source in providers) {
-                if (source.id == "lrclib") {
-                    jobs += async {
+                jobs += async {
+                    val items = if (source.id == "lrclib") {
                         searchLrcLib(title, artist, album)
-                    }
-                } else {
-                    jobs += async {
-                        // Try searchLyrics first (multi-result) for extensions that support it
+                    } else if (com.music.bitchord.data.lyrics.providers.NativeLyricsProviders.isNativeProvider(source.id)) {
+                        val nativeCandidates = runCatching {
+                            com.music.bitchord.data.lyrics.providers.NativeLyricsProviders.searchLyrics(
+                                providerId = source.id,
+                                title = title,
+                                artist = primaryArtist.ifBlank { normalizedArtist },
+                                album = album,
+                                durationMs = durationMs,
+                            )
+                        }.getOrDefault(emptyList())
+
+                        nativeCandidates.mapNotNull { cand ->
+                            val raw = cand.bestRaw ?: return@mapNotNull null
+                            val parsedLines = com.music.bitchord.data.lyrics.ProviderLyrics.parse(raw)
+                            val syncedText = if (parsedLines != null && parsedLines.any { it.timeMs > 0L }) {
+                                parsedLines.toLrc()
+                            } else {
+                                cand.syncedLyrics
+                            }
+                            val plainText = parsedLines?.joinToString("\n") { it.text }?.takeIf { it.isNotBlank() }
+                                ?: cand.plainLyrics
+                            if (syncedText.isNullOrBlank() && plainText.isNullOrBlank()) return@mapNotNull null
+
+                            LyricsSearchResultItem(
+                                id = cand.id,
+                                title = cand.title.ifBlank { title },
+                                artist = cand.artist.ifBlank { artist },
+                                album = cand.album ?: album,
+                                durationSeconds = if (cand.durationSeconds > 0) cand.durationSeconds else (durationMs / 1000).toInt(),
+                                provider = source.label,
+                                syncedLyrics = syncedText,
+                                plainLyrics = plainText,
+                            )
+                        }
+                    } else {
                         val ext = com.music.bitchord.feature.lyrics.manager.LyricsExtensionManager.getExtension(source.id)
                         if (ext != null && ext.scriptFile.exists()) {
                             val searchJson = runCatching {
@@ -237,23 +269,27 @@ object LocalLyricsManager {
                             if (parsed.isNotEmpty()) {
                                 parsed
                             } else {
-                                // Fallback: use getLyrics for a single result
                                 fetchSingleResult(source, title, artist, primaryArtist, normalizedArtist, durationMs, album)
                             }
                         } else {
                             fetchSingleResult(source, title, artist, primaryArtist, normalizedArtist, durationMs, album)
                         }
                     }
+
+                    if (items.isNotEmpty()) {
+                        results.addAll(items)
+                        onPartialResults?.invoke(results.toList())
+                    }
+                    items
                 }
             }
 
             jobs.forEach { job ->
-                val items = runCatching { job.await() }.getOrDefault(emptyList())
-                results.addAll(items)
+                runCatching { job.await() }
             }
         }
 
-        results
+        results.toList()
     }
 
     /**
@@ -411,8 +447,9 @@ object LocalLyricsManager {
                 } else {
                     map["LYRICS"] = arrayOf(lyricsText.trim())
                 }
+                // ReplayGain is kept: lyrics don't change the audio, so its
+                // levels still hold (dropping them silently undid levelling).
                 val cleanedMap = map
-                    .filterKeys { !it.contains(Regex("(?i)REPLAYGAIN_(TRACK|ALBUM)_[A-Z0-7_]+")) }
                     .filterValues { it.isNotEmpty() }
                     .mapValuesTo(hashMapOf()) { it.value }
 

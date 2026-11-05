@@ -1,0 +1,10 @@
+{
+  "id": "qqmusic",
+  "name": "QQ Music (QQ音楽)",
+  "version": "2.0.0",
+  "description": "QQ音楽 同期歌詞・Portato音節同期・対訳歌詞対応",
+  "author": "Tinque / LyricsForTryptify",
+  "entrypoint": "index.js",
+  "wordSynced": true,
+  "defaultPriority": 6
+}

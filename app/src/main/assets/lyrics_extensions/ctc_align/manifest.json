@@ -1,0 +1,10 @@
+{
+  "id": "ctc_align",
+  "name": "CTC AI 自動同期補正",
+  "version": "2.0.0",
+  "description": "非同期のテキスト歌詞（歌ネット・UtaTen等）から曲長に合わせてLRCタイムスタンプを自動推定",
+  "author": "Tinque / LyricsForTryptify",
+  "entrypoint": "index.js",
+  "wordSynced": false,
+  "defaultPriority": 15
+}

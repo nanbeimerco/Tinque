@@ -338,7 +338,8 @@ fun GlassWindowScope(
         }
     }
     val backdrop = rememberLayerBackdrop(onDraw = paint)
-    val active = sheets.requests.isNotEmpty() || menus.request != null
+    // A closing menu still counts until it has gone, so its glass keeps a page to refract.
+    val active = sheets.requests.isNotEmpty() || menus.request != null || menus.visible
     val glassOn = LocalLiquidGlassEnabled.current && isGlassSupported()
     CompositionLocalProvider(
         LocalAppBackdrop provides backdrop,

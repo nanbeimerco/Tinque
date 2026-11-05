@@ -39,3 +39,5 @@ keystore.properties
 .tmp_verify/
 .debug/
 linux-desktop/dist/
+
+release_apk/

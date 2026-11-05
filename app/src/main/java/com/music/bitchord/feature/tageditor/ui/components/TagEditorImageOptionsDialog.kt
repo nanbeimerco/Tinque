@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.tageditor.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import com.music.bitchord.ui.components.GlassAlertDialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -41,7 +43,7 @@ fun TagEditorImageOptionsDialog(
         shape = RoundedCornerShape(24.dp),
         title = {
             Text(
-                text = "Update cover art",
+                text = stringResource(R.string.l10n_update_cover),
                 style = MaterialTheme.typography.titleLarge,
             )
         },
@@ -49,7 +51,7 @@ fun TagEditorImageOptionsDialog(
             Column(modifier = Modifier.fillMaxWidth()) {
                 ImageOptionRow(
                     icon = Icons.Rounded.Image,
-                    text = "Pick from local storage",
+                    text = stringResource(R.string.l10n_pick_local),
                     onClick = {
                         onPickFromStorage()
                         onDismissRequest()
@@ -57,7 +59,7 @@ fun TagEditorImageOptionsDialog(
                 )
                 ImageOptionRow(
                     icon = Icons.Rounded.Search,
-                    text = "Search online image",
+                    text = stringResource(R.string.l10n_search_image),
                     onClick = {
                         onSearchOnline()
                         onDismissRequest()
@@ -65,7 +67,7 @@ fun TagEditorImageOptionsDialog(
                 )
                 ImageOptionRow(
                     icon = Icons.Rounded.Restore,
-                    text = "Restore default",
+                    text = stringResource(R.string.l10n_restore_default),
                     onClick = {
                         onRestoreDefault()
                         onDismissRequest()
@@ -73,7 +75,7 @@ fun TagEditorImageOptionsDialog(
                 )
                 ImageOptionRow(
                     icon = Icons.Rounded.Delete,
-                    text = "Remove cover",
+                    text = stringResource(R.string.l10n_remove_cover),
                     isDestructive = true,
                     onClick = {
                         onRemoveCover()
@@ -85,7 +87,7 @@ fun TagEditorImageOptionsDialog(
         confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismissRequest) {
-                Text("Cancel")
+                Text(stringResource(R.string.l10n_cancel))
             }
         },
         modifier = modifier,

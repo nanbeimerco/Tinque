@@ -1,50 +1,141 @@
 {
-  "version": 2,
-  "updated_at": "2026-09-20T14:00:00Z",
+  "version": 3,
+  "updated_at": "2026-11-05T18:00:00Z",
   "extensions": [
     {
-      "id": "lrclib",
-      "name": "LRCLIB",
-      "version": "1.0.0",
-      "description": "Open-source synced lyrics database",
-      "author": "SpotiFLAC / MusicBeat",
-      "wordSynced": false,
-      "defaultPriority": 1,
-      "manifest_url": "https://raw.githubusercontent.com/SamuelAdmand/MusicBeat-Lyrics-Extensions/main/extensions/lrclib/manifest.json",
-      "script_url": "https://raw.githubusercontent.com/SamuelAdmand/MusicBeat-Lyrics-Extensions/main/extensions/lrclib/index.js"
-    },
-    {
       "id": "apple_music",
-      "name": "Apple Music",
-      "version": "1.2.1",
-      "description": "Word-by-word synced lyrics (via proxy)",
-      "author": "SpotiFLAC / MusicBeat",
+      "name": "Apple Music (PaxSenix)",
+      "version": "2.0.0",
+      "description": "Apple Music TTML / 1文字・音節単位のカラオケ同期歌詞",
+      "author": "Tinque / LyricsForTryptify",
       "wordSynced": true,
-      "defaultPriority": 2,
-      "manifest_url": "https://raw.githubusercontent.com/SamuelAdmand/MusicBeat-Lyrics-Extensions/main/extensions/apple_music/manifest.json",
-      "script_url": "https://raw.githubusercontent.com/SamuelAdmand/MusicBeat-Lyrics-Extensions/main/extensions/apple_music/index.js"
+      "defaultPriority": 1
     },
     {
       "id": "lyricsplus",
-      "name": "LyricsPlus",
-      "version": "1.0.1",
-      "description": "Word-by-word karaoke lyrics (Apple/Musixmatch/Spotify/QQ, via proxy)",
-      "author": "SpotiFLAC / MusicBeat",
+      "name": "LyricsPlus (YouLy+)",
+      "version": "2.0.0",
+      "description": "5ミラー並列レースによる超高速音節・カラオケ同期歌詞",
+      "author": "Tinque / LyricsForTryptify",
       "wordSynced": true,
-      "defaultPriority": 3,
-      "manifest_url": "https://raw.githubusercontent.com/SamuelAdmand/MusicBeat-Lyrics-Extensions/main/extensions/lyricsplus/manifest.json",
-      "script_url": "https://raw.githubusercontent.com/SamuelAdmand/MusicBeat-Lyrics-Extensions/main/extensions/lyricsplus/index.js"
+      "defaultPriority": 2
+    },
+    {
+      "id": "better_lyrics",
+      "name": "BetterLyrics",
+      "version": "2.0.0",
+      "description": "BetterLyrics & Portato QQ TTML音節同期歌詞",
+      "author": "Tinque / LyricsForTryptify",
+      "wordSynced": true,
+      "defaultPriority": 3
+    },
+    {
+      "id": "bini_lrc_red",
+      "name": "BiniLyrics & lrc.red",
+      "version": "2.0.0",
+      "description": "ISRC・TTMLベースの音節同期・行同期歌詞",
+      "author": "Tinque / LyricsForTryptify",
+      "wordSynced": true,
+      "defaultPriority": 4
+    },
+    {
+      "id": "netease",
+      "name": "NetEase (網易雲音楽)",
+      "version": "2.0.0",
+      "description": "YRC音節同期・LRC行同期・対訳歌詞対応",
+      "author": "Tinque / LyricsForTryptify",
+      "wordSynced": true,
+      "defaultPriority": 5
+    },
+    {
+      "id": "qqmusic",
+      "name": "QQ Music (QQ音楽)",
+      "version": "2.0.0",
+      "description": "QQ音楽 同期歌詞・Portato音節同期・対訳歌詞対応",
+      "author": "Tinque / LyricsForTryptify",
+      "wordSynced": true,
+      "defaultPriority": 6
     },
     {
       "id": "kugou",
-      "name": "KuGou",
-      "version": "1.0.0",
-      "description": "Direct Kugou synced lyrics",
-      "author": "SpotiFLAC / MusicBeat",
+      "name": "KuGou (酷狗音楽)",
+      "version": "2.0.0",
+      "description": "KRC復号による1文字単位カラオケ同期・LRC行同期歌詞",
+      "author": "Tinque / LyricsForTryptify",
+      "wordSynced": true,
+      "defaultPriority": 7
+    },
+    {
+      "id": "petitlyrics",
+      "name": "プチリリ (PetitLyrics)",
+      "version": "2.0.0",
+      "description": "邦楽に強いプチリリ同期・テキスト歌詞",
+      "author": "Tinque",
+      "wordSynced": true,
+      "defaultPriority": 8
+    },
+    {
+      "id": "musixmatch",
+      "name": "Musixmatch",
+      "version": "2.0.0",
+      "description": "RichSync単語同期・LRC行同期・世界最大級の歌詞DB",
+      "author": "Tinque / LyricsForTryptify",
+      "wordSynced": true,
+      "defaultPriority": 9
+    },
+    {
+      "id": "lrclib",
+      "name": "LRCLIB",
+      "version": "2.0.0",
+      "description": "オープンソースの高速LRC同期歌詞データベース",
+      "author": "Tinque",
       "wordSynced": false,
-      "defaultPriority": 4,
-      "manifest_url": "https://raw.githubusercontent.com/SamuelAdmand/MusicBeat-Lyrics-Extensions/main/extensions/kugou/manifest.json",
-      "script_url": "https://raw.githubusercontent.com/SamuelAdmand/MusicBeat-Lyrics-Extensions/main/extensions/kugou/index.js"
+      "defaultPriority": 10
+    },
+    {
+      "id": "utanet",
+      "name": "歌ネット (Uta-Net)",
+      "version": "2.0.0",
+      "description": "国内最大級のJ-POP・アニメ・歌謡曲歌詞データベース",
+      "author": "Tinque",
+      "wordSynced": false,
+      "defaultPriority": 11
+    },
+    {
+      "id": "utaten",
+      "name": "UtaTen (ふりがな対応)",
+      "version": "2.0.0",
+      "description": "漢字ルビ（ふりがな）表示に対応した邦楽歌詞サイト",
+      "author": "Tinque",
+      "wordSynced": false,
+      "defaultPriority": 12
+    },
+    {
+      "id": "jlyric",
+      "name": "J-Lyric",
+      "version": "2.0.0",
+      "description": "J-POP・邦楽定番の軽量・高速歌詞検索サービス",
+      "author": "Tinque",
+      "wordSynced": false,
+      "defaultPriority": 13
+    },
+    {
+      "id": "genius",
+      "name": "Genius",
+      "version": "2.0.0",
+      "description": "洋楽・HIPHOP・グローバル楽曲に強い歌詞データベース",
+      "author": "Tinque",
+      "wordSynced": false,
+      "defaultPriority": 14
+    },
+    {
+      "id": "ctc_align",
+      "name": "CTC AI 自動同期補正",
+      "version": "2.0.0",
+      "description": "非同期のテキスト歌詞（歌ネット・UtaTen等）から曲長に合わせてLRCタイムスタンプを自動推定",
+      "author": "Tinque / LyricsForTryptify",
+      "wordSynced": false,
+      "defaultPriority": 15
     }
   ]
 }

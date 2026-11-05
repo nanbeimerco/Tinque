@@ -155,6 +155,7 @@ class LyricsEditorViewModel(app: Application) : AndroidViewModel(app) {
 
         viewModelScope.launch {
             _isSearchingResults.value = true
+            _searchResults.value = emptyList()
             val durationMs = activeSong?.durationMillis() ?: 0L
             val items = LocalLyricsManager.searchAllProviders(
                 title = title,
@@ -162,6 +163,9 @@ class LyricsEditorViewModel(app: Application) : AndroidViewModel(app) {
                 album = album,
                 durationMs = durationMs,
                 providers = providers,
+                onPartialResults = { partial ->
+                    _searchResults.value = partial
+                },
             )
             _searchResults.value = items
             _isSearchingResults.value = false

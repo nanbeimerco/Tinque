@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.lyricseditor.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -88,14 +90,14 @@ fun LyricsEditorHeader(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(
-                    text = song.title.ifBlank { "Unknown Title" },
+                    text = song.title.ifBlank { stringResource(R.string.l10n_unknown_title) },
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = song.artist.ifBlank { "Unknown Artist" },
+                    text = song.artist.ifBlank { stringResource(R.string.l10n_unknown_artist) },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -132,7 +134,7 @@ fun LyricsEditorHeader(
                                 },
                             )
                             Text(
-                                text = if (isTimeSynced) "LRC Timed" else "Plain Text",
+                                text = if (isTimeSynced) stringResource(R.string.l10n_lrc_timed) else stringResource(R.string.l10n_plain_text),
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,

@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.tageditor.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import com.music.bitchord.ui.components.GlassAlertDialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -51,7 +53,7 @@ fun TagEditorGenreDialog(
         shape = RoundedCornerShape(24.dp),
         title = {
             Text(
-                text = "Select genre",
+                text = stringResource(R.string.l10n_select_genre),
                 style = MaterialTheme.typography.titleLarge,
             )
         },
@@ -60,7 +62,7 @@ fun TagEditorGenreDialog(
                 OutlinedTextField(
                     value = search,
                     onValueChange = { search = it },
-                    placeholder = { Text("Search genre...") },
+                    placeholder = { Text(stringResource(R.string.l10n_search_genre)) },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
@@ -93,7 +95,7 @@ fun TagEditorGenreDialog(
         confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismissRequest) {
-                Text("Cancel")
+                Text(stringResource(R.string.l10n_cancel))
             }
         },
         modifier = modifier,

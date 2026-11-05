@@ -21,6 +21,7 @@ import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.toLrc
 import com.music.bitchord.feature.lyricseditor.data.LocalLyricsManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.innertube.Innertube
@@ -312,6 +313,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _lyricsChecked.value = false
 
         lyricsJob = viewModelScope.launch {
+            // A lyric picked from the catalog for this song comes before
+            // anything else: the listener chose it over all of them.
+            val overrideKey = com.music.bitchord.data.lyrics.LyricsOverrideStore.keyFor(videoId, localUri ?: song?.localUri)
+            val picked = withContext(Dispatchers.IO) {
+                com.music.bitchord.data.lyrics.LyricsOverrideStore.lines(overrideKey)
+            }
+            if (picked != null) {
+                val (override, lines) = picked
+                _lyrics.value = lines
+                _lyricsSource.value = com.music.bitchord.data.lyrics.LyricsSource(id = override.sourceId, label = override.sourceLabel)
+                _lyricsChecked.value = true
+                return@launch
+            }
+
             // The file first, and without the duration gate below: a length is
             // only needed to *match* a track against a stranger's database, and
             // nothing is being matched here — these lyrics were written into

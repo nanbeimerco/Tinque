@@ -6,6 +6,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -18,8 +19,8 @@ import java.util.concurrent.ConcurrentHashMap
  * SpotiFLAC Mobile lyrics fetching engine for MusicBeat.
  *
  * Implements:
- * 1. Parallel candidate dispatch (parallelism = 3).
- * 2. Priority grace period (3000ms): higher-priority providers are prioritized without
+ * 1. Parallel candidate dispatch (parallelism = 8).
+ * 2. Priority grace period (1000ms): higher-priority providers are prioritized without
  *    causing long blocking delays if one provider is slow.
  * 3. Provider health cooldowns (10 minutes on network/server failures).
  * 4. Singleflight in-flight request deduplication.
@@ -28,8 +29,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object LyricsFetchEngine {
 
-    private const val PARALLELISM = 3
-    private const val PRIORITY_GRACE_MS = 3000L
+    private const val PARALLELISM = 8
+    private const val PRIORITY_GRACE_MS = 1000L
 
     private val INSTRUMENTAL_PATTERN = Regex(
         "(?i)(?:^|[\\s\\[(\\\\-])(?:instrumental|inst\\.?)(?:[\\s\\])]|$)"
@@ -197,8 +198,9 @@ object LyricsFetchEngine {
         while (pendingCount > 0) {
             // Check if current best candidate has no earlier candidates pending
             bestCandidate?.let { best ->
-                if (!hasPendingEarlier(best.index)) {
+                if (!hasPendingEarlier(best.index) || (prioritizeSyllableSync && best.lines!!.any { it.isWordSynced } && !hasPendingEarlier(best.index))) {
                     resultsChannel.close()
+                    coroutineContext.cancelChildren()
                     return@coroutineScope LyricsRepository.Result(best.source, best.lines!!)
                 }
             }
@@ -213,6 +215,7 @@ object LyricsFetchEngine {
             if (bestCandidate != null && remainingGrace == 0L) {
                 LyricsLog.i("Engine", "Priority grace period expired, returning ${bestCandidate.source.label}")
                 resultsChannel.close()
+                coroutineContext.cancelChildren()
                 return@coroutineScope LyricsRepository.Result(bestCandidate.source, bestCandidate.lines!!)
             }
 
@@ -230,6 +233,7 @@ object LyricsFetchEngine {
                 if (bestCandidate != null) {
                     LyricsLog.i("Engine", "Priority grace expired, returning ${bestCandidate.source.label}")
                     resultsChannel.close()
+                    coroutineContext.cancelChildren()
                     return@coroutineScope LyricsRepository.Result(bestCandidate.source, bestCandidate.lines!!)
                 }
                 break
@@ -242,11 +246,20 @@ object LyricsFetchEngine {
             if (!lines.isNullOrEmpty()) {
                 val isWordSynced = lines.any { it.isWordSynced }
                 val isLineSynced = lines.any { it.timeMs > 0 }
+                val bestLines = bestCandidate?.lines
+                val bestIsWord = bestLines?.any { it.isWordSynced } == true
+                val bestIsLine = bestLines?.any { it.timeMs > 0 } == true
 
-                // Determine if this candidate is better than current best
-                val isBetter = bestCandidate == null ||
-                    (candidate.index < bestCandidate.index) ||
-                    (prioritizeSyllableSync && isWordSynced && !bestCandidate.lines!!.any { it.isWordSynced })
+                // Determine if this candidate is better than current best:
+                // Timed lyrics always beat plain text; word-synced beats line-synced when prioritizeSyllableSync is on.
+                val isBetter = when {
+                    bestCandidate == null -> true
+                    prioritizeSyllableSync && isWordSynced && !bestIsWord -> true
+                    prioritizeSyllableSync && !isWordSynced && bestIsWord -> false
+                    isLineSynced && !bestIsLine -> true
+                    !isLineSynced && bestIsLine -> false
+                    else -> candidate.index < bestCandidate.index
+                }
 
                 if (isBetter) {
                     bestCandidate = candidate
@@ -258,6 +271,7 @@ object LyricsFetchEngine {
         }
 
         resultsChannel.close()
+        coroutineContext.cancelChildren()
         bestCandidate?.let { LyricsRepository.Result(it.source, it.lines!!) }
     }
 
@@ -273,6 +287,11 @@ object LyricsFetchEngine {
         // 1. Direct query
         var lines = runCatching { fetcher(source, videoId, title, artist, durationMs, album) }.getOrNull()
         if (!lines.isNullOrEmpty()) return lines
+
+        // Native providers already normalize title/artist internally, so skip redundant retries
+        if (com.music.bitchord.data.lyrics.providers.NativeLyricsProviders.isNativeProvider(source.id)) {
+            return null
+        }
 
         // 2. Simplified title fallback
         val cleanTitle = simplifyTitle(title)

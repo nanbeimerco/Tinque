@@ -152,7 +152,7 @@ fun LyricsEditorScreen(
         if (result.resultCode == Activity.RESULT_OK) {
             viewModel.saveLyrics(song)
         } else {
-            Toast.makeText(context, "Permission denied to edit audio file", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.l10n_no_edit_permission), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -199,7 +199,7 @@ fun LyricsEditorScreen(
 
     LaunchedEffect(Unit) {
         viewModel.saveResult.collect { success ->
-            val message = if (success) "Lyrics saved successfully" else "Failed to save lyrics"
+            val message = if (success) context.getString(R.string.l10n_lyrics_saved) else context.getString(R.string.l10n_lyrics_save_failed)
             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
             if (success) {
                 onLyricsSaved?.invoke()
@@ -278,7 +278,7 @@ fun LyricsEditorScreen(
                         if (pasteText.isNotBlank()) {
                             textFieldValue = TextFieldValue(pasteText, selection = TextRange(pasteText.length))
                             viewModel.updateText(pasteText)
-                            Toast.makeText(context, "Pasted from clipboard", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, context.getString(R.string.l10n_pasted), Toast.LENGTH_SHORT).show()
                         }
                     }
                 },
@@ -289,7 +289,7 @@ fun LyricsEditorScreen(
                 },
                 onUndoChangesClick = {
                     viewModel.undoChanges()
-                    Toast.makeText(context, "Changes undone", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(R.string.l10n_changes_undone), Toast.LENGTH_SHORT).show()
                 },
                 onInsertTimestampClick = {
                     val current = textFieldValue.text
@@ -305,7 +305,7 @@ fun LyricsEditorScreen(
                 onClearAllClick = {
                     textFieldValue = TextFieldValue("")
                     viewModel.updateText("")
-                    Toast.makeText(context, "Cleared lyrics", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, context.getString(R.string.l10n_lyrics_cleared), Toast.LENGTH_SHORT).show()
                 },
             )
         },
@@ -371,7 +371,7 @@ fun LyricsEditorScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        text = "Companion .lrc file will be saved alongside the audio file",
+                        text = stringResource(R.string.l10n_lrc_alongside),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -498,7 +498,7 @@ fun LyricsEditorScreen(
                             },
                             placeholder = {
                                 Text(
-                                    text = "Write or paste lyrics here...\n\nExample:\n[00:12.30]First line of lyrics\n[00:15.80]Second line of lyrics",
+                                    text = stringResource(R.string.l10n_lyrics_placeholder),
                                     style = MaterialTheme.typography.bodyMedium.copy(
                                         fontFamily = FontFamily.Monospace,
                                         lineHeight = 22.sp,

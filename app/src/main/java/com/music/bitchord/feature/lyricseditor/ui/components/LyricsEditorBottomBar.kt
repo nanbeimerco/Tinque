@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.lyricseditor.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import com.music.bitchord.ui.components.GlassDropdownMenu
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
@@ -97,7 +99,7 @@ fun LyricsEditorBottomBar(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Search,
-                        contentDescription = "Search online lyrics",
+                        contentDescription = stringResource(R.string.l10n_search_lyrics_online),
                         modifier = Modifier.size(22.dp),
                     )
                 }
@@ -113,7 +115,7 @@ fun LyricsEditorBottomBar(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Download,
-                        contentDescription = "Download lyrics",
+                        contentDescription = stringResource(R.string.l10n_download_lyrics),
                         modifier = Modifier.size(22.dp),
                     )
                 }
@@ -143,7 +145,7 @@ fun LyricsEditorBottomBar(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Save",
+                        text = stringResource(R.string.l10n_save),
                         style = MaterialTheme.typography.labelLarge.copy(
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
@@ -162,7 +164,7 @@ fun LyricsEditorBottomBar(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.ContentPaste,
-                        contentDescription = "Paste from clipboard",
+                        contentDescription = stringResource(R.string.l10n_paste),
                         modifier = Modifier.size(22.dp),
                     )
                 }
@@ -179,7 +181,7 @@ fun LyricsEditorBottomBar(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.MoreVert,
-                            contentDescription = "More actions",
+                            contentDescription = stringResource(R.string.l10n_more_actions),
                             modifier = Modifier.size(22.dp),
                         )
                     }
@@ -193,7 +195,7 @@ fun LyricsEditorBottomBar(
                     ) {
                         if (onInsertTimestampClick != null) {
                             DropdownMenuItem(
-                                text = { Text("Insert timestamp [00:00.00]") },
+                                text = { Text(stringResource(R.string.l10n_insert_timestamp)) },
                                 leadingIcon = {
                                     Icon(
                                         imageVector = Icons.Rounded.Add,
@@ -209,7 +211,7 @@ fun LyricsEditorBottomBar(
                         }
 
                         DropdownMenuItem(
-                            text = { Text("Select all") },
+                            text = { Text(stringResource(R.string.l10n_select_all)) },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Rounded.SelectAll,
@@ -225,7 +227,7 @@ fun LyricsEditorBottomBar(
 
                         if (onClearAllClick != null) {
                             DropdownMenuItem(
-                                text = { Text("Clear all") },
+                                text = { Text(stringResource(R.string.l10n_clear_all)) },
                                 leadingIcon = {
                                     Icon(
                                         imageVector = Icons.Rounded.ClearAll,
@@ -241,7 +243,7 @@ fun LyricsEditorBottomBar(
                         }
 
                         DropdownMenuItem(
-                            text = { Text("Undo changes") },
+                            text = { Text(stringResource(R.string.l10n_undo_changes)) },
                             leadingIcon = {
                                 Icon(
                                     imageVector = Icons.Rounded.RestartAlt,

@@ -404,7 +404,7 @@ class MainActivity : AppCompatActivity() {
                 // Coloured glass: the playing song's artwork colour, read only
                 // while the setting is on.
                 val tintedGlass by AppSettings.tintedGlass.collectAsStateWithLifecycle()
-                val glassArtColor = if (tintedGlass && liquidGlassEnabled && player.song != null) {
+                val glassArtColor: () -> androidx.compose.ui.graphics.Color = if (tintedGlass && liquidGlassEnabled && player.song != null) {
                     val read = rememberArtworkPalette(player.song?.artworkAt(PLAYER_ART_PX), dark = darkTheme).glass
                     // Held while the next sleeve is being read, so the glass
                     // fades from one song's colour to the next rather than
@@ -413,17 +413,28 @@ class MainActivity : AppCompatActivity() {
                     if (read != androidx.compose.ui.graphics.Color.Unspecified && read != held) {
                         SideEffect { held = read }
                     }
-                    if (held == androidx.compose.ui.graphics.Color.Unspecified) {
-                        androidx.compose.ui.graphics.Color.Unspecified
-                    } else {
-                        androidx.compose.animation.animateColorAsState(
-                            targetValue = held,
-                            animationSpec = androidx.compose.animation.core.tween(600),
-                            label = "glassArtColor",
-                        ).value
+                    // Handed down as a reader: the fade is read where the glass
+                    // is drawn, so it redraws the glass and recomposes nothing.
+                    val faded = androidx.compose.animation.animateColorAsState(
+                        targetValue = held,
+                        animationSpec = if (held == androidx.compose.ui.graphics.Color.Unspecified) {
+                            androidx.compose.animation.core.snap()
+                        } else {
+                            androidx.compose.animation.core.tween(600)
+                        },
+                        label = "glassArtColor",
+                    )
+                    remember(faded) {
+                        {
+                            if (held == androidx.compose.ui.graphics.Color.Unspecified) {
+                                androidx.compose.ui.graphics.Color.Unspecified
+                            } else {
+                                faded.value
+                            }
+                        }
                     }
                 } else {
-                    androidx.compose.ui.graphics.Color.Unspecified
+                    NoGlassArtColor
                 }
                 CompositionLocalProvider(
                     com.music.bitchord.ui.components.LocalGlassArtColor provides glassArtColor,
@@ -932,6 +943,44 @@ private fun BitChordApp(
     val isRefreshingLocalMusic by viewModel.isRefreshingLocalMusic.collectAsStateWithLifecycle()
     val localArtworkPreload by viewModel.localArtworkPreload.collectAsStateWithLifecycle()
     val localSongs = (localSongsState as? UiState.Success)?.data.orEmpty()
+    // The lyrics catalog, opened from the player (its lyrics footer, its ⋮ menu).
+    val catalogSong by com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.song.collectAsStateWithLifecycle()
+    catalogSong?.let { target ->
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.close() },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false,
+            ),
+        ) {
+            com.music.bitchord.ui.components.NoDialogDim()
+            com.music.bitchord.feature.lyricscatalog.LyricsCatalogScreen(
+                song = target,
+                onDismiss = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.close() },
+                onApplied = { viewModel.reloadLyrics(it) },
+            )
+        }
+    }
+    // A folder's songs open in the tag editor together (its own, with its subfolders').
+    var batchTagSongs by remember { mutableStateOf<Pair<List<Song>, List<Song>>?>(null) }
+    batchTagSongs?.let { (own, all) ->
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { batchTagSongs = null },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false,
+            ),
+        ) {
+            com.music.bitchord.ui.components.NoDialogDim()
+            com.music.bitchord.feature.tageditor.ui.TagEditorScreen(
+                song = own.first(),
+                batchSongs = own,
+                batchSongsWithSubfolders = all,
+                onNavigateBack = { batchTagSongs = null },
+                onTagsSaved = { viewModel.loadLocalMusic() },
+            )
+        }
+    }
     val localEmptyMessage = (localSongsState as? UiState.Error)?.message
     val preloadArtworkOnStartup by AppSettings.preloadAlbumArtOnStartup.collectAsStateWithLifecycle()
 
@@ -1774,7 +1823,10 @@ private fun BitChordApp(
         links = YtMusicRepository.trackLinks(current.videoId).getOrNull()
         linksLoading = false
     }
-    val playerSong = player.song?.let { current ->
+    // Kept as one object while nothing it is made of changes: a fresh copy
+    // on every recomposition here made the player see a new song each time
+    // and rebuild itself whole.
+    val playerSong = remember(player.song, links) { player.song?.let { current ->
         val extra = links?.takeIf { it.videoId == current.videoId }
         val enriched = if (extra != null) {
             current.copy(
@@ -1796,7 +1848,7 @@ private fun BitChordApp(
             artistId = enriched.artistId
                 ?: enriched.artist.trim().takeIf { it.isNotBlank() }?.let { "local:artist:$it" },
         )
-    }
+    } }
     // The three-dot menu snapshots the track into songActions when it's opened,
     // so a menu opened before the lookup above resolves would otherwise be
     // stuck without album/artist rows even after the ids come in. Keep it in
@@ -1812,10 +1864,29 @@ private fun BitChordApp(
     // the pane a tablet keeps beside it. [docked] is the only difference
     // between the two, and only ever one of them is in the tree.
     val nowPlaying: @Composable (Song, Boolean) -> Unit = { song, docked ->
-        val displayedSong = activeRadioSeed
-            ?.takeIf { (videoId, _) -> song.radioName == null && videoId == song.videoId }
-            ?.let { (_, name) -> song.copy(radioName = name) }
-            ?: song
+        // The lyrics and the queue as this track knows them: what the previous
+        // track left behind is dropped at once, and what arrives in the first
+        // moments of a skip is held to land in one update after the skip
+        // animation (see rememberHeldThroughTrackChange).
+        val trackLyrics = com.music.bitchord.ui.player.rememberHeldThroughTrackChange(
+            com.music.bitchord.ui.player.freshForTrack(lyrics, song.videoId, stale = null),
+            song.videoId,
+        )
+        val trackLyricsSource = com.music.bitchord.ui.player.rememberHeldThroughTrackChange(
+            com.music.bitchord.ui.player.freshForTrack(lyricsSource, song.videoId, stale = null),
+            song.videoId,
+        )
+        val trackLyricsChecked = com.music.bitchord.ui.player.rememberHeldThroughTrackChange(
+            com.music.bitchord.ui.player.freshForTrack(lyricsChecked, song.videoId, stale = false),
+            song.videoId,
+        )
+        val trackQueue = com.music.bitchord.ui.player.rememberHeldThroughTrackChange(player.queue, song.videoId)
+        val displayedSong = remember(song, activeRadioSeed) {
+            activeRadioSeed
+                ?.takeIf { (videoId, _) -> song.radioName == null && videoId == song.videoId }
+                ?.let { (_, name) -> song.copy(radioName = name) }
+                ?: song
+        }
         com.music.bitchord.ui.components.GlassWindowScope(menus = playerGlassMenus) {
         NowPlayingScreen(
             song = displayedSong,
@@ -1920,7 +1991,7 @@ private fun BitChordApp(
                     )
                 }
             },
-            queue = player.queue,
+            queue = trackQueue,
             queueIndex = player.queueIndex,
             hasPrevious = player.hasPrevious,
             hasNext = player.hasNext,
@@ -2040,9 +2111,9 @@ private fun BitChordApp(
                     }
                 }
             },
-            lyrics = lyrics,
-            lyricsSource = lyricsSource,
-            lyricsUnavailable = lyricsChecked && lyrics.isNullOrEmpty(),
+            lyrics = trackLyrics,
+            lyricsSource = trackLyricsSource,
+            lyricsUnavailable = trackLyricsChecked && trackLyrics.isNullOrEmpty(),
             docked = docked,
             onClearQueue = {
                 // Keep what's playing; drop everything queued after it.
@@ -2712,6 +2783,7 @@ private fun BitChordApp(
                                     songActions = song
                                 },
                                 onDeleteSong = { viewModel.loadLocalMusic() },
+                                onBatchTagEditor = { own, all -> batchTagSongs = own to all },
                             )
                         }
                         else -> Box(modifier = Modifier.fillMaxSize())
@@ -4552,3 +4624,6 @@ private fun DockDivider(
             },
     )
 }
+
+/** The glass's art colour with coloured glass off: none. */
+private val NoGlassArtColor: () -> androidx.compose.ui.graphics.Color = { androidx.compose.ui.graphics.Color.Unspecified }

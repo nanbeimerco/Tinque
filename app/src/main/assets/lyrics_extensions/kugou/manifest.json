@@ -1,9 +1,10 @@
 {
   "id": "kugou",
-  "name": "KuGou",
-  "version": "1.0.0",
-  "description": "Whole lines, strong outside the English catalogue.",
-  "author": "MusicBeat Community",
-  "wordSynced": false,
-  "defaultPriority": 5
+  "name": "KuGou (酷狗音楽)",
+  "version": "2.0.0",
+  "description": "KRC復号による1文字単位カラオケ同期・LRC行同期歌詞",
+  "author": "Tinque / LyricsForTryptify",
+  "entrypoint": "index.js",
+  "wordSynced": true,
+  "defaultPriority": 7
 }

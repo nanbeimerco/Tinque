@@ -1,0 +1,10 @@
+{
+  "id": "musixmatch",
+  "name": "Musixmatch",
+  "version": "2.0.0",
+  "description": "RichSync単語同期・LRC行同期・世界最大級の歌詞DB",
+  "author": "Tinque / LyricsForTryptify",
+  "entrypoint": "index.js",
+  "wordSynced": true,
+  "defaultPriority": 9
+}

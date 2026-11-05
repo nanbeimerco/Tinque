@@ -134,6 +134,19 @@ object LyricsExtensionManager {
         }
     }
 
+    private fun getBundledExtensionIds(context: Context): Set<String> = runCatching {
+        val assetManager = context.assets
+        val hasNestedExtensions = assetManager.list("$ASSETS_DIR/extensions")?.isNotEmpty() == true
+        val bundledDirs = if (hasNestedExtensions) {
+            assetManager.list("$ASSETS_DIR/extensions") ?: emptyArray()
+        } else {
+            assetManager.list(ASSETS_DIR)
+                ?.filter { it != "registry.json" && it != "README.md" && !it.contains(".") }
+                ?.toTypedArray() ?: emptyArray()
+        }
+        bundledDirs.toSet()
+    }.getOrDefault(emptySet())
+
     /**
      * Loads installed extensions from disk into memory.
      */
@@ -144,6 +157,7 @@ object LyricsExtensionManager {
             return@withContext
         }
 
+        val bundledIds = getBundledExtensionIds(context)
         val list = mutableListOf<LyricsExtension>()
         extDir.listFiles()?.filter { it.isDirectory }?.forEach { dir ->
             val manifestFile = File(dir, "manifest.json")
@@ -161,7 +175,7 @@ object LyricsExtensionManager {
                         wordSynced = manifest.wordSynced,
                         defaultPriority = manifest.defaultPriority,
                         scriptFile = scriptFile,
-                        isBundled = false,
+                        isBundled = manifest.id in bundledIds || dir.name in bundledIds,
                     )
                 }.onFailure {
                     LyricsLog.w(TAG, "Failed to load extension in ${dir.name}: ${it.message}")
@@ -209,9 +223,10 @@ object LyricsExtensionManager {
             val extDir = File(ctx.filesDir, "$EXTENSIONS_DIR/extensions")
             if (!extDir.exists()) extDir.mkdirs()
 
-            // 1. Prune deleted extensions (folders on disk whose ID is no longer in the remote registry)
+            // 1. Prune deleted remote-only extensions (never prune bundled extensions!)
             val remoteIds = remoteRegistry.extensions.map { it.id }.toSet()
-            extDir.listFiles()?.filter { it.isDirectory && it.name !in remoteIds }?.forEach { staleDir ->
+            val bundledIds = getBundledExtensionIds(ctx)
+            extDir.listFiles()?.filter { it.isDirectory && it.name !in remoteIds && it.name !in bundledIds }?.forEach { staleDir ->
                 LyricsLog.w(TAG, "Pruning deleted extension: ${staleDir.name}")
                 LyricsExtensionExecutor.unload(staleDir.name)
                 staleDir.deleteRecursively()

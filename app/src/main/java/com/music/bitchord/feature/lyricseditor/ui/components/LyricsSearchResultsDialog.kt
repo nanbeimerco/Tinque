@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.lyricseditor.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import com.music.bitchord.ui.components.GlassAlertDialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -49,7 +51,7 @@ fun LyricsSearchResultsDialog(
         title = {
             Column {
                 Text(
-                    text = "Lyrics Search Results",
+                    text = stringResource(R.string.l10n_lyrics_search_results),
                     style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
                 )
                 if (!isSearching && results.isNotEmpty()) {
@@ -75,7 +77,7 @@ fun LyricsSearchResultsDialog(
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(36.dp))
                         Text(
-                            text = "Querying lyrics providers...",
+                            text = stringResource(R.string.l10n_querying_sources),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -93,11 +95,11 @@ fun LyricsSearchResultsDialog(
                             modifier = Modifier.size(44.dp),
                         )
                         Text(
-                            text = "No matching lyrics found",
+                            text = stringResource(R.string.l10n_no_lyrics_found),
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                         )
                         Text(
-                            text = "Try adjusting the title, artist, or album name.",
+                            text = stringResource(R.string.l10n_adjust_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -119,12 +121,12 @@ fun LyricsSearchResultsDialog(
         },
         confirmButton = {
             TextButton(onClick = onRefineSearchClick) {
-                Text("Refine Search")
+                Text(stringResource(R.string.l10n_refine_short))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismissRequest) {
-                Text("Close")
+                Text(stringResource(R.string.l10n_close))
             }
         },
         modifier = modifier,

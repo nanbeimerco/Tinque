@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Previous: the player's own skip shape (BitChordIcons.TransportPrevious).
+  Overrides Media3's own icon of this name, so the notification player draws
+  Tinque's shapes. White: the system tints it.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M10.373,5.537A1.222,1.222 0 0,1 12.206,6.595L12.206,11.172L21.967,5.537A1.222,1.222 0 0,1 23.8,6.595L23.8,17.405A1.222,1.222 0 0,1 21.967,18.463L12.206,12.828L12.206,17.405A1.222,1.222 0 0,1 10.373,18.463L1.011,13.058A1.222,1.222 0 0,1 1.011,10.942Z" />
+</vector>

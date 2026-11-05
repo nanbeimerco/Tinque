@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.tageditor.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -56,7 +58,7 @@ fun TagEditorArtworkSection(
                 artworkBitmap != null -> {
                     Image(
                         bitmap = artworkBitmap.asImageBitmap(),
-                        contentDescription = "Cover Art",
+                        contentDescription = stringResource(R.string.l10n_cover_art),
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -64,7 +66,7 @@ fun TagEditorArtworkSection(
                 !thumbnailUrl.isNullOrBlank() -> {
                     AsyncImage(
                         model = thumbnailUrl,
-                        contentDescription = "Cover Art",
+                        contentDescription = stringResource(R.string.l10n_cover_art),
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )

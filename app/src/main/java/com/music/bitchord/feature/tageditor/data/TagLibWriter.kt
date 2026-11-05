@@ -66,7 +66,17 @@ object TagLibWriter {
         }
     }
 
-    suspend fun writeTags(context: Context, song: Song, data: SongTagData): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * Writes [data] to [song]'s file: every field, or only those in [fields]
+     * (the rest of the file's tags untouched — how a folder gets one album's
+     * details without each song losing its own title and track number).
+     */
+    suspend fun writeTags(
+        context: Context,
+        song: Song,
+        data: SongTagData,
+        fields: Set<com.music.bitchord.feature.tageditor.domain.model.TagField>? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
         try {
             val pfd = openFileDescriptor(context, song, "rw") ?: return@withContext false
 
@@ -86,23 +96,10 @@ object TagLibWriter {
                     }
                 }
 
-                put("TITLE", data.title)
-                put("ALBUM", data.album)
-                put("ARTIST", data.artist)
-                put("ALBUMARTIST", data.albumArtist)
-                put("COMPOSER", data.composer)
-                put("PRODUCER", data.conductor)
-                put("COPYRIGHT", data.publisher)
-                put("GENRE", data.genre)
-                put("DATE", data.year)
-                put("TRACKNUMBER", data.trackNumber)
-                put("TRACKTOTAL", data.trackTotal)
-                put("DISCNUMBER", data.discNumber)
-                put("DISCTOTAL", data.discTotal)
-                put("LYRICS", data.lyrics)
-                put("LYRICIST", data.lyricist)
-                put("ARRANGER", data.arranger)
-                put("COMMENT", data.comment)
+                for (field in com.music.bitchord.feature.tageditor.domain.model.TagField.entries) {
+                    val key = field.propertyKey ?: continue
+                    if (fields == null || field in fields) put(key, field.get(data))
+                }
 
                 // Editing descriptive tags or lyrics does not change the PCM
                 // samples, so ReplayGain values remain valid and must survive
@@ -112,7 +109,8 @@ object TagLibWriter {
 
                 val propsOk = TagLib.savePropertyMap(descriptor.dup().detachFd(), cleanedMap)
 
-                if (data.artworkChanged) {
+                val writeArtwork = fields == null || com.music.bitchord.feature.tageditor.domain.model.TagField.ARTWORK in fields
+                if (data.artworkChanged && writeArtwork) {
                     if (data.artworkDeleted || data.artworkBitmap == null) {
                         TagLib.savePictures(descriptor.dup().detachFd(), arrayOf())
                     } else {

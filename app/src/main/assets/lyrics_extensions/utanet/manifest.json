@@ -1,0 +1,10 @@
+{
+  "id": "utanet",
+  "name": "歌ネット (Uta-Net)",
+  "version": "2.0.0",
+  "description": "国内最大級のJ-POP・アニメ・歌謡曲歌詞データベース",
+  "author": "Tinque",
+  "entrypoint": "index.js",
+  "wordSynced": false,
+  "defaultPriority": 11
+}

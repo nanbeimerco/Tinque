@@ -1,9 +1,10 @@
 {
   "id": "lrclib",
   "name": "LRCLIB",
-  "version": "1.0.0",
-  "description": "Free, open community lyrics database with line-synced LRC.",
-  "author": "MusicBeat Community",
+  "version": "2.0.0",
+  "description": "オープンソースの高速LRC同期歌詞データベース",
+  "author": "Tinque",
+  "entrypoint": "index.js",
   "wordSynced": false,
-  "defaultPriority": 4
+  "defaultPriority": 10
 }

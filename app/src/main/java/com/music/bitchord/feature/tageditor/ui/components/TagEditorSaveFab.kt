@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.tageditor.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -33,7 +35,7 @@ fun TagEditorSaveFab(
         } else {
             Icon(
                 imageVector = Icons.Rounded.Save,
-                contentDescription = "Save tags",
+                contentDescription = stringResource(R.string.l10n_save_tags),
                 modifier = Modifier.size(24.dp),
             )
         }

@@ -9,6 +9,8 @@
  */
 package com.music.bitchord.ui.components
 
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.draw.drawBehind
 import com.music.bitchord.ui.components.backdrop.effects.clearRefractionIndex
 import com.music.bitchord.ui.components.backdrop.effects.RimLight
 import androidx.compose.ui.unit.DpOffset
@@ -71,19 +73,29 @@ internal val LocalGlassExport = compositionLocalOf<LayerBackdrop?> { null }
  * The playing song's artwork colour, for coloured glass (see
  * [AppSettings.tintedGlass]). Unspecified when nothing is playing or the
  * artwork has not been read; the glass is then its usual neutral.
+ *
+ * A reader rather than a colour, and read only while drawing: the colour
+ * fades from one song's to the next over every skip, and read in composition
+ * that fade recomposed the whole app — the player and the mini player behind
+ * it — every frame of it, right while the skip animation ran.
  */
-val LocalGlassArtColor = compositionLocalOf { Color.Unspecified }
+val LocalGlassArtColor = staticCompositionLocalOf<() -> Color> { { Color.Unspecified } }
 
 /**
  * The colour laid over a glass surface's own tint: the artwork's colour at the
  * chosen amount when coloured glass is on, transparent otherwise.
  */
 @Composable
-fun glassArtTint(): Color {
+fun glassArtTint(): () -> Color {
     val enabled by AppSettings.tintedGlass.collectAsStateWithLifecycle()
     val amount by AppSettings.tintedGlassAmount.collectAsStateWithLifecycle()
     val art = LocalGlassArtColor.current
-    return if (enabled && art != Color.Unspecified && amount > 0f) art.copy(alpha = amount) else Color.Transparent
+    return remember(enabled, amount, art) {
+        {
+            val colour = art()
+            if (enabled && colour != Color.Unspecified && amount > 0f) colour.copy(alpha = amount) else Color.Transparent
+        }
+    }
 }
 
 /**
@@ -179,7 +191,17 @@ fun Modifier.lightweightLiquidGlass(
             color = if (useGlass) clearFill ?: glassTint.copy(alpha = surfaceOpacity) else fallbackColor,
             shape = shape,
         )
-        .then(if (useGlass) Modifier.background(glassArtTint(), shape) else Modifier)
+        .then(
+            if (useGlass) {
+                val artTint = glassArtTint()
+                Modifier.drawBehind {
+                    val tint = artTint()
+                    if (tint.alpha > 0f) drawOutline(shape.createOutline(size, layoutDirection, this), tint)
+                }
+            } else {
+                Modifier
+            },
+        )
         .then(
             if (useGlass) {
                 HighlightElement(
@@ -266,7 +288,8 @@ fun Modifier.liquidGlass(
     val onDrawSurfaceLambda = remember<DrawScope.() -> Unit>(tintedSurfaceColor, artTint) {
         {
             drawRect(color = tintedSurfaceColor, size = size)
-            if (artTint.alpha > 0f) drawRect(color = artTint, size = size)
+            val tint = artTint()
+            if (tint.alpha > 0f) drawRect(color = tint, size = size)
         }
     }
 
@@ -436,7 +459,8 @@ private fun Modifier.clearGlass(
     val onDrawSurfaceLambda = remember<DrawScope.() -> Unit>(fill, artTint) {
         {
             drawRect(color = fill, size = size)
-            if (artTint.alpha > 0f) drawRect(color = artTint, size = size)
+            val tint = artTint()
+            if (tint.alpha > 0f) drawRect(color = tint, size = size)
         }
     }
     return drawBackdrop(

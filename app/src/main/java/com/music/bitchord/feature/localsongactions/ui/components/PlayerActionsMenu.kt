@@ -207,6 +207,11 @@ private fun PlayerActionsMenuContent(song: Song, streamed: Boolean, actions: Pla
                         onDisabledClick = { actions.explain(R.string.streamed_song_no_file) },
                     )
                 }
+                GlassMenuItem(
+                    stringResource(R.string.lyrics_choose),
+                    { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.open(song) },
+                    icon = Icons.AutoMirrored.Rounded.Notes,
+                )
                 if (PlayerDetailsAction.EDIT_LYRICS !in hidden) {
                     GlassMenuItem(stringResource(R.string.edit_lyrics), actions.editLyrics, icon = Icons.AutoMirrored.Rounded.Notes, keepOpen = true)
                 }

@@ -1,5 +1,9 @@
 package com.music.bitchord.feature.localmusic.ui
 
+import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.MoreVert
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import com.music.bitchord.feature.localsongactions.ui.LocalSongActionsHelper
 import com.music.bitchord.feature.localsongactions.ui.components.LocalDeleteConfirmDialog
 import com.music.bitchord.feature.localsongactions.ui.components.LocalAddToPlaylistSheet
@@ -159,6 +163,8 @@ fun FolderBrowserScreen(
     onTagEditor: ((Song) -> Unit)? = null,
     onDetails: ((Song) -> Unit)? = null,
     onDeleteSong: ((Song) -> Unit)? = null,
+    /** Opens the tag editor on a folder's songs together: its own, and with its subfolders'. */
+    onBatchTagEditor: ((List<Song>, List<Song>) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -582,6 +588,32 @@ fun FolderBrowserScreen(
                                     )
                                 }
 
+                                if (!selecting && onBatchTagEditor != null) {
+                                    var folderMenuOpen by remember { mutableStateOf(false) }
+                                    Box {
+                                        androidx.compose.material3.IconButton(onClick = { folderMenuOpen = true }) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.MoreVert,
+                                                contentDescription = stringResource(R.string.folder_options),
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                        com.music.bitchord.ui.components.GlassDropdownMenu(
+                                            expanded = folderMenuOpen,
+                                            onDismissRequest = { folderMenuOpen = false },
+                                        ) {
+                                            com.music.bitchord.ui.components.GlassMenuItem(
+                                                text = stringResource(R.string.folder_batch_tags),
+                                                icon = Icons.Rounded.Edit,
+                                                onClick = {
+                                                    folderMenuOpen = false
+                                                    val own = subfolder.directSongs.ifEmpty { subfolder.allSongs }
+                                                    onBatchTagEditor(own, subfolder.allSongs)
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
                                 if (selecting) {
                                     SelectionMark(selected = folderPicked)
                                 } else {
@@ -600,7 +632,7 @@ fun FolderBrowserScreen(
                 if (node.directSongs.isNotEmpty()) {
                     item(key = "tracks_title") {
                         Text(
-                            text = "Tracks (${node.directSongs.size})",
+                            text = stringResource(R.string.l10n_tracks_count, node.directSongs.size),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,

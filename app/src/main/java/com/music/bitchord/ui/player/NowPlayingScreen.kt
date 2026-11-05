@@ -1621,7 +1621,10 @@ fun NowPlayingScreen(
     }
     val fullBleedArt by AppSettings.fullBleedArtwork.collectAsStateWithLifecycle()
     val keepOriginalArtworkAspectRatio by AppSettings.keepOriginalArtworkAspectRatio.collectAsStateWithLifecycle()
-    var loadedArtworkAspectRatio by remember(song.videoId, artUrl) { mutableFloatStateOf(1f) }
+    // Not reset per track: the sleeve keeps the last artwork's shape until the
+    // next one has loaded and said its own, instead of snapping to a square
+    // and back (which moved the title and everything under it on each skip).
+    var loadedArtworkAspectRatio by remember { mutableFloatStateOf(1f) }
     val animatedArtworkAspectRatio by animateFloatAsState(
         targetValue = loadedArtworkAspectRatio,
         animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
@@ -2527,9 +2530,16 @@ fun NowPlayingScreen(
                             artLoaded = it is AsyncImagePainter.State.Success
                             if (it is AsyncImagePainter.State.Success) {
                                 val image = it.result.image
-                                val aspectRatio = image.width.toFloat() / image.height.coerceAtLeast(1)
-                                if (aspectRatio.isFinite() && aspectRatio in 0.25f..4f) {
-                                    loadedArtworkAspectRatio = aspectRatio
+                                val measured = image.width.toFloat() / image.height.coerceAtLeast(1)
+                                if (measured.isFinite() && measured in 0.25f..4f) {
+                                    // Near-square is square, and a shape within
+                                    // 2% of the one showing is left alone: a few
+                                    // pixels of difference only made the sleeve
+                                    // (and the title under it) twitch.
+                                    val aspectRatio = if (kotlin.math.abs(measured - 1f) < 0.02f) 1f else measured
+                                    if (kotlin.math.abs(aspectRatio - loadedArtworkAspectRatio) > 0.02f * loadedArtworkAspectRatio) {
+                                        loadedArtworkAspectRatio = aspectRatio
+                                    }
                                 }
                             }
                             if (it is AsyncImagePainter.State.Error) {
@@ -3053,16 +3063,13 @@ fun NowPlayingScreen(
                             isPlaying = isPlaying,
                             onSeekToLine = onSeek,
                             lyricsUnavailable = lyricsUnavailable,
-                            footer = if (footerText != null || showLyricsLogsEnabled) {
-                                {
-                                    LyricsFooter(
-                                        text = footerText,
-                                        showLogs = showLyricsLogsEnabled,
-                                        onOpenLogs = { lyricsLogsOpen = true },
-                                    )
-                                }
-                            } else {
-                                null
+                            footer = {
+                                LyricsFooter(
+                                    text = footerText ?: stringResource(R.string.lyrics_choose),
+                                    showLogs = showLyricsLogsEnabled,
+                                    onOpenLogs = { lyricsLogsOpen = true },
+                                    onChooseLyrics = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.open(song) },
+                                )
                             },
                             modifier = panelModifier,
                         )
@@ -3859,16 +3866,13 @@ fun NowPlayingScreen(
                             isPlaying = isPlaying,
                             onSeekToLine = onSeek,
                             lyricsUnavailable = lyricsUnavailable,
-                            footer = if (footerText != null || showLyricsLogsEnabled) {
-                                {
-                                    LyricsFooter(
-                                        text = footerText,
-                                        showLogs = showLyricsLogsEnabled,
-                                        onOpenLogs = { lyricsLogsOpen = true },
-                                    )
-                                }
-                            } else {
-                                null
+                            footer = {
+                                LyricsFooter(
+                                    text = footerText ?: stringResource(R.string.lyrics_choose),
+                                    showLogs = showLyricsLogsEnabled,
+                                    onOpenLogs = { lyricsLogsOpen = true },
+                                    onChooseLyrics = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.open(song) },
+                                )
                             },
                             modifier = Modifier.fillMaxSize(),
                         )
@@ -5430,13 +5434,24 @@ private fun LyricsLoadingLine(trackKey: Any, modifier: Modifier = Modifier) {
     // Keep the loading copy stable while this track's lyric lookup is pending.
     // The resource array itself is not a stable Compose key.
     val text = remember(trackKey) { loadingLines.random() }
+    // Said only once a lookup is actually taking a while: most finish within
+    // half a second of a skip, and flashing "searching" for those was one more
+    // change of the line for nothing.
+    var shown by remember(trackKey) { mutableStateOf(false) }
+    LaunchedEffect(trackKey) {
+        kotlinx.coroutines.delay(500)
+        shown = true
+    }
+    val alpha by animateFloatAsState(if (shown) 0.55f else 0f, label = "lyricsLoadingAlpha")
     Text(
         text = text,
         style = MaterialTheme.typography.titleMedium,
-        color = Color.White.copy(alpha = 0.55f),
+        color = Color.White,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = modifier.padding(vertical = 4.dp),
+        modifier = modifier
+            .graphicsLayer { this.alpha = alpha }
+            .padding(vertical = 4.dp),
     )
 }
 
@@ -5677,7 +5692,7 @@ private object SkipButtonsAtToggleEnds : Arrangement.Horizontal {
  * switched on in Settings) a way into it.
  */
 @Composable
-private fun LyricsFooter(text: String?, showLogs: Boolean, onOpenLogs: () -> Unit) {
+private fun LyricsFooter(text: String?, showLogs: Boolean, onOpenLogs: () -> Unit, onChooseLyrics: () -> Unit) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -5693,6 +5708,8 @@ private fun LyricsFooter(text: String?, showLogs: Boolean, onOpenLogs: () -> Uni
                     .weight(1f, fill = false)
                     .clip(RoundedCornerShape(percent = 50))
                     .background(Color.White.copy(alpha = 0.10f))
+                    // Tapping the source opens the catalog, to pick another.
+                    .clickable(onClick = onChooseLyrics)
                     .padding(horizontal = 18.dp, vertical = 8.dp),
             )
         }
@@ -5734,26 +5751,42 @@ private fun TransportGlyph(
         targetValue = if (enabled) 1f else 0.3f,
         label = "transportAlpha",
     )
+    val animated by AppSettings.transportAnimation.collectAsStateWithLifecycle()
+    val interaction = remember { MutableInteractionSource() }
+    // Taps on this button, for the skip arrows to roll by one each.
+    var taps by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     Box(
         modifier = Modifier
             .size(size + 12.dp)
             .clip(CircleShape)
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interaction,
                 indication = null,
                 enabled = enabled,
             ) {
                 haptics.play(haptic)
+                taps++
                 onClick()
             },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = Color.White.copy(alpha = alpha),
-            modifier = Modifier.size(size),
-        )
+        if (animated) {
+            TransportMotionIcon(
+                icon = icon,
+                contentDescription = contentDescription,
+                tint = Color.White.copy(alpha = alpha),
+                taps = taps,
+                interaction = interaction,
+                modifier = Modifier.size(size),
+            )
+        } else {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = Color.White.copy(alpha = alpha),
+                modifier = Modifier.size(size),
+            )
+        }
     }
 }
 

@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.lyricseditor.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import com.music.bitchord.ui.components.GlassAlertDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -72,7 +74,7 @@ fun LyricsDownloadDialog(
         shape = RoundedCornerShape(24.dp),
         title = {
             Text(
-                text = "Download lyrics",
+                text = stringResource(R.string.l10n_download_lyrics),
                 style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
             )
         },
@@ -86,8 +88,8 @@ fun LyricsDownloadDialog(
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
-                    label = { Text("Title") },
-                    placeholder = { Text("Song title") },
+                    label = { Text(stringResource(R.string.l10n_title)) },
+                    placeholder = { Text(stringResource(R.string.l10n_song_title)) },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
@@ -96,8 +98,8 @@ fun LyricsDownloadDialog(
                 OutlinedTextField(
                     value = artist,
                     onValueChange = { artist = it },
-                    label = { Text("Artist") },
-                    placeholder = { Text("Artist name") },
+                    label = { Text(stringResource(R.string.l10n_artist)) },
+                    placeholder = { Text(stringResource(R.string.l10n_artist_name)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                     shape = RoundedCornerShape(12.dp),
@@ -107,8 +109,8 @@ fun LyricsDownloadDialog(
                 OutlinedTextField(
                     value = album,
                     onValueChange = { album = it },
-                    label = { Text("Album (Optional)") },
-                    placeholder = { Text("Album name") },
+                    label = { Text(stringResource(R.string.l10n_album_optional)) },
+                    placeholder = { Text(stringResource(R.string.l10n_album_name)) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                     shape = RoundedCornerShape(12.dp),
@@ -116,7 +118,7 @@ fun LyricsDownloadDialog(
                 )
 
                 Text(
-                    text = "Lyrics providers:",
+                    text = stringResource(R.string.l10n_lyrics_sources_colon),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
@@ -160,7 +162,7 @@ fun LyricsDownloadDialog(
                     },
                     enabled = canSearch && selectedProviders.isNotEmpty(),
                 ) {
-                    Text("Auto")
+                    Text(stringResource(R.string.l10n_auto))
                 }
 
                 Button(
@@ -174,13 +176,13 @@ fun LyricsDownloadDialog(
                     },
                     enabled = canSearch && selectedProviders.isNotEmpty(),
                 ) {
-                    Text("Search Results")
+                    Text(stringResource(R.string.l10n_search_results))
                 }
             }
         },
         dismissButton = {
             TextButton(onClick = onDismissRequest) {
-                Text("Cancel")
+                Text(stringResource(R.string.l10n_cancel))
             }
         },
         modifier = modifier,

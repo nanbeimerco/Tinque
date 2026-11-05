@@ -2728,6 +2728,26 @@ fun SettingsScreen(
                         onClick = { AppSettings.setBottomBarBounce(!bottomBarBounce) },
                     )
                 }
+                run {
+                    val transportAnimation by AppSettings.transportAnimation.collectAsStateWithLifecycle()
+                    RowDivider()
+                    SettingsRow(
+                        icon = Icons.Rounded.Animation,
+                        title = stringResource(R.string.transport_animation),
+                        subtitle = stringResource(R.string.transport_animation_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = transportAnimation,
+                                onCheckedChange = AppSettings::setTransportAnimation,
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setTransportAnimation(!transportAnimation) },
+                    )
+                }
                 if (lockBottomBarExpanded) {
                     RowDivider()
                     SettingsRow(
@@ -3165,6 +3185,45 @@ fun SettingsScreen(
                     },
                     onClick = { AppSettings.setAutoEmbedLyrics(!autoEmbedLyrics) },
                 )
+                run {
+                    val autoStrictness by AppSettings.lyricsAutoStrictness.collectAsStateWithLifecycle()
+                    val saveWordSync by AppSettings.lyricsSaveWordSync.collectAsStateWithLifecycle()
+                    val levels = com.music.bitchord.data.lyrics.LyricsStrictness.entries
+                    val current = levels.firstOrNull { it.name == autoStrictness } ?: com.music.bitchord.data.lyrics.LyricsStrictness.STANDARD
+                    RowDivider()
+                    SettingsRow(
+                        icon = Icons.Rounded.Language,
+                        title = stringResource(R.string.lyrics_auto_strictness_title),
+                        subtitle = stringResource(R.string.lyrics_auto_strictness_subtitle),
+                        value = stringResource(
+                            when (current) {
+                                com.music.bitchord.data.lyrics.LyricsStrictness.STRICT -> R.string.lyrics_strict_strict
+                                com.music.bitchord.data.lyrics.LyricsStrictness.STANDARD -> R.string.lyrics_strict_standard
+                                com.music.bitchord.data.lyrics.LyricsStrictness.LOOSE -> R.string.lyrics_strict_loose
+                                com.music.bitchord.data.lyrics.LyricsStrictness.TITLE_ONLY -> R.string.lyrics_strict_title_only
+                            },
+                        ),
+                        // Each tap steps to the next level, round.
+                        onClick = { AppSettings.setLyricsAutoStrictness(levels[(current.ordinal + 1) % levels.size].name) },
+                    )
+                    RowDivider()
+                    SettingsRow(
+                        icon = Icons.Rounded.FileDownload,
+                        title = stringResource(R.string.lyrics_save_word_sync_title),
+                        subtitle = stringResource(R.string.lyrics_save_word_sync_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = saveWordSync,
+                                onCheckedChange = AppSettings::setLyricsSaveWordSync,
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setLyricsSaveWordSync(!saveWordSync) },
+                    )
+                }
                 RowDivider()
                 SettingsRow(
                     icon = Icons.Rounded.Language,

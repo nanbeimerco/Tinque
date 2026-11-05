@@ -64,19 +64,41 @@ object LyricsRepository {
         LyricsLog.clear()
         LyricsLog.i("Repository", "Looking up lyrics for \"$title\" by \"$artist\" (${durationMs / 1000}s)")
 
-        return LyricsFetchEngine.fetchLyrics(
+        // Settings › how closely automatic lookups must match: only the song's
+        // details that strictness uses are sent. Whatever comes back is then
+        // checked against the song's real length — lyrics running well past
+        // its end belong to another track.
+        val strictness = LyricsCatalog.autoStrictness()
+        val ctcEnabled = sources.any { it.id.equals("ctc_align", ignoreCase = true) }
+        val nonCtcSources = sources.filterNot { it.id.equals("ctc_align", ignoreCase = true) }.toSet()
+        val effectiveSources = if (nonCtcSources.isNotEmpty()) nonCtcSources else sources
+
+        val result = LyricsFetchEngine.fetchLyrics(
             videoId = videoId,
             title = title,
-            artist = artist,
+            artist = if (strictness.useArtist) artist else "",
             durationMs = durationMs,
-            album = album,
-            sources = sources,
+            album = if (strictness.useAlbum) album else null,
+            sources = effectiveSources,
             order = order,
             prioritizeSyllableSync = prioritizeSyllableSync,
             fetcher = { source, vId, t, a, dMs, alb ->
-                fetch(source, vId, t, a, dMs, alb)
+                fetch(source, vId, t, a, if (strictness.useDuration) dMs else 0L, alb)
+                    ?.takeIf { lines ->
+                        LyricsCatalog.plausibleFor(lines, durationMs).also { ok ->
+                            if (!ok) LyricsLog.w(source.label, "Rejected: the lyrics run past the end of the song")
+                        }
+                    }
             }
         )
+
+        if (result != null && ctcEnabled && result.lines.isNotEmpty() && result.lines.none { it.timeMs > 0L }) {
+            LyricsLog.i("CTC", "Auto-aligning plain lyrics from ${result.source.label} with CTC acoustic model")
+            return result.copy(
+                lines = com.music.bitchord.data.lyrics.providers.CtcLrcGenerator.alignLines(result.lines, durationMs),
+            )
+        }
+        return result
     }
 
     suspend fun fetch(
@@ -89,21 +111,38 @@ object LyricsRepository {
     ): List<LyricLine>? {
         LyricsLog.i(source.label, "Querying ${source.label} (${source.id})...")
 
-        val ext = com.music.bitchord.feature.lyrics.manager.LyricsExtensionManager.getExtension(source.id)
         var found: List<LyricLine>? = null
 
-        if (ext != null && ext.scriptFile.exists()) {
-            val raw = com.music.bitchord.feature.lyrics.engine.LyricsExtensionExecutor.getLyrics(
-                extensionId = ext.id,
-                scriptFile = ext.scriptFile,
-                title = title,
-                artist = artist,
-                durationMs = durationMs,
-                album = album,
-                videoId = videoId,
-            )
+        if (com.music.bitchord.data.lyrics.providers.NativeLyricsProviders.isNativeProvider(source.id)) {
+            val raw = runCatching {
+                com.music.bitchord.data.lyrics.providers.NativeLyricsProviders.getLyrics(
+                    providerId = source.id,
+                    title = title,
+                    artist = artist,
+                    album = album,
+                    durationMs = durationMs,
+                )
+            }.getOrNull()
             if (!raw.isNullOrBlank()) {
-                found = ProviderLyrics.parse(raw)?.withBackgroundVocals()
+                found = ProviderLyrics.parse(raw)?.map { it.withDecodedEntities() }?.withBackgroundVocals()
+            }
+        }
+
+        if (found.isNullOrEmpty()) {
+            val ext = com.music.bitchord.feature.lyrics.manager.LyricsExtensionManager.getExtension(source.id)
+            if (ext != null && ext.scriptFile.exists()) {
+                val raw = com.music.bitchord.feature.lyrics.engine.LyricsExtensionExecutor.getLyrics(
+                    extensionId = ext.id,
+                    scriptFile = ext.scriptFile,
+                    title = title,
+                    artist = artist,
+                    durationMs = durationMs,
+                    album = album,
+                    videoId = videoId,
+                )
+                if (!raw.isNullOrBlank()) {
+                    found = ProviderLyrics.parse(raw)?.map { it.withDecodedEntities() }?.withBackgroundVocals()
+                }
             }
         }
 

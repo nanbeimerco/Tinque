@@ -239,7 +239,7 @@ private fun DetailsActionButtons(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = "Lyrics editor",
+                text = stringResource(R.string.l10n_lyrics_editor),
                 style = MaterialTheme.typography.labelLarge,
                 maxLines = 1,
             )
@@ -262,7 +262,7 @@ private fun DetailsActionButtons(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = "Tag editor",
+                text = stringResource(R.string.l10n_tag_editor),
                 style = MaterialTheme.typography.labelLarge,
                 maxLines = 1,
             )
@@ -294,30 +294,30 @@ private fun MetadataCard(
             )
 
             metadata?.album?.takeIf { it.isNotBlank() }?.let {
-                KeyValueRow(key = "Album", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_album), value = it)
             }
             metadata?.albumArtist?.takeIf { it.isNotBlank() }?.let {
-                KeyValueRow(key = "Artist", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_artist), value = it)
             } ?: metadata?.artist?.takeIf { it.isNotBlank() }?.let {
-                KeyValueRow(key = "Artist", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_artist), value = it)
             }
             metadata?.trackNumber?.takeIf { it.isNotBlank() }?.let {
-                KeyValueRow(key = "Track", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_track), value = it)
             }
             metadata?.discNumber?.takeIf { it.isNotBlank() }?.let {
-                KeyValueRow(key = "Disc", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_disc), value = it)
             }
             metadata?.publisher?.takeIf { it.isNotBlank() }?.let {
-                KeyValueRow(key = "Publisher", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_publisher), value = it)
             }
             metadata?.genre?.takeIf { it.isNotBlank() }?.let {
-                KeyValueRow(key = "Genre", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_genre), value = it)
             }
             metadata?.year?.takeIf { it.isNotBlank() }?.let {
-                KeyValueRow(key = "Year", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_year), value = it)
             }
             metadata?.composer?.takeIf { it.isNotBlank() }?.let {
-                KeyValueRow(key = "Composer", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_composer), value = it)
             }
         }
     }
@@ -357,7 +357,7 @@ private fun FileInfoCard(
                     BadgeChip(text = it, containerColor = MaterialTheme.colorScheme.primaryContainer)
                 }
                 if (metadata.isLossless) {
-                    BadgeChip(text = "Lossless", containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                    BadgeChip(text = stringResource(R.string.l10n_lossless), containerColor = MaterialTheme.colorScheme.secondaryContainer)
                 }
                 metadata.bitrate?.takeIf { it.isNotBlank() }?.let {
                     BadgeChip(text = it, containerColor = MaterialTheme.colorScheme.tertiaryContainer)
@@ -368,16 +368,16 @@ private fun FileInfoCard(
             }
 
             metadata.durationText?.let {
-                KeyValueRow(key = "Length", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_length), value = it)
             }
             metadata.fileSize?.let {
-                KeyValueRow(key = "Size", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_size), value = it)
             }
             metadata.channels?.let {
-                KeyValueRow(key = "Channels", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_channels), value = it)
             }
             metadata.filePath?.let {
-                KeyValueRow(key = "File path", value = it)
+                KeyValueRow(key = stringResource(R.string.l10n_file_path), value = it)
             }
         }
     }

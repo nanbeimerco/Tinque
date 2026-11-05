@@ -1,0 +1,10 @@
+{
+  "id": "genius",
+  "name": "Genius",
+  "version": "2.0.0",
+  "description": "洋楽・HIPHOP・グローバル楽曲に強い歌詞データベース",
+  "author": "Tinque",
+  "entrypoint": "index.js",
+  "wordSynced": false,
+  "defaultPriority": 14
+}

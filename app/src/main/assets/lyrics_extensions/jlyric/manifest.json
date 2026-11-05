@@ -1,0 +1,10 @@
+{
+  "id": "jlyric",
+  "name": "J-Lyric",
+  "version": "2.0.0",
+  "description": "J-POP・邦楽定番の軽量・高速歌詞検索サービス",
+  "author": "Tinque",
+  "entrypoint": "index.js",
+  "wordSynced": false,
+  "defaultPriority": 13
+}

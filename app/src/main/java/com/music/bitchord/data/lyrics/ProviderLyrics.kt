@@ -24,7 +24,26 @@ internal object ProviderLyrics {
             else -> EnhancedLrc.parse(content).ifEmpty { LrcParser.parseLrc(content) }
                 .ifEmpty { plain(content) }
         }
-        return lines.takeIf { found -> found.any { it.text.isNotBlank() } }
+        return markTranslations(lines).takeIf { found -> found.any { it.text.isNotBlank() } }
+    }
+
+    /**
+     * A line stamped with the same time as the one before it is that line's
+     * translation (the common LRC way to carry one, as NetEase does): kept as
+     * a display-only line timed by the original, so it can be told apart —
+     * shown under the original, and left out or kept when saving.
+     */
+    private fun markTranslations(lines: List<LyricLine>): List<LyricLine> {
+        if (lines.size < 2) return lines
+        val out = ArrayList<LyricLine>(lines.size)
+        for (line in lines) {
+            val previous = out.lastOrNull()
+            val isTranslation = previous != null && line.timeMs > 0 && line.timeMs == previous.timeMs &&
+                previous.timingSource == null && previous.text.isNotBlank() && line.text.isNotBlank() &&
+                line.words.isEmpty() && line.text != previous.text
+            out += if (isTranslation) line.copy(timingSource = previous) else line
+        }
+        return out
     }
 
     private fun plain(content: String): List<LyricLine> {

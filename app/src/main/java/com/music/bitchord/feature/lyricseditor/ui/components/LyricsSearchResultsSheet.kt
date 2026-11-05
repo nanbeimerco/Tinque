@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.lyricseditor.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import com.music.bitchord.ui.components.GlassModalBottomSheet
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -108,7 +110,7 @@ fun LyricsSearchResultsSheet(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Text(
-                            text = "Search Results",
+                            text = stringResource(R.string.l10n_search_results),
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = (-0.3).sp,
@@ -131,7 +133,7 @@ fun LyricsSearchResultsSheet(
                         }
                     }
                     Text(
-                        text = if (isSearching) "Searching providers..." else "Tap any result to load into editor",
+                        text = if (isSearching) stringResource(R.string.l10n_searching_sources) else stringResource(R.string.l10n_tap_to_load),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -149,7 +151,7 @@ fun LyricsSearchResultsSheet(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Refresh,
-                            contentDescription = "Re-search",
+                            contentDescription = stringResource(R.string.l10n_search_again),
                             modifier = Modifier
                                 .size(20.dp)
                                 .then(if (isSearching) Modifier.rotate(rotation) else Modifier),
@@ -164,7 +166,7 @@ fun LyricsSearchResultsSheet(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Tune,
-                            contentDescription = "Refine search query",
+                            contentDescription = stringResource(R.string.l10n_refine_search),
                             modifier = Modifier.size(20.dp),
                         )
                     }
@@ -176,7 +178,7 @@ fun LyricsSearchResultsSheet(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
-                            contentDescription = "Close",
+                            contentDescription = stringResource(R.string.l10n_close),
                             modifier = Modifier.size(20.dp),
                         )
                     }
@@ -201,11 +203,11 @@ fun LyricsSearchResultsSheet(
                             modifier = Modifier.size(42.dp),
                         )
                         Text(
-                            text = "Querying lyrics providers...",
+                            text = stringResource(R.string.l10n_querying_sources),
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                         )
                         Text(
-                            text = "Aggregating matches across enabled sources",
+                            text = stringResource(R.string.l10n_aggregating),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -232,11 +234,11 @@ fun LyricsSearchResultsSheet(
                         }
 
                         Text(
-                            text = "No matching lyrics found",
+                            text = stringResource(R.string.l10n_no_lyrics_found),
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                         )
                         Text(
-                            text = "Try re-searching or modifying the song title, artist, or providers.",
+                            text = stringResource(R.string.l10n_no_lyrics_hint),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -257,7 +259,7 @@ fun LyricsSearchResultsSheet(
                                     modifier = Modifier.size(16.dp),
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Re-search")
+                                Text(stringResource(R.string.l10n_search_again))
                             }
 
                             OutlinedButton(
@@ -270,7 +272,7 @@ fun LyricsSearchResultsSheet(
                                     modifier = Modifier.size(16.dp),
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Refine Query")
+                                Text(stringResource(R.string.l10n_refine_short))
                             }
                         }
                     }
@@ -313,7 +315,7 @@ fun LyricsSearchResultsSheet(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Re-search",
+                        text = stringResource(R.string.l10n_search_again),
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                     )
                 }
@@ -331,7 +333,7 @@ fun LyricsSearchResultsSheet(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Refine Query",
+                        text = stringResource(R.string.l10n_refine_short),
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                     )
                 }

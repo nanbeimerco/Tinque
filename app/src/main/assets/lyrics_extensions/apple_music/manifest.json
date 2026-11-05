@@ -1,10 +1,10 @@
 {
   "id": "apple_music",
-  "name": "Apple Music",
-  "version": "1.2.1",
-  "description": "Word-by-word synced lyrics (via proxy)",
-  "author": "SpotiFLAC / MusicBeat",
+  "name": "Apple Music (PaxSenix)",
+  "version": "2.0.0",
+  "description": "Apple Music TTML / 1文字・音節単位のカラオケ同期歌詞",
+  "author": "Tinque / LyricsForTryptify",
   "entrypoint": "index.js",
   "wordSynced": true,
-  "defaultPriority": 2
+  "defaultPriority": 1
 }

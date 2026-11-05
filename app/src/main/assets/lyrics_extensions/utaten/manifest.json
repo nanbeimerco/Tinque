@@ -1,0 +1,10 @@
+{
+  "id": "utaten",
+  "name": "UtaTen (ふりがな対応)",
+  "version": "2.0.0",
+  "description": "漢字ルビ（ふりがな）表示に対応した邦楽歌詞サイト",
+  "author": "Tinque",
+  "entrypoint": "index.js",
+  "wordSynced": false,
+  "defaultPriority": 12
+}

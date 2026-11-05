@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.localsongactions.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import com.music.bitchord.ui.components.GlassModalBottomSheet
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -66,7 +68,7 @@ fun LocalArtistPickerSheet(
                     .padding(horizontal = 22.dp, vertical = 8.dp),
             ) {
                 Text(
-                    text = "Artists",
+                    text = stringResource(R.string.l10n_artists),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,

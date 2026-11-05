@@ -1,5 +1,7 @@
 package com.music.bitchord.feature.lyricseditor.ui.components
 
+import com.music.bitchord.R
+import androidx.compose.ui.res.stringResource
 import com.music.bitchord.ui.components.GlassAlertDialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -41,7 +43,7 @@ fun LyricsSelectorDialog(
         onDismissRequest = onDismissRequest,
         shape = RoundedCornerShape(24.dp),
         title = {
-            Text(text = "Choose lyrics format")
+            Text(text = stringResource(R.string.l10n_choose_format))
         },
         text = {
             Column(
@@ -62,11 +64,11 @@ fun LyricsSelectorDialog(
                     )
                     Column(modifier = Modifier.padding(start = 8.dp)) {
                         Text(
-                            text = "Synced lyrics (LRC)",
+                            text = stringResource(R.string.l10n_synced_lrc),
                             style = MaterialTheme.typography.bodyLarge,
                         )
                         Text(
-                            text = "Includes timestamps for karaoke synchronization",
+                            text = stringResource(R.string.l10n_synced_lrc_sub),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -87,11 +89,11 @@ fun LyricsSelectorDialog(
                     )
                     Column(modifier = Modifier.padding(start = 8.dp)) {
                         Text(
-                            text = "Plain lyrics",
+                            text = stringResource(R.string.l10n_plain_lyrics),
                             style = MaterialTheme.typography.bodyLarge,
                         )
                         Text(
-                            text = "Static un-synced text without timestamps",
+                            text = stringResource(R.string.l10n_plain_lyrics_sub),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -101,12 +103,12 @@ fun LyricsSelectorDialog(
         },
         confirmButton = {
             Button(onClick = { onModeSelected(selectedMode) }) {
-                Text("Select")
+                Text(stringResource(R.string.l10n_select))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismissRequest) {
-                Text("Cancel")
+                Text(stringResource(R.string.l10n_cancel))
             }
         },
         modifier = modifier,

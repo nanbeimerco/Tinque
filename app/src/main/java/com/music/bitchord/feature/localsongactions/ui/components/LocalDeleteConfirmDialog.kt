@@ -46,7 +46,7 @@ fun LocalDeleteConfirmDialog(
         contract = ActivityResultContracts.StartIntentSenderForResult(),
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            Toast.makeText(context, "Deleted ${song.title}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.l10n_deleted, song.title), Toast.LENGTH_SHORT).show()
             onDeleted()
         }
         onDismissRequest()
@@ -74,10 +74,10 @@ fun LocalDeleteConfirmDialog(
         }
 
         if (success) {
-            Toast.makeText(context, "Deleted ${song.title}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.l10n_deleted, song.title), Toast.LENGTH_SHORT).show()
             onDeleted()
         } else {
-            Toast.makeText(context, "Could not delete file", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.l10n_delete_failed), Toast.LENGTH_SHORT).show()
         }
         onDismissRequest()
     }
@@ -117,11 +117,11 @@ fun LocalDeleteConfirmDialog(
                 )
             },
             title = {
-                Text(text = "Delete from device")
+                Text(text = stringResource(R.string.l10n_delete_from_device))
             },
             text = {
                 Text(
-                    text = "Are you sure you want to permanently delete \"${song.title}\" from your device? This action cannot be undone.",
+                    text = stringResource(R.string.l10n_delete_confirm, song.title),
                 )
             },
             confirmButton = {
