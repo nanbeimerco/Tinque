@@ -23,6 +23,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -31,6 +33,11 @@ import androidx.compose.ui.unit.dp
 import com.music.bitchord.R
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.feature.localmusic.domain.model.LocalPlaylist
+import com.music.bitchord.data.settings.LibrarySection
+import com.music.bitchord.feature.library.data.LibraryEntry
+import com.music.bitchord.feature.library.data.LibraryEntryType
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.background
 import com.music.bitchord.feature.localmusic.ui.components.LocalPlaylistItem
 import com.music.bitchord.ui.components.ExpressiveGroupDefaults
 import com.music.bitchord.ui.components.SongRow
@@ -87,10 +94,27 @@ fun LibraryListContent(
     /** Picked tracks while selecting, for the rows' selected look. */
     selectedIds: Set<String> = emptySet(),
     onSongSwipe: (Song) -> Unit = {},
+    /** The All page's groups, in the listener's order, and the ones they hid. */
+    sectionOrder: List<LibrarySection> = LibrarySection.entries,
+    hiddenSections: Set<LibrarySection> = emptySet(),
+    /** Songs, albums and artists added to the Library, newest first. */
+    libraryEntries: List<LibraryEntry> = emptyList(),
+    /** Each SONG entry's song, where it is still on the device. */
+    entrySongs: Map<LibraryEntry, Song> = emptyMap(),
+    artFor: (LibraryEntry) -> String? = { null },
+    onOpenAlbum: (String, String?) -> Unit = { _, _ -> },
+    onOpenArtist: (String) -> Unit = {},
+    onShowAll: (LibraryFilter) -> Unit = {},
 ) {
-    val showFavorites = filter == LibraryFilter.ALL || filter == LibraryFilter.FAVORITES
-    val showPlaylists = filter == LibraryFilter.ALL || filter == LibraryFilter.PLAYLISTS
-    val showHistory = filter == LibraryFilter.ALL
+    val showFavorites = filter == LibraryFilter.FAVORITES
+    val showPlaylists = filter == LibraryFilter.PLAYLISTS
+    val showHistory = false
+    val librarySongList = libraryEntries.mapNotNull { entrySongs[it] }.distinctBy { it.videoId }
+    val albumEntries = libraryEntries.filter { it.type == LibraryEntryType.ALBUM }
+    val artistEntries = libraryEntries.filter { it.type == LibraryEntryType.ARTIST }
+    val recent = recentLibraryItems(libraryEntries, entrySongs, artFor).take(16)
+    val visibleSections = if (filter == LibraryFilter.ALL) sectionOrder.filter { it !in hiddenSections } else emptyList()
+    var editLayout by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
 
     LazyColumn(
         state = state,
@@ -102,59 +126,100 @@ fun LibraryListContent(
     ) {
         item(key = "library_header") { header() }
 
-        if (showFavorites) {
-            item(key = "library_favorites_title") {
-                SectionHeader(stringResource(R.string.favorites))
-            }
-            item(key = "library_list_favorites") {
-                LibraryFavoritesItem(
-                    songCount = favoriteSongCount,
-                    onClick = onFavoritesClick,
-                    onPlay = onFavoritesPlay,
-                    modifier = Modifier.padding(horizontal = SECTION_GUTTER),
-                    shape = expressiveItemShape(0, 1),
-                    containerColor = ExpressiveGroupDefaults.containerColor(),
+        // "All": every group, in the listener's order.
+        visibleSections.forEach { section ->
+            when (section) {
+                LibrarySection.RECENTLY_ADDED -> if (recent.isNotEmpty()) {
+                    item(key = "library_recent_title") { LibrarySectionTitle(stringResource(R.string.recently_added_to_library)) }
+                    item(key = "library_recent_shelf") {
+                        LibraryShelf(recent, key = { "${it.addedAt}_${it.hashCode()}" }) { item ->
+                            when (item) {
+                                is RecentLibraryItem.OneSong -> LibraryCard(
+                                    title = item.song.title,
+                                    subtitle = item.song.artist,
+                                    artworkUrl = item.song.thumbnailUrl,
+                                    heat = com.music.bitchord.ui.components.rememberSongTileHeat(item.song),
+                                    onClick = { onSongClick(listOf(item.song), 0) },
+                                )
+                                is RecentLibraryItem.AlbumBatch -> LibraryCard(
+                                    title = item.title,
+                                    subtitle = item.artist,
+                                    artworkUrl = item.artworkUrl,
+                                    heat = com.music.bitchord.ui.components.rememberTileHeat(item.songs),
+                                    onClick = { onOpenAlbum(item.title, item.artworkUrl) },
+                                )
+                                is RecentLibraryItem.Collection -> LibraryCard(
+                                    title = item.entry.title,
+                                    subtitle = item.entry.subtitle,
+                                    artworkUrl = item.artworkUrl,
+                                    round = item.entry.type == LibraryEntryType.ARTIST,
+                                    heat = rememberEntryHeat(item.entry, librarySongs),
+                                    onClick = {
+                                        if (item.entry.type == LibraryEntryType.ARTIST) onOpenArtist(item.entry.title)
+                                        else onOpenAlbum(item.entry.title, item.artworkUrl)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+                LibrarySection.FAVORITES -> favoritesGroup(favoriteSongCount, onFavoritesClick, onFavoritesPlay, librarySongs)
+                LibrarySection.PLAYLISTS -> playlistsGroup(
+                    playlists, onPlaylistClick, onPlaylistPlay, onRenamePlaylist, onDeletePlaylist,
+                    onChangePlaylistCover, onResetPlaylistCover, onMovePlaylist, onCreatePlaylist, librarySongs,
                 )
-            }
-        }
-
-        if (showPlaylists) {
-            item(key = "library_playlists_title") {
-                SectionHeader(
-                    title = stringResource(R.string.playlists),
-                    actionLabel = stringResource(R.string.new_playlist),
-                    actionIsAdd = true,
-                    onAction = onCreatePlaylist,
-                )
-            }
-            if (playlists.isEmpty()) {
-                item(key = "library_playlists_empty") {
-                    CreatePlaylistRow(onCreatePlaylist)
+                LibrarySection.SONGS -> if (librarySongList.isNotEmpty()) {
+                    val preview = librarySongList.take(5)
+                    item(key = "library_songs_title") {
+                        LibrarySectionTitle(
+                            stringResource(R.string.songs),
+                            actionLabel = if (librarySongList.size > preview.size) stringResource(R.string.show_all) else null,
+                            onAction = { onShowAll(LibraryFilter.SONGS) },
+                        )
+                    }
+                    librarySongRows("library_songs", preview, librarySongList, currentSong, isPlaying, selectedIds,
+                        onSongClick, onSongLongPress, onSongSwipe, onSongMore, songMenu)
+                }
+                LibrarySection.ALBUMS -> if (albumEntries.isNotEmpty()) {
+                    item(key = "library_albums_title") {
+                        LibrarySectionTitle(stringResource(R.string.albums), stringResource(R.string.show_all)) { onShowAll(LibraryFilter.ALBUMS) }
+                    }
+                    item(key = "library_albums_shelf") {
+                        LibraryShelf(albumEntries, key = { it.key }) { e ->
+                            LibraryCard(e.title, e.subtitle, e.artworkUrl ?: artFor(e), heat = rememberEntryHeat(e, librarySongs)) { onOpenAlbum(e.title, e.artworkUrl ?: artFor(e)) }
+                        }
+                    }
+                }
+                LibrarySection.ARTISTS -> if (artistEntries.isNotEmpty()) {
+                    item(key = "library_artists_title") {
+                        LibrarySectionTitle(stringResource(R.string.artists), stringResource(R.string.show_all)) { onShowAll(LibraryFilter.ARTISTS) }
+                    }
+                    item(key = "library_artists_shelf") {
+                        LibraryShelf(artistEntries, key = { it.key }) { e ->
+                            LibraryCard(e.title, "", e.artworkUrl ?: artFor(e), round = true, size = 112.dp, heat = rememberEntryHeat(e, librarySongs)) { onOpenArtist(e.title) }
+                        }
+                    }
                 }
             }
-            itemsIndexed(playlists, key = { _, playlist -> playlist.id }) { index, playlist ->
-                LocalPlaylistItem(
-                    playlist = playlist,
-                    onClick = { onPlaylistClick(playlist) },
-                    onPlay = { onPlaylistPlay(playlist) },
-                    onRename = { onRenamePlaylist(playlist) },
-                    onDelete = { onDeletePlaylist(playlist) },
-                    onChangeCover = { onChangePlaylistCover(playlist) },
-                    onResetCover = { onResetPlaylistCover(playlist) },
-                    canMoveUp = index > 0,
-                    canMoveDown = index < playlists.lastIndex,
-                    onMoveUp = { onMovePlaylist(playlist, -1) },
-                    onMoveDown = { onMovePlaylist(playlist, 1) },
-                    librarySongs = librarySongs,
-                    modifier = Modifier
-                        .padding(horizontal = SECTION_GUTTER)
-                        .padding(bottom = if (index < playlists.lastIndex) ExpressiveGroupDefaults.Gap else 0.dp),
-                    shape = expressiveItemShape(index, playlists.size),
-                    containerColor = ExpressiveGroupDefaults.containerColor(),
-                )
-            }
         }
 
+        // One group on its own, from its filter chip.
+        when (filter) {
+            LibraryFilter.SONGS -> if (librarySongList.isEmpty()) libraryEmptyNote("library_songs_empty") else
+                librarySongRows("library_songs_all", librarySongList, librarySongList, currentSong, isPlaying, selectedIds,
+                    onSongClick, onSongLongPress, onSongSwipe, onSongMore, songMenu)
+            LibraryFilter.ALBUMS -> if (albumEntries.isEmpty()) libraryEmptyNote("library_albums_empty") else
+                collectionRows("library_albums_all", albumEntries, round = false, artFor = artFor) { e -> onOpenAlbum(e.title, e.artworkUrl ?: artFor(e)) }
+            LibraryFilter.ARTISTS -> if (artistEntries.isEmpty()) libraryEmptyNote("library_artists_empty") else
+                collectionRows("library_artists_all", artistEntries, round = true, artFor = artFor) { e -> onOpenArtist(e.title) }
+            else -> Unit
+        }
+
+        if (showFavorites) favoritesGroup(favoriteSongCount, onFavoritesClick, onFavoritesPlay, librarySongs)
+        if (showPlaylists) playlistsGroup(
+            playlists, onPlaylistClick, onPlaylistPlay, onRenamePlaylist, onDeletePlaylist,
+            onChangePlaylistCover, onResetPlaylistCover, onMovePlaylist, onCreatePlaylist, librarySongs,
+        )
         if (showHistory) {
             historySection(
                 key = "recent",
@@ -187,6 +252,16 @@ fun LibraryListContent(
                 onSongSwipe = onSongSwipe,
             )
         }
+
+        // "All"'s groups: order and visibility, edited here rather than in Settings.
+        if (filter == LibraryFilter.ALL) {
+            item(key = "library_edit_layout") {
+                com.music.bitchord.ui.components.EditLayoutButton(onClick = { editLayout = true })
+            }
+        }
+    }
+    if (editLayout) {
+        com.music.bitchord.ui.components.LibraryLayoutSheet(onDismiss = { editLayout = false })
     }
 }
 
@@ -301,5 +376,123 @@ private fun CreatePlaylistRow(onCreatePlaylist: () -> Unit) {
             fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.onSurface,
         )
+    }
+}
+
+private fun LazyListScope.favoritesGroup(
+    favoriteSongCount: Int,
+    onFavoritesClick: () -> Unit,
+    onFavoritesPlay: () -> Unit,
+    librarySongs: List<Song>,
+) {
+    item(key = "library_favorites_title") {
+        SectionHeader(stringResource(R.string.favorites))
+    }
+    item(key = "library_list_favorites") {
+        LibraryFavoritesItem(
+            songCount = favoriteSongCount,
+            onClick = onFavoritesClick,
+            onPlay = onFavoritesPlay,
+            modifier = Modifier.padding(horizontal = SECTION_GUTTER),
+            shape = expressiveItemShape(0, 1),
+            containerColor = ExpressiveGroupDefaults.containerColor(),
+            heat = com.music.bitchord.ui.components.rememberFavoritesTileHeat(librarySongs),
+        )
+    }
+}
+
+private fun LazyListScope.playlistsGroup(
+    playlists: List<LocalPlaylist>,
+    onPlaylistClick: (LocalPlaylist) -> Unit,
+    onPlaylistPlay: (LocalPlaylist) -> Unit,
+    onRenamePlaylist: (LocalPlaylist) -> Unit,
+    onDeletePlaylist: (LocalPlaylist) -> Unit,
+    onChangePlaylistCover: (LocalPlaylist) -> Unit,
+    onResetPlaylistCover: (LocalPlaylist) -> Unit,
+    onMovePlaylist: (LocalPlaylist, Int) -> Unit,
+    onCreatePlaylist: () -> Unit,
+    librarySongs: List<Song>,
+) {
+    item(key = "library_playlists_title") {
+        SectionHeader(
+            title = stringResource(R.string.playlists),
+            actionLabel = stringResource(R.string.new_playlist),
+            actionIsAdd = true,
+            onAction = onCreatePlaylist,
+        )
+    }
+    if (playlists.isEmpty()) {
+        item(key = "library_playlists_empty") {
+            CreatePlaylistRow(onCreatePlaylist)
+        }
+    }
+    itemsIndexed(playlists, key = { _, playlist -> playlist.id }) { index, playlist ->
+        LocalPlaylistItem(
+            playlist = playlist,
+            onClick = { onPlaylistClick(playlist) },
+            onPlay = { onPlaylistPlay(playlist) },
+            onRename = { onRenamePlaylist(playlist) },
+            onDelete = { onDeletePlaylist(playlist) },
+            onChangeCover = { onChangePlaylistCover(playlist) },
+            onResetCover = { onResetPlaylistCover(playlist) },
+            canMoveUp = index > 0,
+            canMoveDown = index < playlists.lastIndex,
+            onMoveUp = { onMovePlaylist(playlist, -1) },
+            onMoveDown = { onMovePlaylist(playlist, 1) },
+            librarySongs = librarySongs,
+            modifier = Modifier
+                .padding(horizontal = SECTION_GUTTER)
+                .padding(bottom = if (index < playlists.lastIndex) ExpressiveGroupDefaults.Gap else 0.dp),
+            shape = expressiveItemShape(index, playlists.size),
+            containerColor = ExpressiveGroupDefaults.containerColor(),
+        )
+    }
+}
+
+/** Albums or artists added to the Library, as rows (their filter's full list). */
+private fun LazyListScope.collectionRows(
+    key: String,
+    entries: List<LibraryEntry>,
+    round: Boolean,
+    artFor: (LibraryEntry) -> String?,
+    onClick: (LibraryEntry) -> Unit,
+) {
+    itemsIndexed(entries, key = { _, e -> "${key}_${e.key}" }) { index, e ->
+        val groupColor = ExpressiveGroupDefaults.containerColor()
+        Row(
+            modifier = Modifier
+                .padding(horizontal = SECTION_GUTTER)
+                .padding(bottom = if (index < entries.lastIndex) ExpressiveGroupDefaults.Gap else 0.dp)
+                .fillMaxWidth()
+                .expressiveItem(index, entries.size, groupColor)
+                .clickable { onClick(e) }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val shape = if (round) androidx.compose.foundation.shape.CircleShape else androidx.compose.foundation.shape.RoundedCornerShape(10.dp)
+            Box(
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(shape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                contentAlignment = Alignment.Center,
+            ) {
+                coil3.compose.AsyncImage(
+                    model = e.artworkUrl ?: artFor(e),
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.size(52.dp).clip(shape),
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
+                Text(e.title, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface, maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                if (e.subtitle.isNotBlank()) {
+                    Text(e.subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                }
+            }
+        }
     }
 }

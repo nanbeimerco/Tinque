@@ -138,6 +138,47 @@ internal class GlassPillMotion(
     val isDragging: Boolean
         get() = dragging
 
+    /**
+     * The motion measured off tab_animation.mp4 (mocks/liquid_glass_v7.html) instead of the
+     * liquid_glass_easy port: a critically damped travel, glass on in one frame at the tap and
+     * off in one frame on arrival, a stretch/squash driven by speed and braking, a lift only
+     * while held, and the destination glyph popping back on landing. Only the motion changes;
+     * the lens is still [GlassSelectionPill]'s.
+     */
+    var sampleModel: Boolean = false
+
+    /** Sample model: width scales by `1 + this` (speed stretches, braking narrows). */
+    var stretchX by mutableFloatStateOf(0f)
+        private set
+
+    /** Sample model: height scales by `1 + this` (negative while it flies, positive braking). */
+    var squashY by mutableFloatStateOf(0f)
+        private set
+
+    /** Sample model: the landing pop of the destination glyph, `0.62` -> `~1.15` -> `1`. */
+    private var glyphPop by mutableFloatStateOf(1f)
+    private var glyphPopVel = 0.0
+    private var sxVel = 0.0
+    private var syVel = 0.0
+    private var sxPos = 0.0
+    private var syPos = 0.0
+    private var travelDir = 1.0
+
+    /**
+     * Sample model: the selected tab's glyph scale. Under the travelling glass it shrinks away
+     * as the pill closes in on it (gone for the last few frames), then pops on landing.
+     */
+    fun glyphScale(tabIndex: Int): Float {
+        if (!sampleModel) return 1f
+        var s = glyphPop
+        if (material > 0.5f && !dragging) {
+            val d = abs(position - tabIndex)
+            val t = ((d - 0.05f) / 0.25f).coerceIn(0f, 1f)
+            s *= t * t * (3f - 2f * t)
+        }
+        return s
+    }
+
     private var travelPos = initialIndex.toDouble()
     private var travelVel = 0.0
     private var travelTarget = travelPos
@@ -178,6 +219,7 @@ internal class GlassPillMotion(
         travelFrom = travelPos
         travelTarget = next.toDouble()
         travelSign = signOfTravel(travelTarget - travelFrom)
+        if (travelSign != 0.0) travelDir = travelSign
         isFlat = false
         start()
     }
@@ -200,6 +242,9 @@ internal class GlassPillMotion(
         squashModel.stop()
         travelSign = 0.0
         travelSignEased = 0.0
+        sxPos = 0.0; sxVel = 0.0
+        syPos = 0.0; syVel = 0.0
+        glyphPop = 1f; glyphPopVel = 0.0
         publish()
         isFlat = true
     }
@@ -229,7 +274,9 @@ internal class GlassPillMotion(
      */
     fun release(next: Int) {
         if (!dragging) return
-        val from = dragFollow
+        // Sample model: the held pill has been travelling on its own spring; it carries on
+        // from where it is, at the speed it has.
+        val from = if (sampleModel) travelPos else dragFollow
         dragging = false
         index = next
         if (reduceMotion) {
@@ -238,7 +285,7 @@ internal class GlassPillMotion(
         }
         travelActive = true
         travelPos = from
-        travelVel = 0.0
+        if (!sampleModel) travelVel = 0.0
         travelFrom = from
         travelTarget = next.toDouble()
         travelSign = signOfTravel(travelTarget - travelFrom)
@@ -265,6 +312,7 @@ internal class GlassPillMotion(
 
     /** One frame of everything. False once all of it has settled. */
     private fun tick(dt: Double, now: Double): Boolean {
+        if (sampleModel) return tickSample(dt)
         // 1) Travel.
         var travelSettled = true
         if (travelActive) {
@@ -347,6 +395,82 @@ internal class GlassPillMotion(
         return !settled
     }
 
+    /**
+     * One frame of the sample model (mocks/liquid_glass_v7.html, fitted to tab_animation.mp4).
+     * Positions in tab steps, speeds in tab steps per second.
+     */
+    private fun tickSample(dt: Double): Boolean {
+        val target = if (dragging) dragTarget else travelTarget
+        // Travel: critically damped (w = 18 rad/s) — no overshoot, ~0.27 s to 96%, the same
+        // time for one tab or two. Under a finger, a much stiffer follow.
+        val k = if (dragging) 900.0 else 324.0
+        val c = if (dragging) 60.0 else 36.0
+        val accel = (-k * (travelPos - target) - c * travelVel).coerceIn(-420.0, 420.0)
+        springStep(travelPos, travelVel, target, dt, k, c).let { travelPos = it.first; travelVel = it.second }
+        val dist = abs(target - travelPos)
+        val speed = abs(travelVel)
+        if (!dragging && dist < 0.003 && speed < 0.05) {
+            travelPos = target
+            travelVel = 0.0
+        }
+        if (travelVel != 0.0) travelDir = sign(travelVel)
+        val aAlong = accel * travelDir                       // + speeding up, - braking
+
+        // Lift only while held: 121% wide, 118.6% of the bar tall (sizes from the caller).
+        val liftTarget = if (dragging) 1.0 else 0.0
+        stepLift(liftXPos, liftXVel, liftTarget, dt, 230.0, 22.0).let { liftXPos = it.first; liftXVel = it.second }
+        stepLift(liftYPos, liftYVel, liftTarget, dt, 230.0, 22.0).let { liftYPos = it.first; liftYVel = it.second }
+
+        // Glass on in one frame at the tap, off in one frame on arrival (< 2% of a tab left).
+        val moving = dragging || dist > 0.02 || speed > 0.5
+        val wasGlass = liftPos > 0.5
+        stepLift(liftPos, liftVel, if (moving) 1.0 else 0.0, dt, 4000.0, 126.0).let { liftPos = it.first; liftVel = it.second }
+        if (wasGlass && liftPos <= 0.5 && !dragging) {
+            glyphPop = 0.62f                                  // the landing pop starts here
+            glyphPopVel = 0.0
+        }
+        springStep(glyphPop.toDouble(), glyphPopVel, 1.0, dt, 680.0, 16.0).let {
+            glyphPop = it.first.toFloat(); glyphPopVel = it.second
+        }
+
+        // Shape: speed stretches it wide and flat; braking squeezes it narrow and tall
+        // (fit: rms 12.6 px on a 447 px pill). Held, a much stronger stretch, squash to 19%.
+        val tx: Double
+        val ty: Double
+        if (dragging) {
+            tx = (0.042 * speed).coerceIn(0.0, 0.45)
+            ty = -minOf(0.19, 0.03 * speed)
+        } else {
+            tx = 0.00809 * speed + 0.00312 * aAlong
+            ty = -minOf(0.0235, 0.0037 * speed) - 0.002 * aAlong
+        }
+        springStep(sxPos, sxVel, tx, dt, 15.15 * 15.15, 2 * 0.545 * 15.15).let { sxPos = it.first; sxVel = it.second }
+        springStep(syPos, syVel, ty, dt, 16.9 * 16.9, 2 * 0.568 * 16.9).let { syPos = it.first; syVel = it.second }
+
+        val shapeSettled = abs(sxPos) < 0.001 && abs(syPos) < 0.001 && abs(sxVel) < 0.01 && abs(syVel) < 0.01
+        val popSettled = abs(glyphPop - 1f) < 0.002f && abs(glyphPopVel) < 0.01
+        val liftSettled = liftXPos == 0.0 && liftYPos == 0.0
+        val settled = !dragging && dist < 0.003 && speed < 0.05 && liftPos <= 0.001 &&
+            liftSettled && shapeSettled && popSettled
+        if (settled) {
+            travelActive = false
+            liftPos = 0.0; liftVel = 0.0
+            sxPos = 0.0; sxVel = 0.0
+            syPos = 0.0; syVel = 0.0
+            glyphPop = 1f; glyphPopVel = 0.0
+        }
+        position = travelPos.toFloat()
+        liftX = liftXPos.toFloat()
+        liftY = liftYPos.toFloat()
+        material = liftPos.coerceIn(0.0, 1.0).toFloat()
+        deviation = 0f
+        glassPresence = material
+        stretchX = sxPos.toFloat()
+        squashY = syPos.toFloat()
+        isFlat = settled
+        return !settled
+    }
+
     private fun publish() {
         position = (if (dragging) dragFollow else travelPos).toFloat()
         liftX = liftXPos.toFloat()
@@ -368,6 +492,12 @@ internal class GlassPillMotion(
     fun liveSize(rest: Size, lifted: Size): Size {
         val w = rest.width + (lifted.width - rest.width) * liftX
         val h = rest.height + (lifted.height - rest.height) * liftY
+        if (sampleModel) {
+            return Size(
+                (w * (1 + stretchX)).coerceAtLeast(rest.width * 0.6f),
+                (h * (1 + squashY)).coerceAtLeast(rest.height * 0.55f),
+            )
+        }
         return Size(w * (1 + deviation), h * (1 - deviation))
     }
 

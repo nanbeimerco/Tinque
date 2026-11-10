@@ -56,9 +56,54 @@ object ListeningRecorder {
      * runtime stands in until it does, and a track with neither simply has to
      * clear the thirty-second floor to count as a play.
      */
+    // ── Heat: one listen, from its first tick to the track change ──────────
+    //
+    // Unlike [playedThisTrack] this survives a pause: a track paused halfway and
+    // resumed is still one listen, judged on how far it got in total. It is
+    // closed by [onTransition] (which knows whether the listener skipped) or,
+    // failing that, by the next track's first tick.
+    private var heatSong: Song? = null
+    private var heatPlayed: Long = 0L
+    private var heatDuration: Long = 0L
+
+    /**
+     * The player moved off the current track. [userSkipped] when the listener
+     * did it by hand; [ranToEnd] when the track played out, which credits the
+     * last few seconds the sampler had not ticked through yet.
+     */
+    @Synchronized
+    fun onTransition(userSkipped: Boolean, ranToEnd: Boolean) {
+        val song = heatSong ?: return
+        val played = if (ranToEnd && heatDuration > 0) maxOf(heatPlayed, heatDuration) else heatPlayed
+        HeatStore.finishListen(song, played, heatDuration, userSkipped && !ranToEnd)
+        heatSong = null
+        heatPlayed = 0L
+        heatDuration = 0L
+    }
+
+    /**
+     * The player arrived on [song]. Opening the listen here rather than on its
+     * first tick is what lets a skip in the first few seconds — before the
+     * sampler has ticked once — still count against it.
+     */
+    @Synchronized
+    fun onTrackStarted(song: Song?) {
+        if (song == null || song.videoId == heatSong?.videoId) return
+        heatSong?.let { HeatStore.finishListen(it, heatPlayed, heatDuration, userSkipped = false) }
+        heatSong = song
+        heatPlayed = 0L
+        heatDuration = song.durationMillis()
+    }
+
     @Synchronized
     fun onSample(song: Song, durationMs: Long) {
         val now = System.currentTimeMillis()
+        if (heatSong?.videoId != song.videoId) {
+            heatSong?.let { HeatStore.finishListen(it, heatPlayed, heatDuration, userSkipped = false) }
+            heatSong = song
+            heatPlayed = 0L
+        }
+        heatDuration = durationMs.takeIf { it > 0 } ?: song.durationMillis()
         if (song.videoId != currentId) {
             // A new track anchors the clock and contributes nothing yet — see
             // the class note on undercounting.
@@ -72,6 +117,7 @@ object ListeningRecorder {
         lastSampleAt = now
         if (step <= 0L) return
         playedThisTrack += step
+        heatPlayed += step
 
         val length = durationMs.takeIf { it > 0 } ?: song.durationMillis()
         val threshold = if (length > 0) {

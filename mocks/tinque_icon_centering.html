@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>アイコンの中心補正</title>
+<style>
+  :root { --bg: #f4f3f1; --card: #fff; --text: #1b1b1b; --sub: #6b6b6b; --line: #dedcd8; }
+  :root[data-theme="dark"] { --bg: #121212; --card: #1d1d1f; --text: #ececec; --sub: #9a9a9a; --line: #2c2c2e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 20px 16px 40px; background: var(--bg); color: var(--text); font-family: "Noto Sans JP", system-ui, sans-serif; }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  .lead { font-size: 13px; color: var(--sub); margin: 0 0 14px; line-height: 1.6; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .controls button { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .controls button.on { background: var(--text); color: var(--bg); }
+  .label { font-size: 12px; color: var(--sub); align-self: center; }
+  section { background: var(--card); border-radius: 18px; padding: 14px 16px; margin-bottom: 12px; }
+  section h2 { font-size: 14px; margin: 0 0 10px; color: var(--sub); font-weight: 500; }
+  .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; text-align: center; }
+  .cell p { margin: 6px 0 0; font-size: 12px; color: var(--sub); }
+  .cell p b { color: var(--text); }
+  .small { display: flex; gap: 18px; justify-content: space-around; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<h1>アイコンの中心補正（右へずらす量）</h1>
+<p class="lead">数字は今の位置（元デザインの +1.5 を含む）から、さらに右へずらす量です（100 マス中）。0 が v2.6.1 の今の見た目です。線の重さの中心は、今は 1.7 左にあります。</p>
+<div class="controls">
+  <span class="label">ガイド</span>
+  <button id="gOff" class="on">なし</button>
+  <button id="gOn">中心線を表示</button>
+  <span class="label" style="margin-left:8px">背景</span>
+  <button data-t="light" class="on">ライト</button>
+  <button data-t="dark">ダーク</button>
+</div>
+<div id="out"></div>
+<script>
+const SHIFTS = [0, 2, 3, 4, 5];
+const SHAPES = [
+  { name: '円形（多くの端末）', clip: s => `<circle cx="50" cy="50" r="50"/>` },
+  { name: 'スクワークル（角の丸い四角）', clip: s => `<path d="M50 0C88 0 100 12 100 50S88 100 50 100 0 88 0 50 12 0 50 0Z"/>` },
+  { name: '角丸の四角（元デザイン・設定の見本）', clip: s => `<rect width="100" height="100" rx="22"/>` },
+];
+let guide = false, uid = 0;
+// The launcher shows the 108dp foreground through a 72dp mask: the mark is
+// 64% of its 100-unit drawing, i.e. 64/72 of the visible icon.
+function icon(shape, shift, size) {
+  const id = 'c' + (uid++);
+  const k = 64 / 72, off = (100 - 100 * k) / 2;
+  const g = guide ? `<line x1="50" y1="0" x2="50" y2="100" stroke="#1D9E75" stroke-width="0.8" stroke-dasharray="2 2"/>` : '';
+  return `<svg width="${size}" height="${size}" viewBox="0 0 100 100">
+    <defs><clipPath id="${id}">${shape.clip()}</clipPath></defs>
+    <g clip-path="url(#${id})">
+      <rect width="100" height="100" fill="#111"/>
+      <g transform="translate(${off + (1.5 + shift) * k} ${off}) scale(${k})" fill="none" stroke-width="13" stroke-linejoin="round">
+        <path d="M22 32V70Q22 80 15 85" stroke="#fff"/>
+        <path d="M40 32V70Q40 80 33 85" stroke="#fff"/>
+        <path d="M65 14Q58 19 58 29V70Q58 80 51 85" stroke="#FF5A36"/>
+        <path d="M75 54V70Q75 80 82 85" stroke="#fff"/>
+      </g>
+      ${g}
+    </g>
+  </svg>`;
+}
+function render() {
+  uid = 0;
+  let html = '';
+  SHAPES.forEach(shape => {
+    html += `<section><h2>${shape.name}</h2><div class="row">` +
+      SHIFTS.map(s => `<div class="cell">${icon(shape, s, 96)}<p><b>+${s}</b>${s === 0 ? '（今）' : ''}</p></div>`).join('') +
+      `</div></section>`;
+  });
+  html += `<section><h2>ホーム画面くらいの大きさ（円形）</h2><div class="small">` +
+    SHIFTS.map(s => `<div class="cell">${icon(SHAPES[0], s, 48)}<p><b>+${s}</b></p></div>`).join('') + `</div></section>`;
+  document.getElementById('out').innerHTML = html;
+}
+const pick = (sel, b) => document.querySelectorAll(sel).forEach(x => x.classList.toggle('on', x === b));
+gOff.onclick = () => { guide = false; pick('#gOff,#gOn', gOff); render(); };
+gOn.onclick = () => { guide = true; pick('#gOff,#gOn', gOn); render(); };
+document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { document.documentElement.dataset.theme = b.dataset.t; pick('[data-t]', b); });
+render();
+</script>
+</body>
+</html>

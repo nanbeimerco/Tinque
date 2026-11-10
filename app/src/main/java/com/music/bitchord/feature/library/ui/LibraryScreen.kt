@@ -175,6 +175,9 @@ private fun PlaylistSelectionToolbar(
     }
 }
 
+/** [LibraryScreen]'s openPlaylistRequest for Favourites. */
+const val LIBRARY_OPEN_FAVORITES = "\u0000favorites"
+
 /**
  * Modern Library screen unifying user Favorites and Playlists with list/grid toggle.
  */
@@ -194,6 +197,7 @@ fun LibraryScreen(
     // The ⋮ menu's actions that belong to the activity (other pages, editors).
     onGoToAlbum: ((String, String?) -> Unit)? = null,
     onGoToArtist: ((String) -> Unit)? = null,
+    onGoToFolder: ((String) -> Unit)? = null,
     onOpenTagEditor: ((Song) -> Unit)? = null,
     onOpenDetails: ((Song) -> Unit)? = null,
     onDeleteSong: ((Song) -> Unit)? = null,
@@ -201,6 +205,9 @@ fun LibraryScreen(
     songDropdownMenu: (@Composable (Song) -> Unit)? = null,
     initialFilterRequest: LibraryFilter? = null,
     onInitialFilterApplied: () -> Unit = {},
+    /** A playlist id (or [LIBRARY_OPEN_FAVORITES]) to open, from Home. */
+    openPlaylistRequest: String? = null,
+    onPlaylistRequestApplied: () -> Unit = {},
     onArtworkPaletteChanged: ((ArtworkPalette?) -> Unit)? = null,
     onCollectionNavigationChanged: ((Boolean, (() -> Unit)?) -> Unit)? = null,
     /** Bumped when the Library tab is tapped again while showing: back to the top, "All". */
@@ -216,6 +223,24 @@ fun LibraryScreen(
     val showPlaylistSongArtwork by AppSettings.showPlaylistSongArtwork.collectAsStateWithLifecycle()
     val fullScreenCollectionArtwork by AppSettings.fullScreenCollectionArtwork.collectAsStateWithLifecycle()
     val playStatsRevision by LocalPlayStatsStore.revision.collectAsStateWithLifecycle()
+    // Songs, albums and artists added to the Library, and how "All" lays them out.
+    val libraryEntries by com.music.bitchord.feature.library.data.LibraryEntryStore.entries.collectAsStateWithLifecycle()
+    val librarySectionOrder by AppSettings.librarySectionOrder.collectAsStateWithLifecycle()
+    val hiddenLibrarySections by AppSettings.hiddenLibrarySections.collectAsStateWithLifecycle()
+    val entrySongs = remember(libraryEntries, songs) {
+        com.music.bitchord.feature.library.data.LibraryEntryStore.resolveSongs(libraryEntries, songs).toMap()
+    }
+    val entryArt: (com.music.bitchord.feature.library.data.LibraryEntry) -> String? = remember(songs) {
+        { e ->
+            when (e.type) {
+                com.music.bitchord.feature.library.data.LibraryEntryType.ALBUM ->
+                    songs.firstOrNull { it.albumName?.trim().equals(e.title.trim(), ignoreCase = true) && !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl
+                com.music.bitchord.feature.library.data.LibraryEntryType.ARTIST ->
+                    songs.firstOrNull { it.artist.trim().equals(e.title.trim(), ignoreCase = true) && !it.thumbnailUrl.isNullOrBlank() }?.thumbnailUrl
+                else -> null
+            }
+        }
+    }
     var recentlyPlayedSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
     var mostPlayedSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
     var playCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
@@ -382,6 +407,29 @@ fun LibraryScreen(
         onInitialFilterApplied()
     }
 
+    // Home's playlist cards open here.
+    LaunchedEffect(openPlaylistRequest, songs.isEmpty()) {
+        val request = openPlaylistRequest ?: return@LaunchedEffect
+        if (songs.isEmpty()) return@LaunchedEffect
+        if (request == LIBRARY_OPEN_FAVORITES) {
+            drillDownPlaylistId = null
+            playlistReorderEnabled = false
+            drillDownLabel = context.getString(R.string.favorites)
+            drillDownSongs = songs.filter { s -> (s.localUri ?: s.videoId) in favoriteIds || s.videoId in favoriteIds }
+            drillDownArt = "favorites"
+        } else {
+            LocalPlaylistStore.getPlaylist(request)?.let { playlist ->
+                drillDownPlaylistId = playlist.id
+                playlistReorderEnabled = false
+                drillDownLabel = playlist.name
+                val pSongs = resolvePlaylistSongs(playlist, songs)
+                drillDownSongs = pSongs
+                drillDownArt = playlist.customCoverUrl ?: playlist.coverUrl ?: pSongs.firstNotNullOfOrNull { it.thumbnailUrl }
+            }
+        }
+        onPlaylistRequestApplied()
+    }
+
     val inDrillDown = drillDownLabel != null
     SideEffect {
         if (!inDrillDown || !fullScreenCollectionArtwork) {
@@ -461,6 +509,12 @@ fun LibraryScreen(
         if (reordered == drillDownSongs) return
         drillDownSongs = reordered
         persistPlaylistSongOrder(playlistId, reordered)
+    }
+    // A queue started from the open playlist / Favourites warms that playlist's heat.
+    fun markDrillSource(list: List<Song>) {
+        val key = drillDownPlaylistId?.let(com.music.bitchord.data.stats.PlaySource::playlistKey)
+            ?: com.music.bitchord.data.stats.PlaySource.FAVORITES_KEY
+        com.music.bitchord.data.stats.PlaySource.fromPlaylist(key, list)
     }
     val leaveDrillDown = {
         drillDownLabel = null
@@ -577,7 +631,7 @@ fun LibraryScreen(
             } else null,
             onGoToAlbum = onGoToAlbum?.let { go -> { album -> activeMenuSong = null; go(album, song.thumbnailUrl) } },
             onGoToArtist = onGoToArtist?.let { go -> { artist -> activeMenuSong = null; go(artist) } },
-            onGoToFolder = null,
+            onGoToFolder = onGoToFolder?.let { go -> { folder -> activeMenuSong = null; go(folder) } },
             onTagEditor = {
                 activeMenuSong = null
                 onOpenTagEditor?.invoke(song) ?: onSongLongPress(song)
@@ -699,7 +753,12 @@ fun LibraryScreen(
                     currentSong = currentSong,
                     isPlaying = isPlaying,
                     onSongClick = { list, idx ->
-                        if (drillDownPlaylistId == null) pickOrPlay(list, idx) else onSongClick(list, idx)
+                        if (drillDownPlaylistId == null && selection?.active == true) {
+                            selection.toggle(list[idx])
+                        } else {
+                            markDrillSource(list)
+                            onSongClick(list, idx)
+                        }
                     },
                     onSongLongPress = { song ->
                         if (drillDownPlaylistId != null) {
@@ -719,7 +778,7 @@ fun LibraryScreen(
                     // but the trailing details/actions button stays available.
                     onSongMore = openMenu,
                     onSongSwipe = onSongSwipe,
-                    onShuffle = onShuffle,
+                    onShuffle = { list -> markDrillSource(list); onShuffle(list) },
                     onMore = null,
                     reorderEnabled = playlistReorderEnabled && drillDownPlaylistId != null,
                     onReorderToggle = if (drillDownPlaylistId != null) {
@@ -825,6 +884,7 @@ fun LibraryScreen(
 
                     val onFavoritesPlay = {
                         if (favoriteSongs.isNotEmpty()) {
+                            com.music.bitchord.data.stats.PlaySource.fromPlaylist(com.music.bitchord.data.stats.PlaySource.FAVORITES_KEY, favoriteSongs)
                             onSongClick(favoriteSongs, 0)
                         }
                     }
@@ -841,6 +901,7 @@ fun LibraryScreen(
                     val onPlaylistPlay: (LocalPlaylist) -> Unit = { playlist ->
                         val pSongs = resolvePlaylistSongs(playlist, songs)
                         if (pSongs.isNotEmpty()) {
+                            com.music.bitchord.data.stats.PlaySource.fromPlaylist(com.music.bitchord.data.stats.PlaySource.playlistKey(playlist.id), pSongs)
                             onSongClick(pSongs, 0)
                         }
                     }
@@ -898,6 +959,14 @@ fun LibraryScreen(
                             librarySongs = songs,
                             contentPadding = contentPadding,
                             state = collectionListState,
+                            sectionOrder = librarySectionOrder,
+                            hiddenSections = hiddenLibrarySections,
+                            libraryEntries = libraryEntries,
+                            entrySongs = entrySongs,
+                            artFor = entryArt,
+                            onOpenAlbum = { album, art -> onGoToAlbum?.invoke(album, art) },
+                            onOpenArtist = { artist -> onGoToArtist?.invoke(artist) },
+                            onShowAll = { selectedFilter = it },
                         )
                     }
                 }

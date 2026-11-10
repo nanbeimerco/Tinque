@@ -35,6 +35,10 @@ enum class LibraryFilter {
     ALL,
     FAVORITES,
     PLAYLISTS,
+    SONGS,
+    ALBUMS,
+    ARTISTS,
+    /** Reached from Home's shelves, not from a chip. */
     RECENTLY_PLAYED,
     MOST_PLAYED,
 }
@@ -80,8 +84,9 @@ fun LibraryHeaderBar(
                     LibraryFilter.ALL to stringResource(R.string.all_filter_label),
                     LibraryFilter.FAVORITES to stringResource(R.string.favorites),
                     LibraryFilter.PLAYLISTS to stringResource(R.string.playlists),
-                    LibraryFilter.RECENTLY_PLAYED to stringResource(R.string.recently_played),
-                    LibraryFilter.MOST_PLAYED to stringResource(R.string.most_played),
+                    LibraryFilter.SONGS to stringResource(R.string.songs),
+                    LibraryFilter.ALBUMS to stringResource(R.string.albums),
+                    LibraryFilter.ARTISTS to stringResource(R.string.artists),
                 ).forEach { (filter, label) ->
                     FilterChip(
                         selected = selectedFilter == filter,

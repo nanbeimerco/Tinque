@@ -134,6 +134,17 @@ fun LocalPlaylistItem(
                 )
             }
 
+            val playlistSongs = remember(playlist, librarySongs) {
+                com.music.bitchord.feature.localmusic.data.resolvePlaylistSongs(playlist, librarySongs)
+            }
+            com.music.bitchord.ui.components.GroupHeatMark(
+                com.music.bitchord.ui.components.rememberPlaylistTileHeat(
+                    com.music.bitchord.data.stats.PlaySource.playlistKey(playlist.id),
+                    playlistSongs,
+                ),
+                Modifier.padding(start = 8.dp),
+            )
+
             Box {
                 IconButton(onClick = { menuOpen = true }) {
                     Icon(

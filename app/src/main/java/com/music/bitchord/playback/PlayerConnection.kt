@@ -673,9 +673,17 @@ fun MediaController.playSongs(songs: List<Song>, startIndex: Int) {
     // leads, so it ends up at the top instead of at [startIndex].
     val shuffled = QueueShuffle.enabled.value
     val queue = if (shuffled) {
+        QueueWrap.clear()
         QueueShuffle.startingOrder(songs, startIndex.coerceIn(songs.indices))
     } else {
-        queueStartingAt(songs, startIndex)
+        // Rows before the tapped one follow the last row while repeat-all is
+        // on, so the loop runs through the whole playlist — see [QueueWrap].
+        val start = startIndex.coerceIn(songs.indices)
+        val head = songs.take(start)
+        val repeatAll = repeatMode == Player.REPEAT_MODE_ALL && head.isNotEmpty()
+        QueueWrap.set(head, songs[start].videoId, appended = repeatAll)
+        val tail = queueStartingAt(songs, start)
+        if (repeatAll) tail + head else tail
     }
     if (queue.isEmpty()) return
 

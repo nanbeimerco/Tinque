@@ -60,12 +60,72 @@ object EnhancedLrc {
             if (words.isEmpty()) return@mapIndexedNotNull null
             row.voice to LyricLine(
                 timeMs = minOf(row.timeMs, words.first().startMs),
-                text = words.joinToString(" ") { it.text },
+                text = lineText(runs, words),
                 words = words,
             )
         }
         return VoiceTags.apply(voiced.map { it.second }, voiced.map { it.first }).withInstrumentalGaps()
     }
+
+    /**
+     * The line as written. Joining the words with a space each put one between
+     * every character of a Japanese line, which is timed a character at a time.
+     * Where the writer spaced the line, that spacing is kept; where nothing is
+     * spaced at all, a space goes only between words of spaced scripts.
+     */
+    internal fun lineText(runs: List<TimedRun>, words: List<LyricWord>): String {
+        if (runs.any { run -> run.raw.any(Char::isWhitespace) }) {
+            val written = runs.joinToString("") { it.raw }.replace(SPACES, " ").trim()
+            return if (spacesAreSeparators(runs)) written.withoutSpacesBetweenUnspaced() else written
+        }
+        val out = StringBuilder()
+        for (word in words) {
+            val previous = out.lastOrNull()
+            if (previous != null && !previous.isUnspacedScript() && !word.text.first().isUnspacedScript()) {
+                out.append(' ')
+            }
+            out.append(word.text)
+        }
+        return out.toString()
+    }
+
+    /**
+     * Whether the spaces in a Japanese (or Chinese) line only separate its
+     * stamps rather than its phrases: `<t>君 <t>の <t>名 <t>前`. Tinque itself
+     * wrote word-synced lyrics that way up to v2.4.32, and some tools do the
+     * same. A space after nearly every character is that; a space here and
+     * there is the writer's own phrasing and stays.
+     */
+    private fun spacesAreSeparators(runs: List<TimedRun>): Boolean {
+        val filled = runs.filter { it.raw.isNotBlank() }
+        var boundaries = 0
+        var spaced = 0
+        for (i in 0 until filled.lastIndex) {
+            val left = filled[i].raw
+            val right = filled[i + 1].raw
+            if (!left.trimEnd().last().isUnspacedScript() || !right.trimStart().first().isUnspacedScript()) continue
+            boundaries++
+            if (left.last().isWhitespace() || right.first().isWhitespace()) spaced++
+        }
+        return boundaries >= SEPARATOR_MIN_BOUNDARIES && spaced >= boundaries * SEPARATOR_SHARE
+    }
+
+    private fun String.withoutSpacesBetweenUnspaced(): String {
+        val out = StringBuilder(length)
+        for (i in indices) {
+            val c = this[i]
+            if (c == ' ' && out.lastOrNull()?.isUnspacedScript() == true &&
+                getOrNull(i + 1)?.isUnspacedScript() == true
+            ) continue
+            out.append(c)
+        }
+        return out.toString()
+    }
+
+    private const val SEPARATOR_MIN_BOUNDARIES = 3
+    private const val SEPARATOR_SHARE = 0.8
+
+    private val SPACES = Regex("""\s+""")
 
     private class Row(val timeMs: Long, val words: List<MatchResult>, val plain: String, val voice: String?)
 

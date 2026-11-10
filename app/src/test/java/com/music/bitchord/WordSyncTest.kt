@@ -4,6 +4,7 @@ import com.music.bitchord.data.lyrics.EnhancedLrc
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricWord
 import com.music.bitchord.data.lyrics.TtmlLyrics
+import com.music.bitchord.data.lyrics.toEnhancedLrc
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -154,6 +155,37 @@ class WordSyncTest {
     fun `decodes the html entities simpmusic escapes`() {
         val line = EnhancedLrc.parse("[00:01.00]<00:01.00>don&#x27;t <00:01.50>stop").sung().single()
         assertEquals("don't stop", line.text)
+    }
+
+    @Test
+    fun `japanese timed a character at a time keeps no spaces between characters`() {
+        val line = EnhancedLrc.parse("[00:01.00]<00:01.00>君<00:01.20>の<00:01.40>名<00:01.60>前").sung().single()
+        assertEquals("君の名前", line.text)
+    }
+
+    @Test
+    fun `japanese keeps the space the writer put between phrases`() {
+        val line = EnhancedLrc.parse("[00:01.00]<00:01.00>駅<00:01.20>で <00:01.40>君<00:01.60>を").sung().single()
+        assertEquals("駅で 君を", line.text)
+    }
+
+    @Test
+    fun `a space after every japanese character is a separator, not text`() {
+        val line = EnhancedLrc.parse("[00:01.00]<00:01.00>君 <00:01.20>の <00:01.40>名 <00:01.60>前 <00:01.80>を").sung().single()
+        assertEquals("君の名前を", line.text)
+    }
+
+    @Test
+    fun `japanese word sync is saved without a space between characters`() {
+        val line = EnhancedLrc.parse("[00:01.00]<00:01.00>駅<00:01.20>で <00:01.40>君<00:01.60>を").sung().single()
+        val saved = listOf(line).toEnhancedLrc()
+        assertEquals("[00:01.00]<00:01.00>駅<00:01.20>で <00:01.40>君<00:01.60>を<00:02.40>", saved)
+    }
+
+    @Test
+    fun `unspaced latin words still get a space`() {
+        val line = EnhancedLrc.parse("[00:01.00]<00:01.00>hello<00:01.50>world").sung().single()
+        assertEquals("hello world", line.text)
     }
 
     @Test

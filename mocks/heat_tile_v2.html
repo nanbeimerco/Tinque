@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ヒートの縁取り v2</title>
+<style>
+  :root { --bg: #121212; --surface: #1d1d1f; --text: #ececec; --sub: #9a9a9a; --line: #2c2c2e; --track: rgba(255,255,255,.16); }
+  :root[data-theme="light"] { --bg: #f4f3f1; --surface: #ffffff; --text: #1b1b1b; --sub: #6b6b6b; --line: #dedcd8; --track: rgba(0,0,0,.12); }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: "Noto Sans JP", system-ui, sans-serif; padding: 20px 16px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .lead { color: var(--sub); font-size: 13px; margin: 0 0 16px; line-height: 1.6; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .controls button { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .controls button.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .group-label { font-size: 12px; color: var(--sub); align-self: center; margin-right: 2px; }
+  section { background: var(--surface); border-radius: 20px; padding: 16px; margin-bottom: 16px; }
+  section h2 { font-size: 16px; margin: 0 0 2px; }
+  section p { font-size: 12px; color: var(--sub); margin: 0 0 6px; line-height: 1.6; }
+  .row { display: flex; flex-wrap: wrap; gap: 22px; padding: 18px 14px 6px; }
+  .cell { width: 104px; text-align: center; }
+  .cap { font-size: 12px; color: var(--sub); margin-top: 10px; font-variant-numeric: tabular-nums; }
+  .tile { position: relative; width: 104px; height: 104px; }
+  .art { position: absolute; inset: 0; }
+  .tile svg { position: absolute; left: -12px; top: -12px; width: 128px; height: 128px; overflow: visible; pointer-events: none; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); margin-left: 6px; color: var(--sub); vertical-align: 2px; }
+</style>
+</head>
+<body>
+  <h1>ヒートの縁取り v2（A案から）</h1>
+  <p class="lead">A案（閉じた線）と、M3 Expressive の進捗インジケーター風に「ヒートの分だけ線が伸びる」案の比較です。線は上の真ん中から時計回りに伸び、残りは薄い線（トラック）です。4.8 以上は動きます（再生中だけ）。比べやすいように 3.0 も並べています（本番は 4 未満は何も付けない想定）。</p>
+
+  <div class="controls">
+    <span class="group-label">色</span>
+    <button data-hue="22">橙 22°</button>
+    <button data-hue="16">赤橙 16°</button>
+    <button data-hue="12" class="on">赤橙 12°</button>
+    <button data-hue="8">赤橙 8°</button>
+    <button data-hue="335">ピンク</button>
+  </div>
+  <div class="controls">
+    <span class="group-label">動き</span>
+    <button id="play" class="on">再生中（動く）</button>
+    <button id="pause">一時停止（止まる）</button>
+    <span class="group-label" style="margin-left:10px">背景</span>
+    <button data-theme="dark" class="on">ダーク</button>
+    <button data-theme="light">ライト</button>
+  </div>
+
+  <div id="variants"></div>
+
+<script>
+  const LEVELS = [3.0, 4.0, 4.4, 4.8, 5.0];
+  const ARTS = [
+    "linear-gradient(135deg,#2b5876,#4e4376)",
+    "linear-gradient(160deg,#e0c3fc,#8ec5fc)",
+    "linear-gradient(135deg,#0f2027,#2c5364)",
+    "radial-gradient(circle at 30% 30%,#f6d365,#fda085 60%,#6b3a2a)",
+    "linear-gradient(200deg,#d4fc79,#3c8d5a)",
+  ];
+  // Crests over the whole outline, per heat step (as STEP_CRESTS in HeatMeter.kt, scaled to a longer line).
+  const BORDER_CRESTS = [0, 6, 9, 12, 16, 20];
+
+  const VARIANTS = [
+    { id: "A", title: "A：閉じた線（前回の案）", tag: "参考",
+      desc: "4〜4.8 はヒート色の線で一周。4.8 以上はグラデーションが回る。", kind: "closed" },
+    { id: "E1", title: "E1：伸びる線（まっすぐ）", tag: "M3 Expressive 風",
+      desc: "線の長さ＝ヒート（5で一周）。線の両端は丸く、トラックとの間にすき間を空ける（M3 の進捗インジケーターと同じ作り）。4.8 以上は線の先端がわずかに脈打つ。", kind: "progress", wave: false },
+    { id: "E2", title: "E2：伸びる波（メーターと同じ規則）", tag: "M3 Expressive 風",
+      desc: "E1 の線を波にしたもの。長さと波の細かさがヒートで変わり、4.8 以上で波が流れる。M3 Expressive の「波形の進捗インジケーター」と同じ見た目で、メーターと同じ読み方ができる。", kind: "progress", wave: true },
+    { id: "E3", title: "E3：伸びる波＋形の変化", tag: "M3 Expressive 風",
+      desc: "E2 に加えて、4.8 以上でタイルの形が変わる（アーティストはクッキー形、アルバムは角がもっと丸く）。M3 Expressive の形（MaterialShapes）を使う案。", kind: "progress", wave: true, morph: true },
+  ];
+
+  let hue = 12, playing = true, phase = 0;
+
+  function heat(level, alpha = 1) {
+    const e = Math.pow(Math.min(Math.max(level / 5, 0), 1), 1.6);
+    return `hsla(${hue} ${e * 92}% ${(0.70 - e * 0.08) * 100}% / ${alpha})`;
+  }
+
+  // Outline of a rounded rect (or circle when r = w/2), walked from top-centre clockwise.
+  function outline(w, h, r) {
+    const segs = [];
+    const sx = w / 2 - r, sy = h - 2 * r, arc = Math.PI * r / 2;
+    segs.push({ len: sx, f: t => [w / 2 + t, 0, 0, -1] });
+    segs.push({ len: arc, f: t => { const a = -Math.PI / 2 + t / r; return [w - r + r * Math.cos(a), r + r * Math.sin(a), Math.cos(a), Math.sin(a)]; } });
+    segs.push({ len: sy, f: t => [w, r + t, 1, 0] });
+    segs.push({ len: arc, f: t => { const a = t / r; return [w - r + r * Math.cos(a), h - r + r * Math.sin(a), Math.cos(a), Math.sin(a)]; } });
+    segs.push({ len: w - 2 * r, f: t => [w - r - t, h, 0, 1] });
+    segs.push({ len: arc, f: t => { const a = Math.PI / 2 + t / r; return [r + r * Math.cos(a), h - r + r * Math.sin(a), Math.cos(a), Math.sin(a)]; } });
+    segs.push({ len: sy, f: t => [0, h - r - t, -1, 0] });
+    segs.push({ len: arc, f: t => { const a = Math.PI + t / r; return [r + r * Math.cos(a), r + r * Math.sin(a), Math.cos(a), Math.sin(a)]; } });
+    segs.push({ len: sx, f: t => [r + t, 0, 0, -1] });
+    const total = segs.reduce((s, g) => s + g.len, 0);
+    return { total, at(s) {
+      s = ((s % total) + total) % total;
+      for (const g of segs) { if (s <= g.len + 1e-6) return g.f(Math.min(s, g.len)); s -= g.len; }
+      return segs[0].f(0);
+    } };
+  }
+
+  // Cookie outline (M3 Expressive "Cookie9Sided"-like) as a CSS path in the tile's own box.
+  function cookiePath(size, n = 9, depth = 0.06) {
+    const c = size / 2, R = size / 2 / (1 + depth);
+    let d = "";
+    for (let i = 0; i <= 180; i++) {
+      const a = i / 180 * Math.PI * 2 - Math.PI / 2;
+      const r = R * (1 + depth * Math.cos(n * (a + Math.PI / 2)));
+      d += (i ? "L" : "M") + (c + r * Math.cos(a)).toFixed(2) + " " + (c + r * Math.sin(a)).toFixed(2);
+    }
+    return d + "Z";
+  }
+
+  function crests(level) { return BORDER_CRESTS[Math.min(5, Math.max(0, Math.floor(level + 1e-4)))]; }
+
+  // Draws one border into an <svg> (128px box, tile at offset 12).
+  function drawBorder(svg, v, level, round) {
+    const shown = level >= 3; // mock only: show 3.0 too, to compare
+    svg.innerHTML = "";
+    if (!shown) return;
+    const flows = level >= 4.8 && playing;
+    const ns = "http://www.w3.org/2000/svg";
+    const off = 12, gapOut = 5, size = 104 + gapOut * 2;
+    const morph = v.morph && level >= 4.8;
+    const strength = Math.min(Math.max((level - 4) / 0.8, 0), 1);
+
+    if (v.kind === "closed") {
+      const r = round ? size / 2 : 16 + gapOut;
+      const el = document.createElementNS(ns, "rect");
+      el.setAttribute("x", off - gapOut); el.setAttribute("y", off - gapOut);
+      el.setAttribute("width", size); el.setAttribute("height", size);
+      el.setAttribute("rx", r); el.setAttribute("fill", "none"); el.setAttribute("stroke-width", 3);
+      if (level >= 4.8) {
+        const id = "g" + Math.random().toString(36).slice(2);
+        const grad = document.createElementNS(ns, "linearGradient");
+        grad.id = id; grad.setAttribute("gradientTransform", `rotate(${(phase * 57.3) % 360} .5 .5)`);
+        [[0, heat(level)], [0.5, heat(level, 0.35)], [1, heat(level)]].forEach(([o, c]) => {
+          const st = document.createElementNS(ns, "stop"); st.setAttribute("offset", o); st.setAttribute("stop-color", c); grad.appendChild(st);
+        });
+        svg.appendChild(grad);
+        el.setAttribute("stroke", `url(#${id})`);
+      } else el.setAttribute("stroke", heat(level, level >= 4 ? 0.65 + 0.35 * strength : 0.5));
+      svg.appendChild(el);
+      return;
+    }
+
+    // Progress-style: the line runs level/5 of the way round.
+    let at, total;
+    if (morph && round) {
+      // Follow the cookie, scaled out by the gap.
+      const n = 9, depth = 0.06, c = 64, R = (size / 2) / (1 + depth);
+      const pts = [];
+      for (let i = 0; i <= 720; i++) {
+        const a = i / 720 * Math.PI * 2 - Math.PI / 2;
+        const r = R * (1 + depth * Math.cos(n * (a + Math.PI / 2)));
+        pts.push([c + r * Math.cos(a), c + r * Math.sin(a)]);
+      }
+      const acc = [0];
+      for (let i = 1; i < pts.length; i++) acc.push(acc[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+      total = acc[acc.length - 1];
+      at = s => {
+        s = ((s % total) + total) % total;
+        let i = acc.findIndex(x => x >= s); if (i < 1) i = 1;
+        const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+        const t = (s - acc[i - 1]) / Math.max(1e-6, acc[i] - acc[i - 1]);
+        const dx = x1 - x0, dy = y1 - y0, l = Math.hypot(dx, dy) || 1;
+        return [x0 + dx * t - off + gapOut, y0 + dy * t - off + gapOut, dy / l, -dx / l];
+      };
+    } else {
+      const r = round ? size / 2 : (morph ? 30 : 16) + gapOut;
+      const o = outline(size, size, r);
+      total = o.total; at = s => o.at(s);
+    }
+    const stroke = 3, amp = v.wave ? 1.8 : 0, gap = 9;
+    const fill = total * Math.min(level / 5, 1);
+    const k = crests(level), wl = k ? total / k : Infinity;
+    const toXY = (x, y) => [x + off - gapOut, y + off - gapOut];
+
+    // Track: the rest of the way round, after a gap on each side.
+    if (level < 5) {
+      const from = fill + gap, to = total - gap;
+      if (to > from) {
+        let d = "";
+        for (let s = from; s <= to; s += 1) { const [x, y] = at(s); const [X, Y] = toXY(x, y); d += (d ? "L" : "M") + X.toFixed(2) + " " + Y.toFixed(2); }
+        const p = document.createElementNS(ns, "path");
+        p.setAttribute("d", d); p.setAttribute("fill", "none"); p.setAttribute("stroke", getComputedStyle(document.documentElement).getPropertyValue("--track"));
+        p.setAttribute("stroke-width", stroke); p.setAttribute("stroke-linecap", "round");
+        svg.appendChild(p);
+      }
+    }
+    // Active line.
+    const pulse = (v.wave || !flows) ? 0 : Math.sin(phase * 2) * 0.6;
+    const end = level >= 5 ? total - 0.5 : fill;
+    let d = "";
+    const edge = 6;
+    for (let s = 0; s <= end; s += 0.75) {
+      const [x, y, nx, ny] = at(s);
+      const taper = Math.max(0, Math.min(1, s / edge, (end - s) / edge));
+      const w = (wl === Infinity || !v.wave) ? 0 : Math.sin(s / wl * Math.PI * 2 - (flows ? phase : 0)) * amp * (level >= 5 ? 1 : taper);
+      const [X, Y] = toXY(x + nx * w, y + ny * w);
+      d += (d ? "L" : "M") + X.toFixed(2) + " " + Y.toFixed(2);
+    }
+    if (level >= 5) d += "Z";
+    const p = document.createElementNS(ns, "path");
+    p.setAttribute("d", d); p.setAttribute("fill", "none"); p.setAttribute("stroke", heat(level));
+    p.setAttribute("stroke-width", stroke + pulse); p.setAttribute("stroke-linecap", "round"); p.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(p);
+  }
+
+  function tileHtml(v, level, i, round) {
+    const morph = v.morph && level >= 4.8;
+    let clip = round ? "border-radius:50%" : `border-radius:${morph ? 30 : 16}px`;
+    if (morph && round) clip = `clip-path:path('${cookiePath(104)}')`;
+    return `<div class="tile"><div class="art" style="background:${ARTS[i]};${clip}"></div>
+      <svg data-v="${v.id}" data-l="${level}" data-r="${round ? 1 : 0}"></svg></div>`;
+  }
+
+  function render() {
+    document.getElementById("variants").innerHTML = VARIANTS.map(v => `
+      <section>
+        <h2>${v.title}<span class="tag">${v.tag}</span></h2>
+        <p>${v.desc}</p>
+        <div class="row">${LEVELS.map((l, i) => `<div class="cell">${tileHtml(v, l, i, false)}<div class="cap">アルバム ${l.toFixed(1)}</div></div>`).join("")}</div>
+        <div class="row">${LEVELS.map((l, i) => `<div class="cell">${tileHtml(v, l, (i + 2) % 5, true)}<div class="cap">アーティスト ${l.toFixed(1)}</div></div>`).join("")}</div>
+      </section>`).join("");
+    drawAll(true);
+  }
+
+  function drawAll(everything) {
+    document.querySelectorAll("svg[data-v]").forEach(svg => {
+      const level = +svg.dataset.l;
+      if (!everything && level < 4.8) return; // only the flowing ones redraw each frame
+      drawBorder(svg, VARIANTS.find(v => v.id === svg.dataset.v), level, svg.dataset.r === "1");
+    });
+  }
+
+  let last = performance.now();
+  function tick(now) {
+    if (playing) { phase += (now - last) / 1000 * (Math.PI * 2 / 2.2); drawAll(false); }
+    last = now;
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  document.querySelectorAll("[data-hue]").forEach(b => b.onclick = () => {
+    hue = +b.dataset.hue;
+    document.querySelectorAll("[data-hue]").forEach(x => x.classList.toggle("on", x === b));
+    render();
+  });
+  document.getElementById("play").onclick = () => { playing = true; play.classList.add("on"); pause.classList.remove("on"); drawAll(true); };
+  document.getElementById("pause").onclick = () => { playing = false; pause.classList.add("on"); play.classList.remove("on"); drawAll(true); };
+  document.querySelectorAll("[data-theme]").forEach(b => b.onclick = () => {
+    document.documentElement.dataset.theme = b.dataset.theme;
+    document.querySelectorAll("[data-theme]").forEach(x => x.classList.toggle("on", x === b));
+    render();
+  });
+  document.documentElement.dataset.theme = "dark";
+  render();
+</script>
+</body>
+</html>

@@ -17,9 +17,11 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.Notes
 import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Person
@@ -84,6 +86,7 @@ fun PlayerActionsMenu(
     onDismissRequest: () -> Unit,
     onGoToAlbum: () -> Unit,
     onGoToArtist: () -> Unit,
+    onGoToFolder: () -> Unit = {},
     onAddToPlaylist: () -> Unit,
     onEqualizer: () -> Unit,
     onPlaybackTuning: () -> Unit,
@@ -93,11 +96,13 @@ fun PlayerActionsMenu(
     onDetails: () -> Unit,
     onShareFile: () -> Unit,
     onExplainUnavailable: (Int) -> Unit,
+    onCopyLog: () -> Unit = {},
 ) {
     val actions = rememberUpdatedState(
         PlayerMenuActions(
-            onGoToAlbum, onGoToArtist, onAddToPlaylist, onEqualizer, onPlaybackTuning,
+            onGoToAlbum, onGoToArtist, onGoToFolder, onAddToPlaylist, onEqualizer, onPlaybackTuning,
             onCastUnavailable, onTagEditor, onEditLyrics, onDetails, onShareFile, onExplainUnavailable,
+            onCopyLog,
         ),
     )
     val dismiss = rememberUpdatedState(onDismissRequest)
@@ -112,6 +117,7 @@ fun PlayerActionsMenu(
 private class PlayerMenuActions(
     val goToAlbum: () -> Unit,
     val goToArtist: () -> Unit,
+    val goToFolder: () -> Unit,
     val addToPlaylist: () -> Unit,
     val equalizer: () -> Unit,
     val playbackTuning: () -> Unit,
@@ -121,6 +127,7 @@ private class PlayerMenuActions(
     val details: () -> Unit,
     val shareFile: () -> Unit,
     val explain: (Int) -> Unit,
+    val copyLog: () -> Unit,
 )
 
 @Composable
@@ -169,6 +176,16 @@ private fun PlayerActionsMenuContent(song: Song, streamed: Boolean, actions: Pla
                         keepOpen = true,
                     )
                 }
+                if (PlayerDetailsAction.FOLDER !in hidden) {
+                    GlassMenuItem(
+                        stringResource(R.string.go_to_folder),
+                        actions.goToFolder,
+                        icon = Icons.Rounded.Folder,
+                        keepOpen = true,
+                        enabled = !streamed && !song.localPath.isNullOrBlank(),
+                        onDisabledClick = { actions.explain(R.string.streamed_song_no_file) },
+                    )
+                }
                 if (PlayerDetailsAction.ADD_TO_PLAYLIST !in hidden) {
                     GlassMenuItem(
                         stringResource(R.string.add_to_playlist),
@@ -179,6 +196,8 @@ private fun PlayerActionsMenuContent(song: Song, streamed: Boolean, actions: Pla
                         onDisabledClick = { actions.explain(R.string.streamed_song_no_playlist) },
                     )
                 }
+                // Add to / remove from the Library, as a list's ⋮ menu has.
+                if (!streamed) LibraryToggleGlassItem(song)
                 if (PlayerDetailsAction.EQUALIZER !in hidden) {
                     GlassMenuItem(stringResource(R.string.equalizer), actions.equalizer, icon = Icons.Rounded.GraphicEq, keepOpen = true)
                 }
@@ -218,6 +237,7 @@ private fun PlayerActionsMenuContent(song: Song, streamed: Boolean, actions: Pla
                 if (PlayerDetailsAction.DETAILS !in hidden) {
                     GlassMenuItem(stringResource(R.string.details), actions.details, icon = Icons.Rounded.Info, keepOpen = true)
                 }
+                HeatDetailsGlassItem(song)
                 if (PlayerDetailsAction.SHARE_FILE !in hidden) {
                     GlassMenuItem(
                         stringResource(R.string.share_file),
@@ -228,6 +248,9 @@ private fun PlayerActionsMenuContent(song: Song, streamed: Boolean, actions: Pla
                         onDisabledClick = { actions.explain(R.string.streamed_song_no_file) },
                     )
                 }
+                // Last: about the track playing right now, and the one row
+                // nobody reaches for by accident.
+                GlassMenuItem(stringResource(R.string.copy_log), actions.copyLog, icon = Icons.Rounded.BugReport)
             }
         }
     }

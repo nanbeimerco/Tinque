@@ -34,12 +34,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material.icons.rounded.LibraryAddCheck
+import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.Waves
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -181,6 +185,8 @@ fun LocalSongDropdownMenu(
                 },
             )
 
+            LibraryToggleDropdownItem(song, onDismissRequest)
+
             if (onRemoveFromPlaylist != null) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.remove_from_playlist)) },
@@ -276,6 +282,7 @@ fun LocalSongDropdownMenu(
                     onDetails()
                 },
             )
+            HeatDetailsDropdownItem(song, onDismissRequest)
         } else {
             // "Go to" submenu
             DropdownMenuItem(
@@ -409,6 +416,7 @@ private fun GlassSongMenuContent(
                 GlassMenuItem(stringResource(R.string.queue_next), onQueueNext, icon = Icons.Rounded.PlaylistPlay)
                 GlassMenuItem(stringResource(R.string.add_to_queue), onAddToQueue, icon = Icons.AutoMirrored.Rounded.QueueMusic)
                 GlassMenuItem(stringResource(R.string.add_to_playlist), onAddToPlaylist, icon = Icons.Rounded.PlaylistAdd)
+                LibraryToggleGlassItem(song)
                 if (onRemoveFromPlaylist != null) {
                     GlassMenuItem(
                         stringResource(R.string.remove_from_playlist),
@@ -436,6 +444,7 @@ private fun GlassSongMenuContent(
                 }
                 GlassMenuItem(stringResource(R.string.share), onShare, icon = Icons.Rounded.Share)
                 GlassMenuItem(stringResource(R.string.details), onDetails, icon = Icons.Rounded.Info)
+                HeatDetailsGlassItem(song)
                 GlassMenuDivider()
                 GlassMenuItem(
                     stringResource(R.string.delete_from_device),
@@ -469,5 +478,77 @@ private fun GlassSongMenuContent(
                 }
             }
         }
+    }
+}
+
+/** "Heat details" for one song (with the meter on): opens [com.music.bitchord.ui.components.HeatDetailsHost]. */
+@Composable
+internal fun HeatDetailsGlassItem(song: Song) {
+    val heatOn by com.music.bitchord.data.settings.AppSettings.heatMeterEnabled.collectAsState()
+    if (!heatOn) return
+    GlassMenuItem(
+        stringResource(R.string.heat_details),
+        { com.music.bitchord.ui.components.HeatDetailsRequests.open(song) },
+        icon = Icons.Rounded.Waves,
+    )
+}
+
+/** The same, in the plain Material menu. */
+@Composable
+private fun HeatDetailsDropdownItem(song: Song, onDismissRequest: () -> Unit) {
+    val heatOn by com.music.bitchord.data.settings.AppSettings.heatMeterEnabled.collectAsState()
+    if (!heatOn) return
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.heat_details)) },
+        leadingIcon = { Icon(Icons.Rounded.Waves, contentDescription = null, modifier = Modifier.size(20.dp)) },
+        onClick = {
+            onDismissRequest()
+            com.music.bitchord.ui.components.HeatDetailsRequests.open(song)
+        },
+    )
+}
+
+/** "Add to Library" / "Remove from Library" for one song, in the glass menu. */
+@Composable
+internal fun LibraryToggleGlassItem(song: Song) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val entries by com.music.bitchord.feature.library.data.LibraryEntryStore.entries.collectAsState()
+    val inLibrary = remember(entries, song) { com.music.bitchord.feature.library.data.LibraryEntryStore.containsSong(song) }
+    GlassMenuItem(
+        stringResource(if (inLibrary) R.string.remove_from_library else R.string.add_to_library),
+        { toggleLibrary(context, song, inLibrary) },
+        icon = if (inLibrary) Icons.Rounded.LibraryAddCheck else Icons.Rounded.LibraryAdd,
+    )
+}
+
+/** The same, in the plain Material menu. */
+@Composable
+private fun LibraryToggleDropdownItem(song: Song, onDismissRequest: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val entries by com.music.bitchord.feature.library.data.LibraryEntryStore.entries.collectAsState()
+    val inLibrary = remember(entries, song) { com.music.bitchord.feature.library.data.LibraryEntryStore.containsSong(song) }
+    DropdownMenuItem(
+        text = { Text(stringResource(if (inLibrary) R.string.remove_from_library else R.string.add_to_library)) },
+        leadingIcon = {
+            Icon(
+                if (inLibrary) Icons.Rounded.LibraryAddCheck else Icons.Rounded.LibraryAdd,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+            )
+        },
+        onClick = {
+            onDismissRequest()
+            toggleLibrary(context, song, inLibrary)
+        },
+    )
+}
+
+private fun toggleLibrary(context: android.content.Context, song: Song, inLibrary: Boolean) {
+    if (inLibrary) {
+        com.music.bitchord.feature.library.data.LibraryEntryStore.removeSongs(listOf(song))
+        android.widget.Toast.makeText(context, R.string.removed_from_library, android.widget.Toast.LENGTH_SHORT).show()
+    } else {
+        com.music.bitchord.feature.library.data.LibraryEntryStore.addSongs(listOf(song))
+        android.widget.Toast.makeText(context, R.string.added_to_library, android.widget.Toast.LENGTH_SHORT).show()
     }
 }

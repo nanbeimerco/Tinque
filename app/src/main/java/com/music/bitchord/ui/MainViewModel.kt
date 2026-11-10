@@ -353,6 +353,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
 
+            if (targetUri != null && AppSettings.lyricsManualForLocal.value) {
+                // A local song with nothing written into it waits for the
+                // listener to pick lyrics from the catalog: the player's
+                // lyric line turns into a "choose lyrics" button.
+                _lyricsChecked.value = true
+                return@launch
+            }
+
             if (sources.isEmpty()) {
                 // Switched off, or every source unticked. Nothing to look up.
                 _lyricsChecked.value = true
@@ -1139,6 +1147,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!libraryStale) return
         libraryStale = false
         if (_library.value is UiState.Success) refresh(Feed.LIBRARY)
+    }
+
+    /**
+     * Notices audio added to (or removed from) the device while the app is
+     * alive, and reloads the local library quietly — no pull needed. MediaStore
+     * reports a burst of changes for one copy or scan, so they are gathered for
+     * a few seconds into one reload; the reload only reads, so it cannot set
+     * itself off again.
+     */
+    private var mediaReloadJob: kotlinx.coroutines.Job? = null
+    private val mediaObserver = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            if (_localSongs.value !is UiState.Success) return
+            mediaReloadJob?.cancel()
+            mediaReloadJob = viewModelScope.launch {
+                kotlinx.coroutines.delay(3_000)
+                loadLocalMusic()
+            }
+        }
+    }
+
+    override fun onCleared() {
+        runCatching { getApplication<Application>().contentResolver.unregisterContentObserver(mediaObserver) }
+        super.onCleared()
+    }
+
+    init {
+        runCatching {
+            app.contentResolver.registerContentObserver(
+                android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,
+                true,
+                mediaObserver,
+            )
+        }
     }
 
     init {

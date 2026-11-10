@@ -322,6 +322,67 @@ object ListeningStats {
             .getOrNull()
     }
 
+    /**
+     * Listening per day for the last [count] days, oldest first and today last
+     * — the Home page's week chart. The open month comes from memory (it holds
+     * what has not been flushed yet), older ones from their files. Call off
+     * the main thread.
+     */
+    fun recentDays(count: Int = 7): List<Pair<LocalDate, Long>> {
+        if (!ready) return emptyList()
+        val today = LocalDate.now()
+        val cache = HashMap<String, Map<Int, Long>>()
+        fun daysOf(month: YearMonth): Map<Int, Long> = cache.getOrPut(month.toString()) {
+            synchronized(lock) { open?.takeIf { it.key == month.toString() }?.days?.toMap() }
+                ?: read(month.toString())?.days
+                ?: emptyMap()
+        }
+        return (count - 1 downTo 0).map { back ->
+            val day = today.minusDays(back.toLong())
+            day to (daysOf(YearMonth.from(day))[day.dayOfMonth] ?: 0L)
+        }
+    }
+
+    /**
+     * The earliest month with any listening to the track [id] (a Song's
+     * videoId), from the monthly records — up to three years back. Off the
+     * main thread.
+     */
+    fun firstMonthOf(id: String): YearMonth? {
+        if (!ready || id.isBlank()) return null
+        for (month in months()) {
+            val bucket = synchronized(lock) { open?.takeIf { it.key == month.toString() }?.snapshot() }
+                ?: read(month.toString())
+                ?: continue
+            if (bucket.tracks.any { it.id == id }) return month
+        }
+        return synchronized(lock) { open?.takeIf { o -> o.tracks.containsKey(id) }?.key }
+            ?.let { runCatching { YearMonth.parse(it) }.getOrNull() }
+    }
+
+    /** The tracks of a past [month] by time played, most first — Home's "a year ago". Off the main thread. */
+    fun tracksOf(month: YearMonth): List<TrackEntry> {
+        if (!ready) return emptyList()
+        val bucket = synchronized(lock) { open?.takeIf { it.key == month.toString() }?.snapshot() }
+            ?: read(month.toString())
+            ?: return emptyList()
+        return bucket.tracks.sortedByDescending { it.ms }
+    }
+
+    /**
+     * Days in a row with at least [minMs] of listening, up to today — or up to
+     * yesterday while today has not got there yet, so a streak is not "broken"
+     * in the morning. Off the main thread.
+     */
+    fun streak(minMs: Long = 5 * 60_000L): Int {
+        val days = recentDays(120)
+        var i = days.lastIndex
+        if (i >= 0 && days[i].second < minMs) i--
+        var count = 0
+        while (i >= 0 && days[i].second >= minMs) { count++; i-- }
+        return count
+    }
+
     // ── Housekeeping ────────────────────────────────────────────────────────
 
     /**

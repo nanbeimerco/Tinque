@@ -41,7 +41,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -54,6 +53,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.verticalDrag
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -110,6 +110,7 @@ import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -208,6 +209,7 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextLayoutResult
@@ -270,6 +272,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import com.music.bitchord.ui.player.components.DoubleTapSeekArea
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.stats.heatKey
 import com.music.bitchord.data.settings.LyricsTextAlignment
 import com.music.bitchord.data.settings.SeekButtonMode
 import com.music.bitchord.data.settings.PlayerControl
@@ -358,6 +361,7 @@ private const val SEEK_SETTLE_TIMEOUT_MS = 1_500L
 
 private val THUMB_SIZE = 54.dp
 private val HEADER_HEIGHT = 60.dp
+
 private val ART_TITLE_GAP = 20.dp
 /**
  * How long the sleeve takes to travel the whole way between the full player and
@@ -806,13 +810,22 @@ private val LINE_FALLOFF_BLUR = arrayOf(0.dp, 1.dp, 1.dp, 1.7.dp, 2.4.dp)
 
 private const val BROWSING_ALPHA = 0.8f
 private const val INACTIVE_SCALE = 0.98f
-private const val PRESSED_SCALE = 0.96f
+private const val LYRIC_CLOCK_SNAP_MS = 500.0
+private const val LYRIC_CLOCK_CATCH_UP_MS = 400.0
+private const val LYRIC_CLOCK_MIN_RATE = 0.5
+private const val LYRIC_CLOCK_MAX_RATE = 1.6
+private const val TAP_LIFT_GROW = 0.02f
+private val TAP_LIFT = 4.dp
+private const val TAP_LIFT_RISE_MS = 140
 
 private const val GAP_DOTS = 3
 private val GAP_DOT_SIZE = 13.dp
 private val GAP_DOT_GAP = 5.dp
+private val MINI_GAP_DOT_SIZE = 9.dp
+private val MINI_GAP_DOT_GAP = 4.dp
 private const val GAP_DOT_REST = 0.25f
 private const val GAP_REST_SCALE = 0.76f
+private val DESCENDER_CLIP_PAD = 5.dp
 
 /** How long the panel takes to settle on a new line, and how far ahead it starts. */
 private const val SCROLL_LEAD_MIN_MS = 350L
@@ -2201,7 +2214,11 @@ fun NowPlayingScreen(
                 val groupTop = twoColumnTopCap?.let { minOf(it, centredTop) } ?: centredTop
                 // Extra room between the artwork and the title row (beta, and a
                 // capped two-column banner: the title row sits on the controls there).
-                val titleDrop = if (betaLayout || groupTop < centredTop) spare - groupTop else 0.dp
+                // Two columns as well: the left column is tall, and a title row
+                // hanging under the artwork left a wide gap between it and the
+                // scrubber it belongs to. It sits on the controls instead, and
+                // the artwork stays centred in the room above it.
+                val titleDrop = if (betaLayout || twoColumn || groupTop < centredTop) spare - groupTop else 0.dp
 
                 var settledArtWidth by remember { mutableStateOf(expandedArtWidth) }
                 var settledArtHeight by remember { mutableStateOf(expandedArtHeight) }
@@ -2810,6 +2827,12 @@ fun NowPlayingScreen(
                     }
                     Spacer(Modifier.width(10.dp))
 
+                    // Heat: the meter alone, no words; holding it shows the
+                    // numbers behind it. In the title row, whose height is fixed,
+                    // so nothing under it moves. Its own function: this one is
+                    // at the size where the dexer's register allocation breaks.
+                    if (p < 0.5f) PlayerHeatMeter(song)
+
                     Row(
                         modifier = Modifier
                             .widthIn(max = 264.dp)
@@ -2826,6 +2849,7 @@ fun NowPlayingScreen(
                                 PlayerQuickAction.SEARCH -> R.string.quick_action_search
                                 PlayerQuickAction.ALBUM -> R.string.go_to_album
                                 PlayerQuickAction.ARTIST -> R.string.go_to_artist
+                                PlayerQuickAction.FOLDER -> R.string.go_to_folder
                                 PlayerQuickAction.EQUALIZER -> R.string.equalizer
                                 PlayerQuickAction.CHROMECAST -> R.string.chromecast
                                 PlayerQuickAction.SLEEP_TIMER -> R.string.sleep_timer
@@ -2850,6 +2874,7 @@ fun NowPlayingScreen(
                                     PlayerQuickAction.SEARCH -> BitChordIcons.Search
                                     PlayerQuickAction.ALBUM -> Icons.Rounded.Album
                                     PlayerQuickAction.ARTIST -> Icons.Rounded.Person
+                                    PlayerQuickAction.FOLDER -> Icons.Rounded.Folder
                                     PlayerQuickAction.EQUALIZER -> Icons.Rounded.GraphicEq
                                     PlayerQuickAction.CHROMECAST -> Icons.Rounded.Cast
                                     PlayerQuickAction.SLEEP_TIMER -> Icons.Rounded.Bedtime
@@ -2872,6 +2897,7 @@ fun NowPlayingScreen(
                                         // This one adds to the account's YouTube Music
                                         // playlists, which a streamed song can join.
                                         PlayerQuickAction.ADD_TO_PLAYLIST -> !streamedSong || signedIn
+                                        PlayerQuickAction.FOLDER,
                                         PlayerQuickAction.TAG_EDITOR,
                                         PlayerQuickAction.SHARE_FILE -> !streamedSong
                                         else -> true
@@ -2879,6 +2905,7 @@ fun NowPlayingScreen(
                                     onDisabledClick = when (action) {
                                         PlayerQuickAction.FAVORITE -> likeUnavailableReason
                                         PlayerQuickAction.ADD_TO_PLAYLIST -> { { explain(R.string.streamed_song_no_playlist) } }
+                                        PlayerQuickAction.FOLDER,
                                         PlayerQuickAction.TAG_EDITOR,
                                         PlayerQuickAction.SHARE_FILE -> { { explain(R.string.streamed_song_no_file) } }
                                         else -> null
@@ -2900,6 +2927,7 @@ fun NowPlayingScreen(
                                                 ?: onQuickMenuAction(action)
                                             PlayerQuickAction.SLEEP_TIMER -> quickSleepTimerOpen = true
                                             PlayerQuickAction.FAVORITE -> toggleLike()
+                                            PlayerQuickAction.FOLDER,
                                             PlayerQuickAction.EQUALIZER,
                                             PlayerQuickAction.TAG_EDITOR,
                                             PlayerQuickAction.EDIT_LYRICS,
@@ -3165,9 +3193,12 @@ fun NowPlayingScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else if (lyricsUnavailable) {
-                        if (!hideLyricsStatusText && !hideLyricsUnavailableLabel) {
-                            LyricsUnavailableLine(
-                                trackKey = song.videoId,
+                        // No lyrics: the line becomes the way to pick some. It
+                        // is a button rather than a notice, so the setting that
+                        // hides the "no lyrics" notice leaves it alone.
+                        if (!hideLyricsStatusText) {
+                            LyricsChooseLine(
+                                onClick = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.open(song) },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
@@ -3283,6 +3314,23 @@ fun NowPlayingScreen(
                 // a digit's worth every time a minute rolls over, which was
                 // dragging this along with it every tick. The screen's center
                 // doesn't move.
+                //
+                // An invisible badge holds the row at the badge's height. The
+                // badge's text is a size up from the timestamps (and the
+                // Japanese label sits taller still), and it goes blank for a
+                // moment on every track change while the new stream's stats are
+                // unknown. That made this row a few dp shorter for those frames,
+                // the artwork above grew into the room, and the control spread
+                // chased it back — the whole player shook on every skip.
+                LosslessLabel(
+                    text = stringResource(R.string.hi_res_lossless),
+                    animated = false,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(horizontal = 8.dp)
+                        .graphicsLayer { alpha = 0f }
+                        .clearAndSetSemantics {},
+                )
                 LosslessOrStats(
                     isLocalAudio = isLocalAudio,
                     isLoading = isLoading,
@@ -3976,24 +4024,47 @@ private suspend fun AwaitPointerEventScope.dragQueueIn(
 @Composable
 private fun rememberLyricClock(positionMs: Long, isPlaying: Boolean): MutableLongState {
     val clock = remember { mutableLongStateOf(positionMs) }
+    val report = rememberUpdatedState(positionMs)
     // Gated on the app being on screen. The loop asks for a frame, writes a
     // value that invalidates a drawing, and is handed the next frame for it —
     // which is a request to render continuously for as long as it runs. That is
     // the right trade for a lyric being read and the wrong one for a phone in a
     // pocket, and the composition alone cannot tell the two apart.
-    //
-    // Resuming needs no catch-up: [positionMs] is a key, so coming back
-    // restarts the effect and the clock is set from the player's own position
-    // before the first frame is asked for.
     val foreground = rememberIsForeground()
-    LaunchedEffect(positionMs, isPlaying, foreground) {
-        clock.longValue = positionMs
-        if (!isPlaying || !foreground) return@LaunchedEffect
-        var previousFrame = withFrameMillis { it }
+    LaunchedEffect(isPlaying, foreground) {
+        clock.longValue = report.value
+        if (!isPlaying || !foreground) {
+            snapshotFlow { report.value }.collect { clock.longValue = it }
+            return@LaunchedEffect
+        }
+        // The player's position is an estimate fetched from another process,
+        // and it often trails the frame clock by a little. Setting the clock
+        // to it on every report pulled the sweep back a few letters twice a
+        // second. A real jump (a seek) still lands at once; anything smaller
+        // is taken up by running the clock a little slower or faster for a
+        // moment, so the sweep never moves backwards.
+        var exact = report.value.toDouble()
+        var reported = report.value
+        var previousFrame = withFrameNanos { it }
+        var reportedAt = previousFrame
         while (true) {
-            withFrameMillis { frame ->
-                clock.longValue += frame - previousFrame
+            withFrameNanos { frame ->
+                val step = (frame - previousFrame) / 1_000_000.0
                 previousFrame = frame
+                if (report.value != reported) {
+                    reported = report.value
+                    reportedAt = frame
+                }
+                val target = reported + (frame - reportedAt) / 1_000_000.0
+                val error = target - exact
+                exact = if (kotlin.math.abs(error) > LYRIC_CLOCK_SNAP_MS) {
+                    target
+                } else {
+                    val rate = (1.0 + error / LYRIC_CLOCK_CATCH_UP_MS)
+                        .coerceIn(LYRIC_CLOCK_MIN_RATE, LYRIC_CLOCK_MAX_RATE)
+                    exact + step * rate
+                }
+                clock.longValue = exact.toLong()
             }
         }
     }
@@ -4221,6 +4292,7 @@ private fun ContentDrawScope.glowGrown(
 ) {
     if (!line.isGrowing(positionMs)) return
     val em = layout.layoutInput.style.fontSize.toPx()
+    val descenderPad = DESCENDER_CLIP_PAD.toPx()
     val length = layout.layoutInput.text.length
     for (word in line.growingWords) {
         if (positionMs < word.startMs || positionMs > word.restsAtMs) continue
@@ -4236,19 +4308,20 @@ private fun ContentDrawScope.glowGrown(
             val dx = growth.shift * em
             val dy = -growth.rise * peak * fall
             val rowTop = layout.getLineTop(visualLine) + inset
-            val bottom = layout.getLineBottom(visualLine) + inset
+            val rowBottom = layout.getLineBottom(visualLine) + inset
+            val clipBottom = layout.lineClipBottom(visualLine, inset, descenderPad, size.height)
             val overhang = (to - from) * (growth.scale - 1f) / 2f
             clipRect(
                 left = from - overhang + dx,
                 top = rowTop - peak * GROW_HEADROOM,
                 right = to + overhang + dx,
-                bottom = bottom,
+                bottom = clipBottom,
             ) {
                 translate(left = dx, top = dy) {
                     scale(
                         growth.scale,
                         growth.scale,
-                        Offset((from + to) / 2f, (rowTop + bottom) / 2f),
+                        Offset((from + to) / 2f, (rowTop + rowBottom) / 2f),
                     ) {
                         this@glowGrown.drawContent()
                     }
@@ -4283,11 +4356,12 @@ private fun ContentDrawScope.glowAt(
     val left = (right - trail).coerceAtLeast(layout.getLineLeft(visualLine))
     if (right <= left) return
 
+    val clipBottom = layout.lineClipBottom(visualLine, 0f, DESCENDER_CLIP_PAD.toPx(), size.height)
     clipRect(
         left = left,
         top = layout.getLineTop(visualLine),
         right = right,
-        bottom = layout.getLineBottom(visualLine),
+        bottom = clipBottom,
     ) {
         this@glowAt.drawContent()
     }
@@ -4321,11 +4395,12 @@ private fun ContentDrawScope.riseWith(
         return
     }
     val em = layout.layoutInput.style.fontSize.toPx()
+    val descenderPad = DESCENDER_CLIP_PAD.toPx()
     for (visualLine in 0 until layout.lineCount) {
         val lineStart = layout.getLineStart(visualLine)
         val lineEnd = layout.getLineEnd(visualLine, visibleEnd = true)
         val top = layout.getLineTop(visualLine) + inset
-        val bottom = layout.getLineBottom(visualLine) + inset
+        val bottom = layout.lineClipBottom(visualLine, inset, descenderPad, size.height)
         var at = lineStart
         var edge = layout.getLineLeft(visualLine) + inset
         for (index in line.words.indices) {
@@ -4354,6 +4429,24 @@ private fun ContentDrawScope.riseWith(
         if (at < lineEnd) {
             sliceRisen(edge, top, layout.getLineRight(visualLine) + inset, bottom, 0f)
         }
+    }
+}
+
+/**
+ * Returns the bottom clipping edge for [visualLine], leaving extra room for Latin
+ * descenders (g, y, p, q, j) when mixed with CJK glyphs and tight lineHeight.
+ */
+private fun TextLayoutResult.lineClipBottom(
+    visualLine: Int,
+    inset: Float,
+    descenderPad: Float,
+    canvasHeight: Float,
+): Float {
+    val rawBottom = getLineBottom(visualLine) + inset + descenderPad
+    return if (visualLine >= lineCount - 1) {
+        maxOf(rawBottom, canvasHeight)
+    } else {
+        rawBottom
     }
 }
 
@@ -4469,35 +4562,44 @@ private fun ContentDrawScope.sweepTo(
         drawContent()
         return
     }
+    val featherPx = WIPE_FEATHER.toPx()
+    val descenderPad = DESCENDER_CLIP_PAD.toPx()
     for (visualLine in 0 until layout.lineCount) {
         val start = layout.getLineStart(visualLine)
         if (revealedChars <= start) return
         val end = layout.getLineEnd(visualLine, visibleEnd = true)
         val cut = revealedChars < end
-        val right = if (cut) {
+        val lineLeft = layout.getLineLeft(visualLine)
+        val lineRight = layout.getLineRight(visualLine)
+        val rawRight = if (cut) {
             horizontalAt(layout, revealedChars, visualLine, spans)
         } else {
-            layout.getLineRight(visualLine)
+            lineRight
         }
+        val lineWidth = (lineRight - lineLeft).coerceAtLeast(1f)
+        val lineProgress = ((rawRight - lineLeft) / lineWidth).coerceIn(0f, 1f)
+        val gradEndX = if (feather && cut) rawRight + featherPx * lineProgress else rawRight
+        val gradStartX = gradEndX - featherPx
+        val clipRight = minOf(gradEndX, lineRight)
+        if (clipRight <= lineLeft) continue
         val top = layout.getLineTop(visualLine)
-        val bottom = layout.getLineBottom(visualLine)
+        val bottom = layout.lineClipBottom(visualLine, 0f, descenderPad, size.height)
         clipRect(
-            left = layout.getLineLeft(visualLine),
+            left = lineLeft,
             top = top,
-            right = right,
+            right = clipRight,
             bottom = bottom,
         ) {
             this@sweepTo.drawContent()
         }
-        if (!feather || !cut) continue
-        clipRect(top = top, bottom = bottom) {
+        if (!feather || !cut || gradStartX >= lineRight) continue
+        clipRect(left = lineLeft, top = top, right = clipRight, bottom = bottom) {
             drawRect(
                 brush = Brush.horizontalGradient(
                     0f to Color.White,
                     1f to Color.Transparent,
-                    startX = (right - WIPE_FEATHER.toPx())
-                        .coerceAtLeast(layout.getLineLeft(visualLine)),
-                    endX = right,
+                    startX = gradStartX,
+                    endX = gradEndX.coerceAtLeast(gradStartX + 1f),
                 ),
                 blendMode = BlendMode.DstIn,
             )
@@ -4732,7 +4834,7 @@ private fun LyricsPanel(
             )
             val lineAlpha by animateFloatAsState(
                 targetValue = when {
-                    !isSynced -> 0.95f
+                    !isSynced -> 1f
                     isActive -> 1f
                     browsing -> BROWSING_ALPHA
                     else -> LINE_FALLOFF_ALPHA[step]
@@ -4770,7 +4872,11 @@ private fun LyricsPanel(
                         modifier = Modifier
                             .blur(blur, BlurredEdgeTreatment.Unbounded)
                             .clip(RoundedCornerShape(10.dp))
-                            .clickable(enabled = isSynced) { seekToLine(line.timeMs) }
+                            .clickable(
+                                enabled = isSynced,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { seekToLine(line.timeMs) }
                             .padding(GLOW_ROOM)
                             .size(
                                 width = GAP_DOT_SIZE * 3 + GAP_DOT_GAP * 2,
@@ -4812,38 +4918,27 @@ private fun LyricsPanel(
                     alignCenter -> TextAlign.Center
                     else -> TextAlign.Start
                 }
-                val style = if (isSynced) {
-                    MaterialTheme.typography.headlineLarge.copy(
-                        fontSize = (27f * lyricsFontScale).sp,
-                        lineHeight = (33f * lyricsFontScale).sp,
-                        textAlign = resolvedTextAlign,
-                    )
-                } else {
-                    MaterialTheme.typography.headlineMedium.copy(
-                        fontSize = (23f * lyricsFontScale).sp,
-                        lineHeight = (31f * lyricsFontScale).sp,
-                        fontWeight = FontWeight.SemiBold,
-                        textAlign = resolvedTextAlign,
-                    )
-                }
+                // One look for every kind of lyric: plain text used to get a
+                // smaller, heavier face of its own and read as a different app.
+                val style = MaterialTheme.typography.headlineLarge.copy(
+                    fontSize = (27f * lyricsFontScale).sp,
+                    lineHeight = (35f * lyricsFontScale).sp,
+                    textAlign = resolvedTextAlign,
+                )
                 val sung = offset < 0
                 val behind = if (run.delta >= 0f) index - focusLine else focusLine - index
                 val staggerDelay = behind.coerceIn(0, STAGGER_STEPS) *
                     STAGGER_FRACTION * run.durationMs
                 val interaction = remember { MutableInteractionSource() }
-                val pressed by interaction.collectIsPressedAsState()
                 val scale by animateFloatAsState(
-                    targetValue = when {
-                        pressed -> PRESSED_SCALE
-                        isActive -> 1f
-                        else -> INACTIVE_SCALE
-                    },
-                    animationSpec = tween(
-                        durationMillis = if (pressed) 120 else LYRIC_SETTLE_MS,
-                        easing = LYRIC_EASING,
-                    ),
+                    targetValue = if (isActive || !isSynced) 1f else INACTIVE_SCALE,
+                    animationSpec = tween(LYRIC_SETTLE_MS, easing = LYRIC_EASING),
                     label = "lyricScale",
                 )
+                // A tapped line lifts a little and settles, the way a sung
+                // word does, instead of a dark ripple spreading under it.
+                val tapLift = remember { Animatable(0f) }
+                val tapScope = rememberCoroutineScope()
                 val glow by animateFloatAsState(
                     targetValue = if (isActive && glowing) GLOW_ALPHA else 0f,
                     animationSpec = tween(durationMillis = 420),
@@ -4861,11 +4956,13 @@ private fun LyricsPanel(
                         end = if (duet && line.alignment != LyricAlignment.End) DUET_LANE else 0.dp,
                     )
                     .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
+                        val lift = tapLift.value
+                        val grown = scale * (1f + TAP_LIFT_GROW * lift)
+                        scaleX = grown
+                        scaleY = grown
                         transformOrigin = TransformOrigin(originX, 0.5f)
-                        alpha = lineAlpha
-                        translationY = if (staggerDelay <= 0f) {
+                        alpha = lineAlpha + (1f - lineAlpha) * lift.coerceIn(0f, 1f)
+                        translationY = -TAP_LIFT.toPx() * lift + if (staggerDelay <= 0f) {
                             0f
                         } else {
                             val elapsed = since.floatValue
@@ -4884,8 +4981,19 @@ private fun LyricsPanel(
                     .clickable(
                         enabled = isSynced,
                         interactionSource = interaction,
-                        indication = LocalIndication.current,
-                    ) { seekToLine(line.timeMs) }
+                        indication = null,
+                    ) {
+                        seekToLine(line.timeMs)
+                        if (!reduceAnimation) {
+                            tapScope.launch {
+                                tapLift.animateTo(1f, tween(TAP_LIFT_RISE_MS, easing = LYRIC_EASING))
+                                tapLift.animateTo(
+                                    0f,
+                                    spring(dampingRatio = 0.5f, stiffness = 380f, visibilityThreshold = 0.0005f),
+                                )
+                            }
+                        }
+                    }
 
                 val backingOpen = line.background?.let { backing ->
                     val due by remember(backing, clock) {
@@ -4998,7 +5106,7 @@ private fun PanelVoice(
     rise: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
-    if (line.isWordSynced && !browsing) {
+    if (line.isWordSynced) {
         val tail by animateFloatAsState(
             targetValue = if (sung) 1f else UNSUNG_ALPHA,
             label = "lyricTail",
@@ -5012,23 +5120,6 @@ private fun PanelVoice(
             glowAlpha = glowAlpha,
             glowRoom = room,
             feather = isActive,
-            rise = rise,
-            alignEnd = alignEnd,
-            fillWidth = textAlign == TextAlign.Center,
-        )
-    } else if (line.isWordSynced) {
-        val tail by animateFloatAsState(
-            targetValue = if (sung) 1f else UNSUNG_ALPHA,
-            label = "lyricTail",
-        )
-        SweptLyricLine(
-            line = line,
-            clock = clock,
-            style = style,
-            dimAlpha = tail,
-            modifier = modifier,
-            glowAlpha = 0f,
-            glowRoom = room,
             rise = rise,
             alignEnd = alignEnd,
             fillWidth = textAlign == TextAlign.Center,
@@ -5308,17 +5399,16 @@ private fun CurrentLyricLine(
     }
     val current = lines.getOrNull(index)?.takeIf(LyricsStripText::isLyricLine)
     val firstSung = remember(lines) { LyricsStripText.firstLyricIndex(lines) }
+    val hasGapAtCursor = index >= 0 && lines.getOrNull(index)?.isGap == true
     val showingFirstLineEarly = current == null &&
+        !hasGapAtCursor &&
         LyricsStripText.shouldPreviewFirstLyric(index, firstSung)
     val displayIndex = if (showingFirstLineEarly) firstSung else index
     val displayLine = current ?: if (showingFirstLineEarly) lines.getOrNull(firstSung) else null
-    val instrumental = displayLine == null
-    val text = displayLine?.text ?: LyricsStripText.statusTextOrNull(
-        stringResource(R.string.instrumental),
-        hideLyricsStatusText,
-    ).orEmpty()
+    val text = displayLine?.text.orEmpty()
 
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val hideLyricsGapNote by AppSettings.hideLyricsGapNote.collectAsStateWithLifecycle()
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -5334,15 +5424,6 @@ private fun CurrentLyricLine(
                 )
             .padding(vertical = 4.dp),
     ) {
-        if (instrumental) {
-            Icon(
-                imageVector = BitChordIcons.MusicNote,
-                contentDescription = null,
-                tint = Color.White,
-                modifier = Modifier.size(16.dp),
-            )
-            Spacer(Modifier.width(6.dp))
-        }
         AnimatedContent(
             targetState = Triple(displayIndex, displayLine, text),
             transitionSpec = {
@@ -5364,27 +5445,66 @@ private fun CurrentLyricLine(
             },
             label = "currentLyricTransition",
             modifier = Modifier.weight(1f, fill = false),
-        ) { (_, lineItem, lineText) ->
+        ) { (itemIndex, lineItem, lineText) ->
             val itemInstrumental = lineItem == null || lineItem.isGap
-            val swept = lineItem?.takeIf { !showingFirstLineEarly && !itemInstrumental && it.isWordSynced }
-            if (swept != null) {
-                SweptLyricLine(
-                    line = swept,
-                    clock = clock,
-                    style = MaterialTheme.typography.titleMedium,
-                    dimAlpha = UNSUNG_ALPHA_STRIP,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    rise = false,
-                )
-            } else {
-                LyricTextDisplay(
-                    text = lineText,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = if (itemInstrumental) Color.White.copy(alpha = 0.5f) else Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+            val swept = lineItem?.takeIf { !itemInstrumental && it.isWordSynced }
+            when {
+                itemInstrumental -> {
+                    val gapLine = lines.getOrNull(itemIndex)
+                    val gapStartMs = gapLine?.timeMs ?: 0L
+                    val gapEndMs = lines.getOrNull(itemIndex + 1)?.timeMs
+                        ?: gapLine?.endMs?.takeIf { it > gapStartMs }
+                        ?: (gapStartMs + 1L)
+                    Box(
+                        modifier = Modifier
+                            .size(
+                                width = MINI_GAP_DOT_SIZE * GAP_DOTS + MINI_GAP_DOT_GAP * (GAP_DOTS - 1),
+                                height = 24.dp,
+                            )
+                            .drawBehind {
+                                if (hideLyricsGapNote || hideLyricsStatusText) return@drawBehind
+                                val span = (gapEndMs - gapStartMs).coerceAtLeast(1L)
+                                val through = ((clock.longValue - gapStartMs).toFloat() / span).coerceIn(0f, 1f)
+                                val radius = MINI_GAP_DOT_SIZE.toPx() / 2f
+                                val stride = (MINI_GAP_DOT_SIZE + MINI_GAP_DOT_GAP).toPx()
+                                repeat(GAP_DOTS) { dot ->
+                                    val lit = (through * GAP_DOTS - dot).coerceIn(0f, 1f)
+                                    drawCircle(
+                                        color = Color.White.copy(
+                                            alpha = GAP_DOT_REST + (1f - GAP_DOT_REST) * lit,
+                                        ),
+                                        radius = radius,
+                                        center = Offset(radius + dot * stride, size.height / 2f),
+                                    )
+                                }
+                            },
+                    )
+                }
+                swept != null -> {
+                    SweptLyricLine(
+                        line = swept,
+                        clock = clock,
+                        style = MaterialTheme.typography.titleMedium,
+                        dimAlpha = UNSUNG_ALPHA_STRIP,
+                        feather = true,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        rise = false,
+                    )
+                }
+                else -> {
+                    val stripLit by animateFloatAsState(
+                        targetValue = if (showingFirstLineEarly) UNSUNG_ALPHA_STRIP else 1f,
+                        label = "stripLyricLit",
+                    )
+                    LyricTextDisplay(
+                        text = lineText,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White.copy(alpha = stripLit),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
         Spacer(Modifier.width(6.dp))
@@ -5425,6 +5545,40 @@ private fun LyricsUnavailableLine(trackKey: Any, modifier: Modifier = Modifier) 
             .padding(vertical = 4.dp)
             .graphicsLayer { this.alpha = alpha },
     )
+}
+
+/** Where the lyric line goes when a song has none: opens the lyrics catalog. */
+@Composable
+private fun LyricsChooseLine(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+            )
+            .padding(vertical = 4.dp),
+    ) {
+        Icon(
+            imageVector = BitChordIcons.MusicNote,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.85f),
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(R.string.lyrics_choose),
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.Medium,
+            ),
+            color = Color.White.copy(alpha = 0.85f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 /** Stands in for [CurrentLyricLine] while a lookup is still in flight. */
@@ -7379,5 +7533,59 @@ private object OverlayBack {
     fun unregister(view: View, callback: Any?) {
         if (callback !is OnBackInvokedCallback) return
         view.findOnBackInvokedDispatcher()?.unregisterOnBackInvokedCallback(callback)
+    }
+}
+
+/**
+ * The heat meter in the player's title row: the meter alone, and its numbers
+ * on a long press (a glass menu from the meter). Nothing when the meter is off.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun PlayerHeatMeter(song: Song) {
+    val heatOn by AppSettings.heatMeterEnabled.collectAsStateWithLifecycle()
+    // Off unless asked for (2.6.4): the player is for the song playing, and a
+    // coloured line beside its title fought the artwork's colours. The numbers
+    // are in the song's ⋮ menu ("Heat details") instead.
+    val inPlayer by AppSettings.heatInPlayer.collectAsStateWithLifecycle()
+    if (!heatOn || !inPlayer) return
+    val haptics = rememberHaptics()
+    val heatInfo by com.music.bitchord.data.stats.HeatStore.info.collectAsStateWithLifecycle()
+    val songHeat = heatInfo[song.heatKey()]
+    val heatHue = com.music.bitchord.ui.components.rememberHeatHue()
+    var detailsOpen by remember { mutableStateOf(false) }
+    Box(
+        modifier = Modifier
+            .padding(end = 6.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {},
+                onLongClick = {
+                    haptics.play(Haptic.Select)
+                    detailsOpen = true
+                },
+            )
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+    ) {
+        // One colour, the title's: no hue to clash with the artwork.
+        com.music.bitchord.ui.components.HeatMeter(
+            level = songHeat?.level ?: 0f,
+            width = 48.dp,
+            hue = heatHue,
+            gated = false,
+            tint = Color.White.copy(alpha = 0.85f),
+        )
+        com.music.bitchord.ui.components.GlassDropdownMenu(
+            expanded = detailsOpen,
+            onDismissRequest = { detailsOpen = false },
+        ) {
+            com.music.bitchord.ui.components.HeatDetails(
+                info = songHeat ?: com.music.bitchord.ui.components.EmptyHeatInfo,
+                hue = heatHue,
+                song = song,
+            )
+        }
     }
 }

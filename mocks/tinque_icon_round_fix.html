@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="ja" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tinque アイコン丸形マスク下部窮屈感の改善モック</title>
+<style>
+  :root {
+    --bg: #f4f3f1;
+    --card: #ffffff;
+    --card-hover: #faf9f7;
+    --text: #1b1b1b;
+    --sub: #6e6d68;
+    --line: #dedcd8;
+    --accent: #FF5A36;
+    --accent-soft: rgba(255, 90, 54, 0.12);
+    --badge-bg: #e6e4df;
+    --badge-text: #4a4844;
+    --danger: #d93829;
+    --success: #1d9e75;
+  }
+  :root[data-theme="dark"] {
+    --bg: #121214;
+    --card: #1c1c1f;
+    --card-hover: #242428;
+    --text: #ececf0;
+    --sub: #9a9aa2;
+    --line: #2e2e34;
+    --accent: #FF5A36;
+    --accent-soft: rgba(255, 90, 54, 0.18);
+    --badge-bg: #2a2a30;
+    --badge-text: #b5b5c0;
+    --danger: #f25546;
+    --success: #34d399;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 20px 60px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans JP", sans-serif;
+    line-height: 1.5;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  header { margin-bottom: 24px; }
+  h1 { font-size: 22px; margin: 0 0 6px; font-weight: 700; letter-spacing: -0.01em; }
+  .lead { font-size: 14px; color: var(--sub); margin: 0 0 16px; max-width: 800px; }
+  
+  .problem-banner {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 24px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+  }
+  .problem-banner .summary { flex: 1; min-width: 280px; }
+  .problem-banner h3 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--accent); }
+  .problem-banner p { margin: 0; font-size: 13px; color: var(--sub); }
+  .problem-banner .stats {
+    display: flex;
+    gap: 12px;
+    background: var(--bg);
+    padding: 8px 14px;
+    border-radius: 8px;
+  }
+  .stat-item { text-align: center; }
+  .stat-val { font-size: 16px; font-weight: 700; font-family: monospace; }
+  .stat-val.bad { color: var(--danger); }
+  .stat-val.good { color: var(--success); }
+  .stat-lbl { font-size: 11px; color: var(--sub); }
+
+  .sticky-controls {
+    position: sticky;
+    top: 12px;
+    z-index: 50;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 12px 16px;
+    margin-bottom: 24px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+  }
+  .control-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .control-label { font-size: 12px; font-weight: 600; color: var(--sub); margin-right: 4px; }
+  button.pill {
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--text);
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  button.pill:hover { background: var(--card-hover); }
+  button.pill.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    font-weight: 600;
+  }
+
+  section { margin-bottom: 32px; }
+  section h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  section h2 span.badge {
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--badge-bg);
+    color: var(--badge-text);
+    padding: 2px 8px;
+    border-radius: 6px;
+  }
+
+  /* Grid of pattern cards */
+  .pattern-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+  .pattern-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 18px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    position: relative;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .pattern-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+  }
+  .pattern-card.current {
+    border-color: rgba(217, 56, 41, 0.4);
+    background: linear-gradient(180deg, rgba(217, 56, 41, 0.04) 0%, var(--card) 40%);
+  }
+  .pattern-card.recommended {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), 0 8px 24px rgba(255, 90, 54, 0.15);
+  }
+  .card-tag {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .tag-danger { background: rgba(217, 56, 41, 0.15); color: var(--danger); }
+  .tag-rec { background: var(--accent); color: #fff; }
+  .tag-neutral { background: var(--badge-bg); color: var(--badge-text); }
+
+  .icon-stage {
+    margin: 14px 0 12px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 140px;
+  }
+
+  .pattern-name { font-size: 15px; font-weight: 600; margin: 0 0 4px; }
+  .pattern-desc { font-size: 12px; color: var(--sub); margin: 0 0 12px; line-height: 1.45; text-align: left; }
+
+  .metric-bars {
+    width: 100%;
+    background: var(--bg);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    text-align: left;
+  }
+  .metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .metric-bar-bg {
+    flex: 1;
+    margin: 0 10px;
+    height: 6px;
+    background: var(--line);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .metric-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+  }
+
+  /* Home screen launcher mock */
+  .homescreen-section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 24px;
+    overflow: hidden;
+  }
+  .homescreen-bg {
+    background: radial-gradient(circle at 50% 30%, #3a4149 0%, #1e2227 60%, #131518 100%);
+    border-radius: 16px;
+    padding: 32px 20px;
+    display: flex;
+    justify-content: space-around;
+    flex-wrap: wrap;
+    gap: 20px;
+    box-shadow: inset 0 2px 8px rgba(0,0,0,0.4);
+  }
+  .launcher-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 88px;
+  }
+  .launcher-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: #ffffff;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    letter-spacing: 0.02em;
+  }
+  .launcher-tag {
+    font-size: 10px;
+    color: rgba(255,255,255,0.7);
+    margin-top: -4px;
+  }
+
+  /* Interactive Sandbox */
+  .sandbox-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 22px;
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 24px;
+  }
+  @media (max-width: 768px) {
+    .sandbox-card { grid-template-columns: 1fr; }
+  }
+  .sandbox-preview {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    border-radius: 14px;
+    padding: 20px;
+  }
+  .sandbox-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .slider-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .slider-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .slider-header span.val { color: var(--accent); font-family: monospace; }
+  input[type=range] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+  .code-output {
+    margin-top: 10px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 11px;
+    color: var(--text);
+    overflow-x: auto;
+    white-space: pre;
+    max-height: 140px;
+  }
+
+  /* SVG Guide lines */
+  .guide-circle { stroke: #1D9E75; stroke-dasharray: 2 2; stroke-width: 0.8; fill: none; }
+  .guide-center { stroke: #3b82f6; stroke-dasharray: 2 2; stroke-width: 0.7; }
+  .guide-danger { stroke: #d93829; stroke-dasharray: 1 1; stroke-width: 1; fill: none; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Tinque アイコン：丸形マスク下部窮屈感の改善モック</h1>
+  <p class="lead">
+    Android端末の標準ランチャーで丸形（Circle）マスクされた際、4本のストロークが下端（y=85）に広がり、丸の丸みと衝突して下側が窮屈（クリアランスわずか1.2%）になる問題を解決するための比較検証モックです。
+  </p>
+
+  <div class="problem-banner">
+    <div class="summary">
+      <h3>現状（v2.6.1）の問題の根本原因</h3>
+      <p>
+        4本目の足が横に広がり（幅67）、四角では気にならない底端が、下に向かってすぼまる円形マスクでは円弧とギリギリ（約1.2%）まで接近。さらに上部はオレンジの細い1本しかなく下部が4本集中するため、視覚重心が下に落ちて見えます。
+      </p>
+    </div>
+    <div class="stats">
+      <div class="stat-item">
+        <div class="stat-val bad">1.2%</div>
+        <div class="stat-lbl">現行下端余白</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-val">9.0%</div>
+        <div class="stat-lbl">現行上端余白</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-val good">7.5〜8.0%</div>
+        <div class="stat-lbl">理想余白</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- Sticky Filter Controls -->
+<div class="sticky-controls">
+  <div class="control-group">
+    <span class="control-label">マスク形状:</span>
+    <button class="pill active" data-shape="circle">円形（Android標準）</button>
+    <button class="pill" data-shape="squircle">スクワークル（角丸四角）</button>
+    <button class="pill" data-shape="rect">元角丸（22%）</button>
+    <button class="pill" data-shape="none">マスクなし</button>
+  </div>
+  <div class="control-group" style="margin-left:auto;">
+    <span class="control-label">カラバリ:</span>
+    <button class="pill active" data-color="normal">通常（黒×白×橙）</button>
+    <button class="pill" data-color="mono">黒×白</button>
+    <button class="pill" data-color="orange">黒×橙</button>
+    <button class="pill" data-color="white">白×黒×橙</button>
+  </div>
+  <div class="control-group">
+    <span class="control-label">ガイド:</span>
+    <button class="pill" id="toggleGuide">ガイドOFF</button>
+    <button class="pill" id="toggleTheme">🌓 テーマ切替</button>
+  </div>
+</div>
+
+<!-- Section 1: Hero Patterns Comparison -->
+<section>
+  <h2>5つの改善アプローチ比較 <span class="badge">Side-by-side 140px</span></h2>
+  <div class="pattern-grid" id="patternGrid">
+    <!-- Populated by JS -->
+  </div>
+</section>
+
+<!-- Section 2: Real Home Screen Simulation -->
+<section>
+  <h2>実機ホーム画面での見え方比較 <span class="badge">60px アイコン ＋ "Tinque" ラベル</span></h2>
+  <div class="homescreen-section">
+    <p style="margin:0 0 16px; font-size:13px; color:var(--sub);">
+      実際のスマートフォン（Pixel等）のホーム画面壁紙上で、アプリ名「Tinque」と一緒に並べた時の佇まいです。
+    </p>
+    <div class="homescreen-bg" id="homeScreenGrid">
+      <!-- Populated by JS -->
+    </div>
+  </div>
+</section>
+
+<!-- Section 3: Interactive Sandbox -->
+<section>
+  <h2>パラメータ自由調整サンドボックス <span class="badge">Interactive Studio</span></h2>
+  <div class="sandbox-card">
+    <div class="sandbox-preview">
+      <div id="sandboxStage"></div>
+      <div id="sandboxMetrics" style="margin-top:12px; font-size:12px; text-align:center;"></div>
+    </div>
+    <div class="sandbox-controls">
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>Yシフト（上下位置調整）</span>
+          <span class="val" id="valShiftY">-2 dp</span>
+        </div>
+        <input type="range" id="sliderShiftY" min="-8" max="4" step="0.5" value="-2">
+        <div style="font-size:11px; color:var(--sub);">上に持ち上げて下端マージンを確保（マイナスで上へ）</div>
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>スケール（全体サイズ）</span>
+          <span class="val" id="valScale">96%</span>
+        </div>
+        <input type="range" id="sliderScale" min="82" max="106" step="1" value="96">
+        <div style="font-size:11px; color:var(--sub);">適正な円内スケールに調整（現行比）</div>
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>テールの底上げ量（下部カーブリフト）</span>
+          <span class="val" id="valLift">4 unit</span>
+        </div>
+        <input type="range" id="sliderLift" min="0" max="8" step="1" value="4">
+        <div style="font-size:11px; color:var(--sub);">下端の終わり（y=85）を持ち上げる量</div>
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>底面の円弧アーチ度（外側ストロークのリフト）</span>
+          <span class="val" id="valArch">3 unit</span>
+        </div>
+        <input type="range" id="sliderArch" min="0" max="6" step="1" value="3">
+        <div style="font-size:11px; color:var(--sub);">円の丸みに合わせて外側2本を中央2本より高く持ち上げる量</div>
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-header">
+          <span>Android XML (ic_launcher_fg) コード:</span>
+        </div>
+        <div class="code-output" id="xmlCodeOutput"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div>
+
+<script>
+// --- Pattern Definitions ---
+const PATTERNS = [
+  {
+    id: 'current',
+    name: '現行 (v2.6.1)',
+    badge: '危険：衝突寸前',
+    badgeClass: 'tag-danger',
+    desc: '元デザインそのまま。y=85の底辺と外側の広がりが丸形マスクと衝突し、下端マージンがわずか1.2%しかありません。',
+    k: 64 / 72,
+    shiftX: 1.5,
+    shiftY: 0,
+    paths: [
+      'M22 32V70Q22 80 15 85',
+      'M40 32V70Q40 80 33 85',
+      'M65 14Q58 19 58 29V70Q58 80 51 85',
+      'M75 54V70Q75 80 82 85'
+    ],
+    minTop: 9.0,
+    minBottom: 1.2
+  },
+  {
+    id: 'pat1_shift',
+    name: '案A: 配置・スケール補正のみ',
+    badge: '形状変更なし',
+    badgeClass: 'tag-neutral',
+    desc: 'ストロークの形状は1ミリも変更せず、Androidアダプティブアイコンの配置（Y=-4, Scale=94%）だけを光学中心に補正。',
+    k: 60 / 72,
+    shiftX: 1.5,
+    shiftY: -4,
+    paths: [
+      'M22 32V70Q22 80 15 85',
+      'M40 32V70Q40 80 33 85',
+      'M65 14Q58 19 58 29V70Q58 80 51 85',
+      'M75 54V70Q75 80 82 85'
+    ],
+    minTop: 8.5,
+    minBottom: 6.6
+  },
+  {
+    id: 'pat2_lift',
+    name: '案B: テール短縮（y85→y80）',
+    badge: '軽快・スッキリ',
+    badgeClass: 'tag-neutral',
+    desc: '下部カーブを5unit持ち上げ（y=80で終了）。ストロークの足がすっきりし、下部の溜まりを解消します。',
+    k: 64 / 72,
+    shiftX: 1.5,
+    shiftY: 0,
+    paths: [
+      'M22 32V68Q22 76 16 80',
+      'M40 32V68Q40 76 34 80',
+      'M65 14Q58 19 58 29V68Q58 76 52 80',
+      'M75 54V68Q75 76 81 80'
+    ],
+    minTop: 9.0,
+    minBottom: 4.9
+  },
+  {
+    id: 'pat3_narrow',
+    name: '案C: 外側絞り＋リフト',
+    badge: '外側衝突回避',
+    badgeClass: 'tag-neutral',
+    desc: '左右外側ストロークの横広がり（dx）を抑え、下端をy=81へ。丸形マスクの最も狭い角への衝突を防ぎます。',
+    k: 64 / 72,
+    shiftX: 1.5,
+    shiftY: 0,
+    paths: [
+      'M22 32V69Q22 77 18 81',
+      'M40 32V69Q40 77 34 81',
+      'M65 14Q58 19 58 29V69Q58 77 52 81',
+      'M75 54V69Q75 77 79 81'
+    ],
+    minTop: 9.0,
+    minBottom: 5.8
+  },
+  {
+    id: 'pat4_arch',
+    name: '案D: 円弧追従アーチ',
+    badge: '丸形にフィット',
+    badgeClass: 'tag-neutral',
+    desc: '平坦な一直線の底面をやめ、外側2本（y=79）を中央2本（y=83）より高く持ち上げ、丸形マスクの円弧に美しく沿わせます。',
+    k: 64 / 72,
+    shiftX: 1.5,
+    shiftY: 0,
+    paths: [
+      'M22 32V67Q22 75 16 79',
+      'M40 32V70Q40 78 34 82.5',
+      'M65 14Q58 19 58 29V70Q58 78 52 83',
+      'M75 54V67Q75 75 81 79'
+    ],
+    minTop: 9.0,
+    minBottom: 5.5
+  },
+  {
+    id: 'pat5_hybrid',
+    name: '案E: 黄金バランス統合案',
+    badge: '★ おすすめ（最美）',
+    badgeClass: 'tag-rec',
+    desc: '円弧追従アーチ ＋ 穏やかな光学重心補正（Y=-2, Scale=97%）。上下左右の余白が均一（約8%）になり、完璧な安定感が生まれます。',
+    k: 62 / 72,
+    shiftX: 1.5,
+    shiftY: -2,
+    paths: [
+      'M22 32V67Q22 75 16 79',
+      'M40 32V70Q40 78 34 82.5',
+      'M65 14Q58 19 58 29V70Q58 78 52 83',
+      'M75 54V67Q75 75 81 79'
+    ],
+    minTop: 8.7,
+    minBottom: 8.0
+  }
+];
+
+// --- State ---
+let currentShape = 'circle';
+let currentColor = 'normal';
+let showGuides = false;
+let uid = 0;
+
+// Color themes
+const COLOR_THEMES = {
+  normal: { bg: '#111111', strokes: ['#ffffff', '#ffffff', '#FF5A36', '#ffffff'] },
+  mono:   { bg: '#111111', strokes: ['#ffffff', '#ffffff', '#ffffff', '#ffffff'] },
+  orange: { bg: '#111111', strokes: ['#FF5A36', '#FF5A36', '#FF5A36', '#FF5A36'] },
+  white:  { bg: '#ffffff', strokes: ['#111111', '#111111', '#FF5A36', '#111111'], border: '#dedcd8' }
+};
+
+// Shape masks
+function getClipShape(shape) {
+  if (shape === 'circle') return '<circle cx="50" cy="50" r="50"/>';
+  if (shape === 'squircle') return '<path d="M50 0C88 0 100 12 100 50S88 100 50 100 0 88 0 50 12 0 50 0Z"/>';
+  if (shape === 'rect') return '<rect width="100" height="100" rx="22"/>';
+  return '<rect width="100" height="100"/>';
+}
+
+// Generate SVG string
+function renderIconSvg(pat, shape, colorTheme, size, guides) {
+  const id = 'mask_' + (uid++);
+  const theme = COLOR_THEMES[colorTheme];
+  const k = pat.k;
+  const offX = (100 - 100 * k) / 2 + pat.shiftX * k;
+  const offY = (100 - 100 * k) / 2 + pat.shiftY * k;
+  
+  let guideSvg = '';
+  if (guides) {
+    guideSvg = `
+      <circle cx="50" cy="50" r="45" class="guide-circle"/>
+      <line x1="50" y1="0" x2="50" y2="100" class="guide-center"/>
+      <line x1="0" y1="50" x2="100" y2="50" class="guide-center"/>
+      <!-- danger line at bottom -->
+      <path d="M 15 88 Q 50 96 85 88" class="guide-danger"/>
+    `;
+  }
+
+  const borderAttr = theme.border ? `stroke="${theme.border}" stroke-width="1"` : '';
+
+  return `
+    <svg width="${size}" height="${size}" viewBox="0 0 100 100">
+      <defs>
+        <clipPath id="${id}">
+          ${getClipShape(shape)}
+        </clipPath>
+      </defs>
+      <g clip-path="${shape !== 'none' ? `url(#${id})` : ''}">
+        <rect width="100" height="100" fill="${theme.bg}" ${borderAttr}/>
+        <g transform="translate(${offX.toFixed(2)} ${offY.toFixed(2)}) scale(${k.toFixed(3)})"
+           fill="none" stroke-width="13" stroke-linejoin="round" stroke-linecap="butt">
+          ${pat.paths.map((d, i) => `<path d="${d}" stroke="${theme.strokes[i]}"/>`).join('')}
+        </g>
+        ${guideSvg}
+      </g>
+      ${shape === 'none' && guides ? `<rect width="100" height="100" fill="none" stroke="#666" stroke-dasharray="2 2" stroke-width="0.8"/>` : ''}
+    </svg>
+  `;
+}
+
+// Render Pattern Grid
+function renderPatterns() {
+  const grid = document.getElementById('patternGrid');
+  grid.innerHTML = PATTERNS.map(pat => {
+    const isCur = pat.id === 'current';
+    const isRec = pat.id === 'pat5_hybrid';
+    const cardClass = isCur ? 'pattern-card current' : (isRec ? 'pattern-card recommended' : 'pattern-card');
+    const bottomScoreColor = pat.minBottom < 3.0 ? 'var(--danger)' : (pat.minBottom >= 7.0 ? 'var(--success)' : 'var(--accent)');
+    
+    return `
+      <div class="${cardClass}">
+        <span class="card-tag ${pat.badgeClass}">${pat.badge}</span>
+        <div class="icon-stage">
+          ${renderIconSvg(pat, currentShape, currentColor, 130, showGuides)}
+        </div>
+        <div class="pattern-name">${pat.name}</div>
+        <div class="pattern-desc">${pat.desc}</div>
+        <div class="metric-bars">
+          <div class="metric-row">
+            <span>下端クリアランス</span>
+            <div class="metric-bar-bg">
+              <div class="metric-bar-fill" style="width:${Math.min(100, pat.minBottom * 10)}%; background:${bottomScoreColor};"></div>
+            </div>
+            <strong style="color:${bottomScoreColor};">${pat.minBottom.toFixed(1)}%</strong>
+          </div>
+          <div class="metric-row">
+            <span>上端クリアランス</span>
+            <div class="metric-bar-bg">
+              <div class="metric-bar-fill" style="width:${Math.min(100, pat.minTop * 10)}%; background:#3b82f6;"></div>
+            </div>
+            <strong style="color:var(--sub);">${pat.minTop.toFixed(1)}%</strong>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// Render Home Screen
+function renderHomeScreen() {
+  const hs = document.getElementById('homeScreenGrid');
+  hs.innerHTML = PATTERNS.map(pat => {
+    return `
+      <div class="launcher-item">
+        ${renderIconSvg(pat, 'circle', currentColor, 58, false)}
+        <span class="launcher-label">Tinque</span>
+        <span class="launcher-tag">${pat.name.split(':')[0]}</span>
+      </div>
+    `;
+  }).join('');
+}
+
+// --- Interactive Sandbox Logic ---
+function updateSandbox() {
+  const shiftY = parseFloat(document.getElementById('sliderShiftY').value);
+  const scalePct = parseFloat(document.getElementById('sliderScale').value);
+  const lift = parseFloat(document.getElementById('sliderLift').value);
+  const arch = parseFloat(document.getElementById('sliderArch').value);
+
+  document.getElementById('valShiftY').textContent = `${shiftY > 0 ? '+' : ''}${shiftY} dp`;
+  document.getElementById('valScale').textContent = `${scalePct}%`;
+  document.getElementById('valLift').textContent = `${lift} unit`;
+  document.getElementById('valArch').textContent = `${arch} unit`;
+
+  // Compute paths dynamically
+  const k = (64 / 72) * (scalePct / 100);
+  
+  // Outer strokes end at 85 - lift - arch
+  // Inner strokes end at 85 - lift
+  const yOuter = 85 - lift - arch;
+  const yInner = 85 - lift;
+  const p1_start_curve = yOuter - 12;
+  const p1_ctrl = yOuter - 4;
+  const p2_start_curve = yInner - 12;
+  const p2_ctrl = yInner - 4;
+
+  const sandboxPat = {
+    k: k,
+    shiftX: 1.5,
+    shiftY: shiftY,
+    paths: [
+      `M22 32V${p1_start_curve.toFixed(1)}Q22 ${p1_ctrl.toFixed(1)} 16 ${yOuter.toFixed(1)}`,
+      `M40 32V${p2_start_curve.toFixed(1)}Q40 ${p2_ctrl.toFixed(1)} 34 ${yInner.toFixed(1)}`,
+      `M65 14Q58 19 58 29V${p2_start_curve.toFixed(1)}Q58 ${p2_ctrl.toFixed(1)} 52 ${yInner.toFixed(1)}`,
+      `M75 54V${p1_start_curve.toFixed(1)}Q75 ${p1_ctrl.toFixed(1)} 81 ${yOuter.toFixed(1)}`
+    ]
+  };
+
+  const svgHtml = renderIconSvg(sandboxPat, currentShape, currentColor, 150, showGuides);
+  document.getElementById('sandboxStage').innerHTML = svgHtml;
+
+  // Approximate clearance calculation
+  const offY = (100 - 100 * k) / 2 + shiftY * k;
+  const bottomMaxY = offY + (yOuter + 6.5) * k;
+  const bottomClearance = Math.max(0, 95 - bottomMaxY);
+  
+  document.getElementById('sandboxMetrics').innerHTML = `
+    推定下端クリアランス: <strong style="color:var(--accent); font-size:14px;">~${bottomClearance.toFixed(1)}%</strong>
+  `;
+
+  // Generate Android XML snippet
+  const translateX = (22 + (1.5 * k * 0.72)).toFixed(2);
+  const translateY = (22 + (shiftY * k * 0.72)).toFixed(2);
+  const scale = (0.64 * (scalePct / 100)).toFixed(3);
+
+  const xml = `<!-- res/drawable/ic_launcher_fg_white_orange.xml -->
+<group android:translateX="${translateX}" android:translateY="${translateY}"
+       android:scaleX="${scale}" android:scaleY="${scale}">
+    <path android:pathData="${sandboxPat.paths[0]}"
+          android:strokeColor="#FFFFFFFF" android:strokeWidth="13" android:strokeLineJoin="round" />
+    <path android:pathData="${sandboxPat.paths[1]}"
+          android:strokeColor="#FFFFFFFF" android:strokeWidth="13" android:strokeLineJoin="round" />
+    <path android:pathData="${sandboxPat.paths[2]}"
+          android:strokeColor="#FFFF5A36" android:strokeWidth="13" android:strokeLineJoin="round" />
+    <path android:pathData="${sandboxPat.paths[3]}"
+          android:strokeColor="#FFFFFFFF" android:strokeWidth="13" android:strokeLineJoin="round" />
+</group>`;
+  document.getElementById('xmlCodeOutput').textContent = xml;
+}
+
+// --- Event Handlers ---
+document.querySelectorAll('[data-shape]').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('[data-shape]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentShape = btn.dataset.shape;
+    renderPatterns();
+    updateSandbox();
+  };
+});
+
+document.querySelectorAll('[data-color]').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('[data-color]').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentColor = btn.dataset.color;
+    renderPatterns();
+    renderHomeScreen();
+    updateSandbox();
+  };
+});
+
+document.getElementById('toggleGuide').onclick = () => {
+  showGuides = !showGuides;
+  document.getElementById('toggleGuide').classList.toggle('active', showGuides);
+  document.getElementById('toggleGuide').textContent = showGuides ? 'ガイドON' : 'ガイドOFF';
+  renderPatterns();
+  updateSandbox();
+};
+
+document.getElementById('toggleTheme').onclick = () => {
+  const current = document.documentElement.dataset.theme;
+  document.documentElement.dataset.theme = current === 'dark' ? 'light' : 'dark';
+};
+
+['sliderShiftY', 'sliderScale', 'sliderLift', 'sliderArch'].forEach(id => {
+  document.getElementById(id).oninput = updateSandbox;
+});
+
+// Initial Render
+renderPatterns();
+renderHomeScreen();
+updateSandbox();
+</script>
+</body>
+</html>

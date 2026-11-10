@@ -1,6 +1,7 @@
 package com.music.bitchord.ui.screens
 
 import com.music.bitchord.ui.components.GlassDropdownMenu
+import com.music.bitchord.ui.components.heatRing
 import com.music.bitchord.ui.components.SelectionDeleteEffect
 import com.music.bitchord.ui.components.SelectionScopeEffect
 import com.music.bitchord.ui.components.SongSelection
@@ -272,6 +273,7 @@ fun LocalMusicScreen(
     modifier: Modifier = Modifier,
     onPlayNext: ((Song) -> Unit)? = null,
     onAddToQueue: ((Song) -> Unit)? = null,
+    onGoToFolder: ((String) -> Unit)? = null,
     onDeleteSong: ((Song) -> Unit)? = null,
     onSongTagsOrLyricsSaved: ((Song) -> Unit)? = null,
     isRefreshing: Boolean = false,
@@ -464,6 +466,7 @@ fun LocalMusicScreen(
                 drillDownAlbumEntries = albumEntries(drillDownSongs, emptyList())
                 drillDownShowsAlbums = artistsOpenAlbums
                 parentArtistLabel = target
+                parentArtistAlbums = null
             } else {
                 val matching = songs
                     .filter { it.albumName?.trim().equals(target, ignoreCase = true) }
@@ -472,7 +475,12 @@ fun LocalMusicScreen(
                 drillDownSongs = matching
                 drillDownArt = matching.firstNotNullOfOrNull { it.thumbnailUrl?.takeIf { url -> url.isNotBlank() } }
                 drillDownIsArtist = false
+                drillDownShowsAlbums = false
                 drillDownFullScreenArtwork = true
+                parentArtistAlbums = null
+            }
+            if (songs.isNotEmpty()) {
+                onDrillDownDismiss?.invoke()
             }
         }
     }
@@ -535,10 +543,14 @@ fun LocalMusicScreen(
             onGoToFolder = if (!song.localPath.isNullOrBlank()) {
                 { targetFolder ->
                     activeMenuSong = null
-                    drillDownLabel = targetFolder.substringAfterLast('/')
-                    drillDownSongs = songs.filter { (it.localPath ?: "").substringBeforeLast('/') == targetFolder }
-                    drillDownArt = null
-                    drillDownFullScreenArtwork = false
+                    if (onGoToFolder != null) {
+                        onGoToFolder(targetFolder)
+                    } else {
+                        drillDownLabel = targetFolder.substringAfterLast('/')
+                        drillDownSongs = songs.filter { (it.localPath ?: "").substringBeforeLast('/') == targetFolder }
+                        drillDownArt = null
+                        drillDownFullScreenArtwork = false
+                    }
                 }
             } else null,
             onTagEditor = {
@@ -726,78 +738,134 @@ fun LocalMusicScreen(
                     }
 
                 key is DrillPage -> {
-                    if (key.showsAlbums) {
-                        val artistAlbums = key.albumEntries.orEmpty()
-                        SelectionScopeEffect(
-                            key = key,
-                            songs = remember(artistAlbums) { artistAlbums.flatMap(AlbumEntry::songs).distinctBy { it.videoId } },
-                            groupKeys = remember(artistAlbums) { artistAlbums.mapTo(HashSet()) { it.key } },
-                        )
-                        AlbumsTab(
-                            albums = artistAlbums,
-                            viewType = albumsViewType,
-                            onViewTypeToggle = {
-                                val next = if (albumsViewType == LibraryViewType.GRID) LibraryViewType.LIST else LibraryViewType.GRID
-                                if (isDownloads) AppSettings.setDownloadedAlbumsViewType(next)
-                                else AppSettings.setLocalAlbumsViewType(next)
-                            },
-                            onAlbumClick = { entry ->
-                                parentArtistAlbums = artistAlbums
-                                parentArtistLabel = key.label
-                                drillDownLabel = entry.title
-                                drillDownSongs = entry.songs
-                                drillDownArt = entry.thumbnailUrl
-                                drillDownIsArtist = false
-                                drillDownShowsAlbums = false
-                                drillDownFullScreenArtwork = true
-                            },
-                            onAlbumLongPress = { entry ->
-                                if (isDownloads) toggleAlbumSelection(entry)
-                                else onCollectionLongPress?.invoke(entry.title, entry.songs)
-                            },
-                            contentPadding = bodyContentPadding,
-                        )
-                    } else {
-                        SelectionScopeEffect(key = key, songs = key.songs)
-                        DrillDownSongList(
-                            label = key.label,
-                            artworkUrl = key.art,
-                            songs = key.songs,
-                            isArtist = key.isArtist,
-                            fullScreenArtwork = fullScreenCollectionArtwork && key.fullScreenArtwork,
-                            viewType = drillDownViewType,
-                            onViewTypeToggle = {
-                                val next = if (drillDownViewType == LibraryViewType.GRID) LibraryViewType.LIST else LibraryViewType.GRID
-                                if (isDownloads) AppSettings.setDownloadedDrillDownSongsViewType(next)
-                                else AppSettings.setLocalDrillDownSongsViewType(next)
-                            },
-                            selectedIds = selectedSongIds,
-                            currentSong = currentSong,
-                            isPlaying = isPlaying,
-                            onSongClick = { tracks, index ->
-                                val song = tracks[index]
-                                if (selectingSongs) toggleDownloadSelection(song) else onSongClick(tracks, index)
-                            },
-                            onSongLongPress = { song -> toggleDownloadSelection(song) },
-                            onSongMore = { song -> activeMenuSong = song },
-                            onSongSwipe = onSongSwipe,
-                            onShuffle = if (key.isArtist && shuffleArtistAlbums) {
-                                { tracks ->
-                                    val ordered = shuffleAlbumGroupsKeepTrackOrder(tracks)
-                                    onShuffleArtist?.invoke(ordered) ?: onShuffle(ordered)
+                    // An artist page switches between its songs, its albums and
+                    // the folders its files sit in; it also carries the artist's
+                    // "Add to Library". An album page carries the album's.
+                    val isArtistPage = key.depth == 1 && (key.isArtist || key.showsAlbums)
+                    var artistMode by rememberSaveable(key.label, isArtistPage) {
+                        mutableStateOf(if (key.showsAlbums) ArtistPageMode.ALBUMS else ArtistPageMode.SONGS)
+                    }
+                    val showAlbums = if (isArtistPage) artistMode == ArtistPageMode.ALBUMS else key.showsAlbums
+                    val albumsForPage = remember(key) { key.albumEntries ?: albumEntries(key.songs, emptyList()) }
+                    val isAlbumPage = !isArtistPage && key.songs.isNotEmpty() &&
+                        key.songs.all { it.albumName?.trim().equals(key.label.trim(), ignoreCase = true) }
+                    val pagePadding = if (isArtistPage) {
+                        PaddingValues(bottom = bodyContentPadding.calculateBottomPadding())
+                    } else bodyContentPadding
+                    Column(Modifier.fillMaxSize()) {
+                        if (isArtistPage) {
+                            ArtistPageSwitch(
+                                mode = artistMode,
+                                onModeChange = { artistMode = it },
+                                artist = key.label,
+                                artworkUrl = key.art ?: key.songs.firstNotNullOfOrNull { it.thumbnailUrl },
+                                modifier = Modifier.padding(top = bodyContentPadding.calculateTopPadding()),
+                            )
+                        }
+                        Box(Modifier.weight(1f)) {
+                            when {
+                                isArtistPage && artistMode == ArtistPageMode.FOLDERS -> ArtistFolderList(
+                                    songs = key.songs,
+                                    onOpenFolder = { folder ->
+                                        if (onGoToFolder != null) {
+                                            onGoToFolder(folder)
+                                        } else {
+                                            drillDownLabel = folder.substringAfterLast('/')
+                                            drillDownSongs = songs.filter { (it.localPath ?: "").substringBeforeLast('/') == folder }
+                                            drillDownArt = null
+                                            drillDownIsArtist = false
+                                            drillDownShowsAlbums = false
+                                            drillDownFullScreenArtwork = false
+                                        }
+                                    },
+                                    contentPadding = pagePadding,
+                                )
+                                showAlbums -> {
+                                val artistAlbums = albumsForPage
+                                SelectionScopeEffect(
+                                    key = key,
+                                    songs = remember(artistAlbums) { artistAlbums.flatMap(AlbumEntry::songs).distinctBy { it.videoId } },
+                                    groupKeys = remember(artistAlbums) { artistAlbums.mapTo(HashSet()) { it.key } },
+                                )
+                                AlbumsTab(
+                                    albums = artistAlbums,
+                                    viewType = albumsViewType,
+                                    onViewTypeToggle = {
+                                        val next = if (albumsViewType == LibraryViewType.GRID) LibraryViewType.LIST else LibraryViewType.GRID
+                                        if (isDownloads) AppSettings.setDownloadedAlbumsViewType(next)
+                                        else AppSettings.setLocalAlbumsViewType(next)
+                                    },
+                                    onAlbumClick = { entry ->
+                                        parentArtistAlbums = artistAlbums
+                                        parentArtistLabel = key.label
+                                        drillDownLabel = entry.title
+                                        drillDownSongs = entry.songs
+                                        drillDownArt = entry.thumbnailUrl
+                                        drillDownIsArtist = false
+                                        drillDownShowsAlbums = false
+                                        drillDownFullScreenArtwork = true
+                                    },
+                                    onAlbumLongPress = { entry ->
+                                        if (isDownloads) toggleAlbumSelection(entry)
+                                        else onCollectionLongPress?.invoke(entry.title, entry.songs)
+                                    },
+                                    contentPadding = pagePadding,
+                                )
                                 }
-                            } else onShuffle,
-                            onMore = onCollectionLongPress?.let { more ->
-                                { more(key.label, key.songs) }
-                            },
-                            onBack = backFromDrillDown,
-                            contentPadding = bodyContentPadding,
-                            songDropdownMenu = if (isDownloads) null else songDropdownMenu,
-                            onArtworkPaletteChanged = onArtworkPaletteChanged,
-                        )
+                                else -> androidx.compose.runtime.CompositionLocalProvider(
+                                    com.music.bitchord.feature.localmusic.ui.components.LocalDrillDownHeaderExtra provides if (isAlbumPage) {
+                                        {
+                                            com.music.bitchord.feature.library.ui.components.LibraryAddChip(
+                                                type = com.music.bitchord.feature.library.data.LibraryEntryType.ALBUM,
+                                                title = key.label,
+                                                artist = key.songs.firstOrNull()?.let { it.albumArtist?.takeIf(String::isNotBlank) ?: it.artist },
+                                                artworkUrl = key.art ?: key.songs.firstNotNullOfOrNull { it.thumbnailUrl },
+                                            )
+                                        }
+                                    } else null,
+                                ) {
+                                SelectionScopeEffect(key = key, songs = key.songs)
+                                DrillDownSongList(
+                                    label = key.label,
+                                    artworkUrl = key.art,
+                                    songs = key.songs,
+                                    isArtist = key.isArtist,
+                                    fullScreenArtwork = fullScreenCollectionArtwork && key.fullScreenArtwork,
+                                    viewType = drillDownViewType,
+                                    onViewTypeToggle = {
+                                        val next = if (drillDownViewType == LibraryViewType.GRID) LibraryViewType.LIST else LibraryViewType.GRID
+                                        if (isDownloads) AppSettings.setDownloadedDrillDownSongsViewType(next)
+                                        else AppSettings.setLocalDrillDownSongsViewType(next)
+                                    },
+                                    selectedIds = selectedSongIds,
+                                    currentSong = currentSong,
+                                    isPlaying = isPlaying,
+                                    onSongClick = { tracks, index ->
+                                        val song = tracks[index]
+                                        if (selectingSongs) toggleDownloadSelection(song) else onSongClick(tracks, index)
+                                    },
+                                    onSongLongPress = { song -> toggleDownloadSelection(song) },
+                                    onSongMore = { song -> activeMenuSong = song },
+                                    onSongSwipe = onSongSwipe,
+                                    onShuffle = if (key.isArtist && shuffleArtistAlbums) {
+                                        { tracks ->
+                                            val ordered = shuffleAlbumGroupsKeepTrackOrder(tracks)
+                                            onShuffleArtist?.invoke(ordered) ?: onShuffle(ordered)
+                                        }
+                                    } else onShuffle,
+                                    onMore = onCollectionLongPress?.let { more ->
+                                        { more(key.label, key.songs) }
+                                    },
+                                    onBack = backFromDrillDown,
+                                    contentPadding = pagePadding,
+                                    songDropdownMenu = if (isDownloads) null else songDropdownMenu,
+                                    onArtworkPaletteChanged = onArtworkPaletteChanged,
+                                )
+                                }
+                            }
+                        }
                     }
                 }
-
                 key == "tab:$LOCAL_TAB_SONGS" -> {
                     SelectionScopeEffect(key = key, songs = sortedSongs)
                     SongsTab(
@@ -1411,6 +1479,7 @@ private fun ArtistsTab(
                         name = entry.name,
                         songCount = entry.songs.size,
                         thumbnailUrl = entry.thumbnailUrl,
+                        heat = com.music.bitchord.ui.components.rememberTileHeat(entry.songs),
                         allowRemoteArtwork = allowRemoteArtwork,
                         onClick = { onArtistClick(entry.name, entry.songs) },
                         onLongPress = onArtistLongPress?.let { { it(entry.name, entry.songs) } },
@@ -1463,6 +1532,7 @@ private fun ArtistsTab(
                         name = entry.name,
                         songCount = entry.songs.size,
                         thumbnailUrl = entry.thumbnailUrl,
+                        heat = com.music.bitchord.ui.components.rememberTileHeat(entry.songs),
                         allowRemoteArtwork = allowRemoteArtwork,
                         onClick = { onArtistClick(entry.name, entry.songs) },
                         onLongPress = onArtistLongPress?.let { { it(entry.name, entry.songs) } },
@@ -1486,6 +1556,7 @@ private fun ArtistRow(
     name: String,
     songCount: Int,
     thumbnailUrl: String? = null,
+    heat: Float? = null,
     allowRemoteArtwork: Boolean = true,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
@@ -1549,6 +1620,10 @@ private fun ArtistRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        if (heat != null) {
+            com.music.bitchord.ui.components.GroupHeatMark(heat)
+            Spacer(Modifier.width(12.dp))
+        }
         Icon(
             imageVector = com.music.bitchord.ui.icons.BitChordIcons.TransportPlay,
             contentDescription = null,
@@ -1565,6 +1640,7 @@ private fun ArtistGridCard(
     name: String,
     songCount: Int,
     thumbnailUrl: String?,
+    heat: Float? = null,
     allowRemoteArtwork: Boolean = true,
     onClick: () -> Unit,
     onLongPress: (() -> Unit)? = null,
@@ -1585,6 +1661,7 @@ private fun ArtistGridCard(
             modifier = Modifier
                 .fillMaxWidth(0.88f)
                 .aspectRatio(1f)
+                .heatRing(heat, CircleShape)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.surfaceContainerHighest),
             contentAlignment = Alignment.Center,
@@ -1899,6 +1976,7 @@ private fun AlbumGridCard(
                     scaleX = artScale
                     scaleY = artScale
                 }
+                .heatRing(com.music.bitchord.ui.components.rememberTileHeat(entry.songs), shape)
                 .clip(shape)
                 .thumbnailBorder(shape)
                 .background(MaterialTheme.colorScheme.secondaryContainer),
@@ -2019,6 +2097,10 @@ private fun AlbumRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+        com.music.bitchord.ui.components.rememberTileHeat(entry.songs)?.let { heat ->
+            com.music.bitchord.ui.components.GroupHeatMark(heat)
+            Spacer(Modifier.width(12.dp))
         }
         if (com.music.bitchord.ui.components.LocalSongSelection.current?.active == true) {
             com.music.bitchord.ui.components.SelectionMark(selected = selected)
@@ -2283,5 +2365,128 @@ private fun SectionHeader(
             )
         }
         actions()
+    }
+}
+
+/** What an artist page shows. */
+private enum class ArtistPageMode { SONGS, ALBUMS, FOLDERS }
+
+/** The artist page's Songs / Albums / Folders switch (an M3 Expressive connected group) and its Library chip. */
+@Composable
+private fun ArtistPageSwitch(
+    mode: ArtistPageMode,
+    onModeChange: (ArtistPageMode) -> Unit,
+    artist: String,
+    artworkUrl: String?,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = com.music.bitchord.ui.haptics.rememberHaptics()
+    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            val modes = listOf(
+                ArtistPageMode.SONGS to stringResource(R.string.songs),
+                ArtistPageMode.ALBUMS to stringResource(R.string.albums),
+                ArtistPageMode.FOLDERS to stringResource(R.string.folders),
+            )
+            modes.forEachIndexed { index, (m, label) ->
+                val selected = m == mode
+                val outer = 20.dp
+                val inner = 6.dp
+                val shape = androidx.compose.foundation.shape.RoundedCornerShape(
+                    topStart = if (index == 0 || selected) outer else inner,
+                    bottomStart = if (index == 0 || selected) outer else inner,
+                    topEnd = if (index == modes.lastIndex || selected) outer else inner,
+                    bottomEnd = if (index == modes.lastIndex || selected) outer else inner,
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(40.dp)
+                        .clip(shape)
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.surfaceContainerHigh,
+                        )
+                        .clickable {
+                            haptics.play(com.music.bitchord.ui.haptics.Haptic.Select)
+                            onModeChange(m)
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        com.music.bitchord.feature.library.ui.components.LibraryAddChip(
+            type = com.music.bitchord.feature.library.data.LibraryEntryType.ARTIST,
+            title = artist,
+            artist = null,
+            artworkUrl = artworkUrl,
+        )
+    }
+}
+
+/** The folders an artist's files are in, each opening that folder. */
+@Composable
+private fun ArtistFolderList(
+    songs: List<Song>,
+    onOpenFolder: (String) -> Unit,
+    contentPadding: PaddingValues,
+) {
+    val folders = remember(songs) {
+        songs.mapNotNull { s -> s.localPath?.substringBeforeLast('/', "")?.takeIf { it.isNotBlank() }?.let { it to s } }
+            .groupBy({ it.first }, { it.second })
+            .toList()
+            .sortedBy { it.first.substringAfterLast('/').lowercase(Locale.ROOT) }
+    }
+    androidx.compose.foundation.lazy.LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = contentPadding,
+    ) {
+        items(folders.size, key = { folders[it].first }) { index ->
+            val (path, inFolder) = folders[index]
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenFolder(path) }
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = path.substringAfterLast('/'),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = pluralStringResource(R.plurals.track_count_plural, inFolder.size, inFolder.size),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
     }
 }

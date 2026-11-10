@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ミックスのデザイン</title>
+<style>
+  :root { --bg: #f4f3f1; --page: #fbf8f6; --card: #fff; --text: #1b1b1b; --sub: #6b6b6b; --line: #dedcd8; --on: #1b1b1b; }
+  :root[data-theme="dark"] { --bg: #0c0c0c; --page: #141218; --card: #1d1b20; --text: #ece6f0; --sub: #a8a2ad; --line: #2c2c2e; --on: #ece6f0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 20px 16px 40px; background: var(--bg); color: var(--text); font-family: "Noto Sans JP", system-ui, sans-serif; }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  .lead { font-size: 13px; color: var(--sub); margin: 0 0 14px; line-height: 1.6; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .controls button { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .controls button.on { background: var(--text); color: var(--bg); }
+  .label { font-size: 12px; color: var(--sub); align-self: center; }
+  .phones { display: flex; flex-wrap: wrap; gap: 18px; }
+  .phone { width: 380px; max-width: 100%; background: var(--page); border-radius: 28px; padding: 18px 0 22px; border: 1px solid var(--line); }
+  .phone > h2 { font-size: 13px; color: var(--sub); font-weight: 500; margin: 0 20px 12px; }
+  .shelf-title { margin: 0 20px; font-size: 22px; font-weight: 800; }
+  .shelf-sub { margin: 2px 20px 12px; font-size: 13px; color: var(--sub); }
+  .shelf { display: flex; gap: 12px; overflow-x: auto; padding: 4px 20px 8px; scrollbar-width: none; }
+  .shelf::-webkit-scrollbar { display: none; }
+  .note { font-size: 12px; color: var(--sub); margin: 10px 20px 0; line-height: 1.6; }
+
+  /* A: collage in an M3 shape */
+  .a { flex: 0 0 156px; }
+  .a .art { position: relative; width: 156px; height: 156px; }
+  .a .kicker { font-size: 11px; font-weight: 700; letter-spacing: .04em; margin-top: 8px; }
+  .a .title { font-size: 16px; font-weight: 800; margin-top: 1px; }
+  .a .count { font-size: 12px; color: var(--sub); }
+  .fab { position: absolute; right: 2px; bottom: 2px; width: 48px; height: 48px; border-radius: 16px; display: grid; place-items: center; box-shadow: 0 3px 10px rgba(0,0,0,.25); }
+
+  /* B: tonal card, fanned sleeves */
+  .b { flex: 0 0 220px; height: 168px; border-radius: 28px; padding: 16px; position: relative; overflow: hidden; }
+  .b .kicker { font-size: 11px; font-weight: 700; letter-spacing: .04em; opacity: .85; }
+  .b .title { font-size: 22px; font-weight: 800; margin-top: 2px; }
+  .b .count { font-size: 12px; opacity: .8; }
+  .b { flex-basis: 236px; }
+  .b .fan { position: absolute; right: -14px; top: 64px; width: 110px; height: 100px; }
+  .b .fan div { position: absolute; width: 62px; height: 62px; border-radius: 14px; box-shadow: 0 4px 12px rgba(0,0,0,.25); }
+  .b .play { position: absolute; left: 16px; bottom: 16px; height: 40px; padding: 0 16px 0 12px; border-radius: 20px; display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; }
+
+  /* C: shape as the face */
+  .c { flex: 0 0 140px; border-radius: 28px; padding: 14px 12px 14px; text-align: center; }
+  .c .shape { width: 104px; height: 104px; margin: 0 auto; position: relative; }
+  .c .title { font-size: 16px; font-weight: 800; margin-top: 10px; }
+  .c .count { font-size: 12px; opacity: .8; }
+  .c .faces { display: flex; justify-content: center; margin-top: 10px; }
+  .c .faces div { width: 26px; height: 26px; border-radius: 50%; border: 2px solid; margin-left: -8px; }
+  .c .faces div:first-child { margin-left: 0; }
+</style>
+</head>
+<body>
+<h1>ホームの「ミックス」のデザイン（M3 Expressive）</h1>
+<p class="lead">今の小さなピル型ボタンだと、絞り込みの切り替えにも見えてしまうので、「アプリが作った再生リスト」と分かる形を3案。どれも押すとすぐシャッフル再生。ジャケットは仮の色です。</p>
+<div class="controls">
+  <span class="label">背景</span>
+  <button data-t="dark" class="on">ダーク</button>
+  <button data-t="light">ライト</button>
+</div>
+<div class="phones" id="phones"></div>
+<script>
+const MIXES = [
+  { name: 'ヒート', desc: 'いま熱い曲', count: 38, hue: 12, icon: 'fire' },
+  { name: '久しぶり', desc: 'あの頃よく聴いた', count: 50, hue: 230, icon: 'history' },
+  { name: '新着', desc: '最近入った曲', count: 14, hue: 168, icon: 'new' },
+  { name: '聴き残し', desc: '好きなアルバムの奥', count: 22, hue: 38, icon: 'album' },
+  { name: '夜の定番', desc: 'この時間によく聴く', count: 27, hue: 268, icon: 'moon' },
+  { name: '未再生', desc: 'まだ聴いていない', count: 50, hue: 335, icon: 'spark' },
+];
+const dark = () => document.documentElement.dataset.theme === 'dark';
+const container = h => dark() ? `hsl(${h} 35% 24%)` : `hsl(${h} 80% 90%)`;
+const onContainer = h => dark() ? `hsl(${h} 80% 88%)` : `hsl(${h} 60% 18%)`;
+const accent = h => dark() ? `hsl(${h} 85% 70%)` : `hsl(${h} 70% 42%)`;
+const onAccent = h => dark() ? `hsl(${h} 60% 14%)` : '#fff';
+// Stand-in sleeves: a few hues around the mix's own.
+const sleeve = (h, i) => `linear-gradient(${135 + i * 40}deg, hsl(${(h + i * 47) % 360} 60% ${55 + i * 5}%), hsl(${(h + i * 47 + 40) % 360} 55% ${30 + i * 4}%))`;
+
+// M3 Expressive-like shapes as polar outlines (100x100).
+function polar(f, steps = 240) {
+  let d = '';
+  for (let i = 0; i <= steps; i++) {
+    const a = i / steps * Math.PI * 2 - Math.PI / 2, r = f(a);
+    d += (i ? 'L' : 'M') + (50 + r * Math.cos(a)).toFixed(2) + ' ' + (50 + r * Math.sin(a)).toFixed(2);
+  }
+  return d + 'Z';
+}
+const SHAPES = {
+  cookie: polar(a => 46 + 4 * Math.cos(9 * a)),
+  clover: polar(a => 38 + 12 * Math.abs(Math.cos(2 * a))),
+  sunny: polar(a => 45 + 5 * Math.cos(8 * a)),
+  flower: polar(a => 41 + 9 * Math.cos(6 * a)),
+  pill: 'M30 6H70A24 24 0 0 1 70 54H30A24 24 0 0 1 30 6ZM30 46H70A24 24 0 0 1 70 94H30A24 24 0 0 1 30 46Z',
+};
+const shapeOf = i => ['cookie', 'clover', 'sunny', 'flower', 'cookie', 'clover'][i];
+
+const ICONS = {
+  fire: 'M12 2c1 4-3 5-3 9a3 3 0 0 0 6 0c0-1.5-.7-2.5-1.3-3.4C16.5 8.6 19 11 19 14.5A7 7 0 0 1 5 14.5C5 9 12 7 12 2z',
+  history: 'M13 3a9 9 0 1 0 8.6 11.6l-1.9-.6A7 7 0 1 1 13 5v3l4-4-4-4v3zM12 8h1.5v4.4l3.4 2-.8 1.3-4.1-2.5z',
+  new: 'M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4L12 14.4l-4.8 2.5.9-5.4L4.2 7.7l5.4-.8z',
+  album: 'M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 14a4 4 0 1 1 0-8 4 4 0 0 1 0 8zm0-5.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z',
+  moon: 'M14.5 2A9.5 9.5 0 1 0 22 16.5 7.5 7.5 0 0 1 14.5 2z',
+  spark: 'M12 1l2.2 7.8L22 11l-7.8 2.2L12 21l-2.2-7.8L2 11l7.8-2.2z',
+};
+const play = c => `<svg width="22" height="22" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" fill="${c}"/></svg>`;
+const shuffle = c => `<svg width="18" height="18" viewBox="0 0 24 24"><path d="M17 3l4 4-4 4V8h-2.2l-3 3.4-1.4-1.6L13.9 6H17zM3 7h4.1l9.7 11H17v-3l4 4-4 4v-3h-1.1L6.2 9H3zm7.4 7.2l1.4 1.6L9 19H3v-2h5.1z" fill="${c}"/></svg>`;
+
+let uid = 0;
+function cardA(m, i) {
+  const id = 'a' + (uid++);
+  const tiles = [0, 1, 2, 3].map(j => `<foreignObject x="${j % 2 * 50}" y="${Math.floor(j / 2) * 50}" width="50" height="50"><div xmlns="http://www.w3.org/1999/xhtml" style="width:100%;height:100%;background:${sleeve(m.hue, j)}"></div></foreignObject>`).join('');
+  return `<div class="a">
+    <div class="art">
+      <svg viewBox="0 0 100 100" width="156" height="156"><defs><clipPath id="${id}"><path d="${SHAPES[shapeOf(i)]}"/></clipPath></defs><g clip-path="url(#${id})">${tiles}</g></svg>
+      <div class="fab" style="background:${accent(m.hue)}">${play(onAccent(m.hue))}</div>
+    </div>
+    <div class="kicker" style="color:${accent(m.hue)}">ミックス</div>
+    <div class="title">${m.name}</div>
+    <div class="count">${m.desc} · ${m.count}曲</div>
+  </div>`;
+}
+function cardB(m) {
+  const fan = [0, 1, 2].map(j => `<div style="background:${sleeve(m.hue, j)};right:${8 + j * 16}px;top:${4 + j * 5}px;transform:rotate(${(j - 1) * 9}deg);z-index:${3 - j}"></div>`).join('');
+  return `<div class="b" style="background:${container(m.hue)};color:${onContainer(m.hue)}">
+    <div class="kicker">ミックス</div>
+    <div class="title">${m.name}</div>
+    <div class="count">${m.desc} · ${m.count}曲</div>
+    <div class="fan">${fan}</div>
+    <div class="play" style="background:${accent(m.hue)};color:${onAccent(m.hue)}">${shuffle(onAccent(m.hue))}シャッフル</div>
+  </div>`;
+}
+function cardC(m, i) {
+  const faces = [0, 1, 2].map(j => `<div style="background:${sleeve(m.hue, j)};border-color:${container(m.hue)}"></div>`).join('');
+  return `<div class="c" style="background:${container(m.hue)};color:${onContainer(m.hue)}">
+    <div class="shape">
+      <svg viewBox="0 0 100 100" width="104" height="104"><path d="${SHAPES[shapeOf(i)]}" fill="${accent(m.hue)}"/>
+        <g transform="translate(32 32) scale(1.5)"><path d="${ICONS[m.icon]}" fill="${onAccent(m.hue)}"/></g></svg>
+    </div>
+    <div class="title">${m.name}</div>
+    <div class="count">${m.count}曲</div>
+    <div class="faces">${faces}</div>
+  </div>`;
+}
+function phone(title, body, note) {
+  return `<div class="phone"><h2>${title}</h2>
+    <div class="shelf-title">あなたへのミックス</div>
+    <div class="shelf-sub">毎日更新 · タップでシャッフル再生</div>
+    <div class="shelf">${body}</div>
+    <div class="note">${note}</div></div>`;
+}
+function render() {
+  uid = 0;
+  document.getElementById('phones').innerHTML =
+    phone('A：ジャケットのコラージュを M3 の形で切り抜く', MIXES.map(cardA).join(''),
+      '中の曲のジャケット4枚を、クッキー形・四つ葉形などで切り抜く。右下に再生ボタン（角の丸い四角の FAB）。「ミックス」の小見出しでプレイリストと区別する。ジャケットが中身そのものなので、何が流れるか想像しやすい。') +
+    phone('B：色付きのカードにジャケットを重ねる', MIXES.map(cardB).join(''),
+      'ミックスごとの色のカード（M3 の tonal container）。名前を大きく、ジャケット3枚を扇形に重ね、「シャッフル」ボタンを付ける。押すと何が起きるかが一番はっきりする。カードが大きいので棚の高さを取る。') +
+    phone('C：形そのものを顔にする', MIXES.map(cardC).join(''),
+      'M3 の形（クッキー・四つ葉・ひまわり形）を大きく置いてアイコンを入れ、下にジャケットを小さく3つ。ミックスの種類が形と色で覚えやすい。ジャケットの印象は弱い。');
+}
+document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => {
+  document.documentElement.dataset.theme = b.dataset.t;
+  document.querySelectorAll('[data-t]').forEach(x => x.classList.toggle('on', x === b));
+  render();
+});
+document.documentElement.dataset.theme = 'dark';
+render();
+</script>
+</body>
+</html>

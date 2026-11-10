@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>再生中タイルの縁取り</title>
+<style>
+  :root { --bg: #121212; --surface: #1d1d1f; --text: #ececec; --sub: #9a9a9a; --line: #2c2c2e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: "Noto Sans JP", system-ui, sans-serif; padding: 20px 16px 40px; }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  .lead { color: var(--sub); font-size: 13px; margin: 0 0 14px; line-height: 1.6; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .controls button { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .controls button.on { background: var(--text); color: var(--bg); }
+  .label { font-size: 12px; color: var(--sub); align-self: center; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 14px; }
+  section { background: var(--surface); border-radius: 20px; padding: 16px; text-align: center; }
+  section h2 { font-size: 15px; margin: 0 0 4px; }
+  section p { font-size: 12px; color: var(--sub); margin: 0 0 10px; line-height: 1.6; min-height: 38px; }
+  canvas { width: 200px; height: 200px; }
+</style>
+</head>
+<body>
+<h1>再生中のタイル（回るクッキー形）の縁取り</h1>
+<p class="lead">左が今（v2.6.0）、右が直した後。どちらもクッキー形は回り続けます。違うのは縁取りの線の伸び始め。小さな白い点が線の始点です。</p>
+<div class="controls">
+  <span class="label">ヒート</span>
+  <button data-l="2.5">2.5</button>
+  <button data-l="4.0" class="on">4.0</button>
+  <button data-l="4.9">4.9（波）</button>
+  <button data-l="5.0">5.0</button>
+</div>
+<div class="controls">
+  <span class="label">再生</span>
+  <button id="play" class="on">再生中</button>
+  <button id="pause">一時停止</button>
+  <span class="label" style="margin-left:8px">始点の印</span>
+  <button id="dotOn" class="on">表示</button>
+  <button id="dotOff">非表示</button>
+</div>
+<div class="grid">
+  <section><h2>A：今の動き</h2><p>線の始まりがクッキー形と一緒に回る。伸びている部分そのものが移動して見える。</p><canvas id="a" width="400" height="400"></canvas></section>
+  <section><h2>B：直した後</h2><p>線は常に上の真ん中から時計回り。クッキーのでこぼこだけが、止まった線の下を回る。</p><canvas id="b" width="400" height="400"></canvas></section>
+</div>
+<script>
+const HUE = 12, SPIN_MS = 6000, FLOW_MS = 2000;
+let level = 4.0, playing = true, showDot = true, spin = 0, flow = 0, last = performance.now();
+const art = new Image();
+// Artwork: a soft gradient stands in for album art.
+function drawArt(ctx, path) {
+  ctx.save(); ctx.clip(path);
+  const g = ctx.createLinearGradient(80, 60, 320, 340);
+  g.addColorStop(0, '#f6d365'); g.addColorStop(0.55, '#fda085'); g.addColorStop(1, '#6b3a2a');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 400, 400); ctx.restore();
+}
+function heatColor(l) {
+  const e = Math.pow(Math.min(l / 5, 1), 1.6);
+  return `hsl(${HUE} ${e * 92}% ${(0.70 - e * 0.08) * 100}%)`;
+}
+// Nine-lobed cookie (like ExpressiveShapes.cookie), radius r, turned by rot (radians).
+function cookiePoints(r, rot) {
+  const pts = [];
+  for (let i = 0; i <= 720; i++) {
+    const a = i / 720 * Math.PI * 2;            // the shape's own parameter: starts at its own "angle 0"
+    const rr = r * (0.92 + 0.08 * Math.cos(9 * a));
+    pts.push([200 + rr * Math.cos(a + rot), 200 + rr * Math.sin(a + rot)]);
+  }
+  return pts;
+}
+function measure(pts) {
+  const acc = [0];
+  for (let i = 1; i < pts.length; i++) acc.push(acc[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  return acc;
+}
+function at(pts, acc, s) {
+  const total = acc[acc.length - 1];
+  s = ((s % total) + total) % total;
+  let lo = 1, hi = acc.length - 1;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (acc[m] < s) lo = m + 1; else hi = m; }
+  const i = lo, t = (s - acc[i - 1]) / Math.max(1e-6, acc[i] - acc[i - 1]);
+  const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+  const dx = x1 - x0, dy = y1 - y0, l = Math.hypot(dx, dy) || 1;
+  return [x0 + dx * t, y0 + dy * t, dy / l, -dx / l];
+}
+function draw(id, fixedStart) {
+  const c = document.getElementById(id), ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, 400, 400);
+  // The artwork, turning.
+  const artPts = cookiePoints(150, spin);
+  const p = new Path2D(); artPts.forEach(([x, y], i) => i ? p.lineTo(x, y) : p.moveTo(x, y)); p.closePath();
+  drawArt(ctx, p);
+  // The ring follows the same cookie, a little outside it.
+  const ring = cookiePoints(170, spin), acc = measure(ring), total = acc[acc.length - 1];
+  let start = 0;
+  if (fixedStart) {
+    // Where a line straight up from the centre crosses the outline — not the
+    // point nearest the top, which hops from lobe to lobe as the cookie turns.
+    const up = -Math.PI / 2;
+    const off = i => { let d = Math.atan2(ring[i][1] - 200, ring[i][0] - 200) - up; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; };
+    for (let i = 1; i < ring.length; i++) {
+      const d0 = off(i - 1), d1 = off(i);
+      if (d0 <= 0 && d1 > 0 && d1 - d0 < 1) { start = acc[i - 1] + (acc[i] - acc[i - 1]) * (-d0 / (d1 - d0)); break; }
+    }
+  }
+  const fill = level >= 4.995 ? total : total * level / 5, gap = 14, stroke = 7;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = stroke;
+  // Track.
+  if (level < 4.995) {
+    ctx.strokeStyle = 'rgba(255,255,255,.16)'; ctx.beginPath();
+    for (let s = fill + gap; s <= total - gap; s += 2) { const [x, y] = at(ring, acc, start + s); s === fill + gap ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+    ctx.stroke();
+  }
+  // Line (waving from 4.8).
+  const waves = level >= 4.8, wl = total / Math.round(total / 34), amp = 3.2, edge = 10;
+  ctx.strokeStyle = heatColor(level); ctx.beginPath();
+  for (let s = 0; s <= fill; s += 1.5) {
+    const [x, y, nx, ny] = at(ring, acc, start + s);
+    const taper = level >= 4.995 ? 1 : Math.max(0, Math.min(1, s / edge, (fill - s) / edge));
+    const o = waves ? Math.sin(s / wl * Math.PI * 2 - flow) * amp * taper : 0;
+    s === 0 ? ctx.moveTo(x + nx * o, y + ny * o) : ctx.lineTo(x + nx * o, y + ny * o);
+  }
+  if (level >= 4.995) ctx.closePath();
+  ctx.stroke();
+  if (showDot) {
+    const [x, y] = at(ring, acc, start);
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
+  }
+}
+function tick(now) {
+  const dt = now - last; last = now;
+  if (playing) { spin += dt / SPIN_MS * Math.PI * 2; flow += dt / FLOW_MS * Math.PI * 2; }
+  draw('a', false); draw('b', true);
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+const pick = (sel, b) => document.querySelectorAll(sel).forEach(x => x.classList.toggle('on', x === b));
+document.querySelectorAll('[data-l]').forEach(b => b.onclick = () => { level = +b.dataset.l; pick('[data-l]', b); });
+play.onclick = () => { playing = true; pick('#play,#pause', play); };
+pause.onclick = () => { playing = false; pick('#play,#pause', pause); };
+dotOn.onclick = () => { showDot = true; pick('#dotOn,#dotOff', dotOn); };
+dotOff.onclick = () => { showDot = false; pick('#dotOn,#dotOff', dotOff); };
+</script>
+</body>
+</html>

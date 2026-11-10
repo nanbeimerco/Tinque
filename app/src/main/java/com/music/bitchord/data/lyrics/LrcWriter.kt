@@ -105,11 +105,32 @@ private fun LyricLine.enhancedBody(): String {
     runs.forEachIndexed { index, word ->
         val start = maxOf(word.startMs, previous)
         out.append(wordStamp(start)).append(word.text)
-        if (index != runs.lastIndex) out.append(' ')
+        if (index != runs.lastIndex && spaceAfterRun(index)) out.append(' ')
         previous = start
     }
     out.append(wordStamp(maxOf(runs.maxOf { it.endMs }, previous)))
     return out.toString()
+}
+
+/**
+ * Whether the run at [index] of [timedRuns] is followed by a space in the line
+ * as written. A space after every run put one between every character of a
+ * Japanese line, which is timed a character at a time; only where the text
+ * itself has one is it a word boundary worth writing down.
+ */
+private fun LyricLine.spaceAfterRun(index: Int): Boolean {
+    val lead = words.size
+    if (index < lead - 1) return hasSpaceAfterWord(index)
+    // The lead's last word, with the answering vocal after it: kept apart.
+    if (index == lead - 1) return true
+    val bg = background ?: return false
+    val inBackground = index - lead
+    return bg.words.isNotEmpty() && inBackground < bg.words.size - 1 && bg.hasSpaceAfterWord(inBackground)
+}
+
+private fun LyricLine.hasSpaceAfterWord(index: Int): Boolean {
+    val span = wordSpans.getOrNull(index) ?: return true
+    return text.getOrNull(span.last + 1)?.isWhitespace() == true
 }
 
 /**

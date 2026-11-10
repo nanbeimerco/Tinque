@@ -1,5 +1,16 @@
 package com.music.bitchord.ui.screens
 
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.material.icons.rounded.GridView
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import com.music.bitchord.ui.components.GlassAlertDialog
 import com.music.bitchord.data.settings.DEFAULT_GLASS_SHADE
 import androidx.compose.material.icons.rounded.Contrast
@@ -68,6 +79,9 @@ import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.Gradient
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -228,6 +242,31 @@ private data class SettingsSearchEntry(
 )
 
 /**
+ * Some of the search entries, built outside [SettingsScreen]: that function is
+ * at the JVM's 64 KB method limit, so entries that only need their own setting
+ * live here.
+ */
+@Composable
+private fun motionAndNavSearchEntries(): List<SettingsSearchEntry> {
+    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    val classicNavBar by AppSettings.classicNavBar.collectAsStateWithLifecycle()
+    val lockBottomBarExpanded by AppSettings.lockBottomBarExpanded.collectAsStateWithLifecycle()
+    val integrateStandaloneTab by AppSettings.integrateStandaloneTab.collectAsStateWithLifecycle()
+    val hideNavBarLabels by AppSettings.hideNavigationBarLabels.collectAsStateWithLifecycle()
+    val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
+    return listOf(
+        SettingsSearchEntry(stringResource(R.string.reduce_animation), stringResource(R.string.reduce_animation_subtitle), listOf("animation", "reduce", "アニメーション"), reduceAnimation) { AppSettings.setReduceAnimation(!reduceAnimation) },
+        SettingsSearchEntry(stringResource(R.string.reduce_dynamic_blur), stringResource(R.string.reduce_dynamic_blur_subtitle), listOf("blur", "ぼかし", "performance", "動的"), reduceDynamicBlur) { AppSettings.setReduceDynamicBlur(!reduceDynamicBlur) },
+        SettingsSearchEntry(stringResource(R.string.classic_nav_bar), stringResource(R.string.classic_nav_bar_subtitle), listOf("navigation", "nav bar", "ナビゲーション", "classic"), classicNavBar) { AppSettings.setClassicNavBar(!classicNavBar) },
+        SettingsSearchEntry(stringResource(R.string.lock_bottom_bar_expanded), stringResource(R.string.lock_bottom_bar_expanded_subtitle), listOf("bottom bar", "floating", "expanded", "固定", "ボトムバー", "展開"), lockBottomBarExpanded) { AppSettings.setLockBottomBarExpanded(!lockBottomBarExpanded) },
+        SettingsSearchEntry(stringResource(R.string.integrate_standalone_tab), stringResource(R.string.integrate_standalone_tab_subtitle), listOf("bottom bar", "floating", "tab", "integrate", "一体化", "統合", "タブ"), integrateStandaloneTab) { AppSettings.setIntegrateStandaloneTab(!integrateStandaloneTab) },
+        SettingsSearchEntry(stringResource(R.string.hide_nav_bar_labels), stringResource(R.string.hide_nav_bar_labels_subtitle), listOf("navigation", "nav bar", "label", "ラベル", "ナビゲーション"), hideNavBarLabels) { AppSettings.setHideNavigationBarLabels(!hideNavBarLabels) },
+        SettingsSearchEntry(stringResource(R.string.legacy_mesh_gradient), stringResource(R.string.legacy_mesh_gradient_subtitle), listOf("theme", "gradient", "テーマ", "グラデーション"), legacyMeshGradient) { AppSettings.setLegacyMeshGradient(!legacyMeshGradient) },
+    )
+}
+
+/**
  * Grouped settings, in the shape phones have taught people to expect: inset
  * cards of rows, a leading glyph per row, the current value on the right, and a
  * plain-language footer under any group whose effect isn't obvious from its
@@ -378,6 +417,7 @@ fun SettingsScreen(
     val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
     val syncedLyrics by AppSettings.syncedLyrics.collectAsStateWithLifecycle()
     val autoEmbedLyrics by AppSettings.autoEmbedLyrics.collectAsStateWithLifecycle()
+    val lyricsManualForLocal by AppSettings.lyricsManualForLocal.collectAsStateWithLifecycle()
     val lyricsSources by AppSettings.lyricsSources.collectAsStateWithLifecycle()
     val lyricsSourceOrder by AppSettings.lyricsSourceOrder.collectAsStateWithLifecycle()
     val showLyricsLogs by AppSettings.showLyricsLogs.collectAsStateWithLifecycle()
@@ -418,6 +458,23 @@ fun SettingsScreen(
         currentDisplay.resolvePerformanceRefreshRate(performanceRefreshRate)
     }
     var settingsSearchQuery by rememberSaveable { mutableStateOf("") }
+    val settingsByCategory by AppSettings.settingsByCategory.collectAsStateWithLifecycle()
+    var openSettingsCategoryName by rememberSaveable { mutableStateOf<String?>(null) }
+    val openSettingsCategory = openSettingsCategoryName
+        ?.let { name -> SettingsCategory.entries.firstOrNull { it.name == name } }
+        ?.takeIf { settingsByCategory }
+    var categoryListScroll by rememberSaveable { mutableStateOf(0) }
+    val categoryScope = rememberCoroutineScope()
+    // Off, every group shows as it always has; on, only the open category's.
+    fun shows(category: SettingsCategory): Boolean = !settingsByCategory || openSettingsCategory == category
+    fun closeSettingsCategory() {
+        openSettingsCategoryName = null
+        categoryScope.launch {
+            androidx.compose.runtime.withFrameNanos { }
+            settingsScrollState.scrollTo(categoryListScroll)
+        }
+    }
+    androidx.activity.compose.BackHandler(enabled = openSettingsCategory != null) { closeSettingsCategory() }
     var showLauncherIconPicker by rememberSaveable { mutableStateOf(false) }
     var showPerformanceWarning by remember { mutableStateOf(false) }
 
@@ -442,12 +499,8 @@ fun SettingsScreen(
         SettingsSearchEntry(
             title = stringResource(R.string.app_icon),
             subtitle = stringResource(R.string.app_icon_subtitle),
-            keywords = listOf("app icon", "launcher", "pink", "black", "green", "アプリアイコン", "ホーム画面", "ピンク", "黒", "緑"),
-            valueLabel = stringResource(when (launcherIcon) {
-                LauncherIcon.PINK -> R.string.app_icon_pink
-                LauncherIcon.BLACK -> R.string.app_icon_black
-                LauncherIcon.GREEN -> R.string.app_icon_green
-            }),
+            keywords = listOf("app icon", "launcher", "orange", "black", "pink", "アプリアイコン", "ホーム画面", "オレンジ", "黒", "ピンク"),
+            valueLabel = com.music.bitchord.ui.components.launcherIconLabel(launcherIcon),
             activate = { showLauncherIconPicker = true },
         ),
         SettingsSearchEntry(
@@ -575,17 +628,11 @@ fun SettingsScreen(
         SettingsSearchEntry(stringResource(R.string.persistent_local_artwork), stringResource(R.string.persistent_local_artwork_subtitle), listOf("artwork", "album art", "storage", "画像", "ストレージ"), persistentLocalArtwork) { AppSettings.setPersistentLocalArtwork(!persistentLocalArtwork) },
         SettingsSearchEntry(stringResource(R.string.synced_lyrics), stringResource(R.string.synced_lyrics_subtitle), listOf("lyrics", "歌詞", "同期"), syncedLyrics) { AppSettings.setSyncedLyrics(!syncedLyrics) },
         SettingsSearchEntry(stringResource(R.string.blur_unfocused_lyrics), stringResource(R.string.blur_unfocused_lyrics_subtitle), listOf("lyrics", "歌詞", "blur", "ぼかし"), lyricsBlur) { AppSettings.setLyricsBlur(!lyricsBlur) },
+        SettingsSearchEntry(stringResource(R.string.lyrics_manual_for_local_title), stringResource(R.string.lyrics_manual_for_local_subtitle), listOf("lyrics", "歌詞", "local", "ローカル", "自動", "選ぶ", "manual"), lyricsManualForLocal) { AppSettings.setLyricsManualForLocal(!lyricsManualForLocal) },
         SettingsSearchEntry(stringResource(R.string.auto_embed_lyrics), stringResource(R.string.auto_embed_lyrics_subtitle), listOf("lyrics", "歌詞", "embed", "埋め込み"), autoEmbedLyrics) { AppSettings.setAutoEmbedLyrics(!autoEmbedLyrics) },
         SettingsSearchEntry(stringResource(R.string.full_screen_cover_art), stringResource(R.string.full_screen_cover_art_subtitle), listOf("artwork", "cover", "full screen", "アート", "全画面"), fullBleedArtwork) { AppSettings.setFullBleedArtwork(!fullBleedArtwork) },
         SettingsSearchEntry(stringResource(R.string.keep_original_artwork_aspect_ratio), stringResource(R.string.keep_original_artwork_aspect_ratio_subtitle), listOf("artwork", "cover", "aspect ratio", "crop", "縦長", "横長", "比率", "トリミング"), keepOriginalArtworkAspectRatio) { AppSettings.setKeepOriginalArtworkAspectRatio(!keepOriginalArtworkAspectRatio) },
         SettingsSearchEntry(stringResource(R.string.keep_artwork_full_size_paused), stringResource(R.string.keep_artwork_full_size_paused_subtitle), listOf("artwork", "cover", "paused", "停止中", "アート"), keepArtworkFullSizeWhenPaused) { AppSettings.setKeepArtworkFullSizeWhenPaused(!keepArtworkFullSizeWhenPaused) },
-        SettingsSearchEntry(stringResource(R.string.reduce_animation), stringResource(R.string.reduce_animation_subtitle), listOf("animation", "reduce", "アニメーション"), reduceAnimation) { AppSettings.setReduceAnimation(!reduceAnimation) },
-        SettingsSearchEntry(stringResource(R.string.reduce_dynamic_blur), stringResource(R.string.reduce_dynamic_blur_subtitle), listOf("blur", "ぼかし", "performance", "動的"), reduceDynamicBlur) { AppSettings.setReduceDynamicBlur(!reduceDynamicBlur) },
-        SettingsSearchEntry(stringResource(R.string.classic_nav_bar), stringResource(R.string.classic_nav_bar_subtitle), listOf("navigation", "nav bar", "ナビゲーション", "classic"), classicNavBar) { AppSettings.setClassicNavBar(!classicNavBar) },
-        SettingsSearchEntry(stringResource(R.string.lock_bottom_bar_expanded), stringResource(R.string.lock_bottom_bar_expanded_subtitle), listOf("bottom bar", "floating", "expanded", "固定", "ボトムバー", "展開"), lockBottomBarExpanded) { AppSettings.setLockBottomBarExpanded(!lockBottomBarExpanded) },
-        SettingsSearchEntry(stringResource(R.string.integrate_standalone_tab), stringResource(R.string.integrate_standalone_tab_subtitle), listOf("bottom bar", "floating", "tab", "integrate", "一体化", "統合", "タブ"), integrateStandaloneTab) { AppSettings.setIntegrateStandaloneTab(!integrateStandaloneTab) },
-        SettingsSearchEntry(stringResource(R.string.hide_nav_bar_labels), stringResource(R.string.hide_nav_bar_labels_subtitle), listOf("navigation", "nav bar", "label", "ラベル", "ナビゲーション"), hideNavBarLabels) { AppSettings.setHideNavigationBarLabels(!hideNavBarLabels) },
-        SettingsSearchEntry(stringResource(R.string.legacy_mesh_gradient), stringResource(R.string.legacy_mesh_gradient_subtitle), listOf("theme", "gradient", "テーマ", "グラデーション"), legacyMeshGradient) { AppSettings.setLegacyMeshGradient(!legacyMeshGradient) },
         SettingsSearchEntry(
             stringResource(R.string.match_button_accent_to_artwork),
             stringResource(R.string.match_button_accent_to_artwork_subtitle),
@@ -606,7 +653,7 @@ fun SettingsScreen(
         ) { AppSettings.setMiniPlayerPreviousButton(!miniPlayerPreviousButton) },
         SettingsSearchEntry(stringResource(R.string.filter_non_music_audio), stringResource(R.string.filter_non_music_audio_subtitle), listOf("filter", "audio", "music", "音楽", "フィルター"), filterNonMusicAudio) { AppSettings.setFilterNonMusicAudio(!filterNonMusicAudio) },
         SettingsSearchEntry(stringResource(R.string.playlist_song_artwork), stringResource(R.string.playlist_song_artwork_subtitle), listOf("playlist", "artwork", "プレイリスト", "アルバムアート"), showPlaylistSongArtwork) { AppSettings.setShowPlaylistSongArtwork(!showPlaylistSongArtwork) },
-    ) + listOf(
+    ) + motionAndNavSearchEntries() + listOf(
         SettingsSearchEntry(
             stringResource(R.string.artwork_tap_opens_lyrics),
             stringResource(R.string.artwork_tap_opens_lyrics_subtitle),
@@ -855,6 +902,7 @@ fun SettingsScreen(
             PlayerQuickAction.SEARCH -> R.string.quick_action_search
             PlayerQuickAction.ALBUM -> R.string.go_to_album
             PlayerQuickAction.ARTIST -> R.string.go_to_artist
+            PlayerQuickAction.FOLDER -> R.string.go_to_folder
             PlayerQuickAction.EQUALIZER -> R.string.equalizer
             PlayerQuickAction.CHROMECAST -> R.string.chromecast
             PlayerQuickAction.SLEEP_TIMER -> R.string.sleep_timer
@@ -879,6 +927,7 @@ fun SettingsScreen(
         val actionTitle = stringResource(when (action) {
             PlayerDetailsAction.ALBUM -> R.string.go_to_album
             PlayerDetailsAction.ARTIST -> R.string.go_to_artist
+            PlayerDetailsAction.FOLDER -> R.string.go_to_folder
             PlayerDetailsAction.ADD_TO_PLAYLIST -> R.string.add_to_playlist
             PlayerDetailsAction.EQUALIZER -> R.string.equalizer
             PlayerDetailsAction.CHROMECAST -> R.string.chromecast
@@ -906,6 +955,7 @@ fun SettingsScreen(
             MainNavigationTab.SEARCH -> R.string.search
             MainNavigationTab.ALBUM_ARTISTS -> R.string.album_artists
             MainNavigationTab.FOLDERS -> R.string.folders
+            MainNavigationTab.HOME -> R.string.home
         })
         SettingsSearchEntry(
             title = stringResource(R.string.show_tab_setting, tabTitle),
@@ -1352,22 +1402,21 @@ fun SettingsScreen(
         // No large "Settings" title: like every tab, the page name lives in
         // the top bar's capsule, which stays shown here.
 
-        OutlinedTextField(
-            value = settingsSearchQuery,
-            onValueChange = { settingsSearchQuery = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 4.dp),
-            singleLine = true,
-            label = { Text(stringResource(R.string.search_settings)) },
-            leadingIcon = {
-                Icon(
-                    imageVector = BitChordIcons.Search,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
-                )
+        SettingsSearchHeader(
+            query = settingsSearchQuery,
+            onQueryChange = { settingsSearchQuery = it },
+            byCategory = settingsByCategory,
+            openCategory = openSettingsCategory,
+            onToggleByCategory = {
+                openSettingsCategoryName = null
+                AppSettings.setSettingsByCategory(!settingsByCategory)
             },
+            onOpenCategory = { category ->
+                categoryListScroll = settingsScrollState.value
+                openSettingsCategoryName = category.name
+                categoryScope.launch { settingsScrollState.scrollTo(0) }
+            },
+            onCloseCategory = { closeSettingsCategory() },
         )
 
         if (settingsSearchQuery.isNotBlank()) {
@@ -1431,7 +1480,7 @@ fun SettingsScreen(
         } else {
         val originalDeveloperLabel = stringResource(R.string.original_developer)
 
-        SettingsGroup(header = stringResource(R.string.playback)) {
+        if (shows(SettingsCategory.PLAYBACK)) SettingsGroup(header = stringResource(R.string.playback)) {
             SettingsRow(
                 icon = Icons.Rounded.GraphicEq,
                 title = stringResource(R.string.output_precision),
@@ -1778,7 +1827,7 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(header = stringResource(R.string.player_controls)) {
+        if (shows(SettingsCategory.PLAYER)) SettingsGroup(header = stringResource(R.string.player_controls)) {
             playerControlOrder.forEachIndexed { index, control ->
                 if (index > 0) RowDivider()
                 val title = when (control) {
@@ -1950,136 +1999,15 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(
-            header = stringResource(R.string.player_quick_actions),
-            footer = stringResource(R.string.player_quick_actions_subtitle),
-        ) {
-            PlayerQuickAction.entries.forEachIndexed { actionIndex, action ->
-                if (actionIndex > 0) RowDivider()
-                val titleRes = when (action) {
-                    PlayerQuickAction.LYRICS -> R.string.quick_action_lyrics
-                    PlayerQuickAction.ADD_TO_PLAYLIST -> R.string.quick_action_add_to_playlist
-                    PlayerQuickAction.PLAYBACK_TUNING -> R.string.quick_action_playback_tuning
-                    PlayerQuickAction.QUEUE -> R.string.quick_action_queue
-                    PlayerQuickAction.PLAYLISTS -> R.string.quick_action_playlists
-                    PlayerQuickAction.SEARCH -> R.string.quick_action_search
-                    PlayerQuickAction.ALBUM -> R.string.go_to_album
-                    PlayerQuickAction.ARTIST -> R.string.go_to_artist
-                    PlayerQuickAction.EQUALIZER -> R.string.equalizer
-                    PlayerQuickAction.CHROMECAST -> R.string.chromecast
-                    PlayerQuickAction.SLEEP_TIMER -> R.string.sleep_timer
-                    PlayerQuickAction.TAG_EDITOR -> R.string.tag_editor
-                    PlayerQuickAction.EDIT_LYRICS -> R.string.edit_lyrics
-                    PlayerQuickAction.DETAILS -> R.string.details
-                    PlayerQuickAction.SHARE_FILE -> R.string.share_file
-                    PlayerQuickAction.FAVORITE -> R.string.quick_action_favorite
-                }
-                val selectedIndex = quickActions.indexOf(action)
-                SettingsRow(
-                    icon = when (action) {
-                        PlayerQuickAction.LYRICS, PlayerQuickAction.EDIT_LYRICS -> Icons.AutoMirrored.Rounded.Notes
-                        PlayerQuickAction.ADD_TO_PLAYLIST -> Icons.AutoMirrored.Rounded.PlaylistAdd
-                        PlayerQuickAction.PLAYBACK_TUNING -> Icons.Rounded.Speed
-                        PlayerQuickAction.QUEUE -> Icons.Rounded.PlaylistPlay
-                        PlayerQuickAction.PLAYLISTS -> Icons.Rounded.LibraryMusic
-                        PlayerQuickAction.SEARCH -> Icons.Rounded.FilterAlt
-                        PlayerQuickAction.ALBUM -> Icons.Rounded.Album
-                        PlayerQuickAction.ARTIST -> Icons.Rounded.Person
-                        PlayerQuickAction.EQUALIZER -> Icons.Rounded.GraphicEq
-                        PlayerQuickAction.CHROMECAST -> Icons.Rounded.Cast
-                        PlayerQuickAction.SLEEP_TIMER -> Icons.Rounded.Bedtime
-                        PlayerQuickAction.TAG_EDITOR -> Icons.Rounded.Edit
-                        PlayerQuickAction.DETAILS -> Icons.Rounded.Info
-                        PlayerQuickAction.SHARE_FILE -> Icons.Rounded.Share
-                        PlayerQuickAction.FAVORITE -> BitChordIcons.Heart
-                    },
-                    title = stringResource(titleRes),
-                    subtitle = if (selectedIndex >= 0) stringResource(R.string.player_quick_action_order_subtitle) else null,
-                    trailing = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (selectedIndex >= 0) {
-                                IconButton(
-                                    enabled = selectedIndex > 0,
-                                    onClick = { AppSettings.movePlayerQuickAction(action, -1) },
-                                ) {
-                                    Icon(
-                                        Icons.Rounded.ArrowUpward,
-                                        stringResource(R.string.move_up),
-                                        tint = if (selectedIndex > 0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outlineVariant,
-                                    )
-                                }
-                                IconButton(
-                                    enabled = selectedIndex < quickActions.lastIndex,
-                                    onClick = { AppSettings.movePlayerQuickAction(action, 1) },
-                                ) {
-                                    Icon(
-                                        Icons.Rounded.ArrowDownward,
-                                        stringResource(R.string.move_down),
-                                        tint = if (selectedIndex < quickActions.lastIndex) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outlineVariant,
-                                    )
-                                }
-                            }
-                            Switch(
-                                checked = selectedIndex >= 0,
-                                onCheckedChange = { checked ->
-                                    AppSettings.setPlayerQuickActions(
-                                        if (checked) quickActions + action else quickActions - action,
-                                    )
-                                },
-                            )
-                        }
-                    },
-                )
-            }
-        }
-
-        SettingsGroup(
-            header = stringResource(R.string.player_details_actions),
-            footer = stringResource(R.string.player_details_actions_subtitle),
-        ) {
-            SettingsRow(
-                icon = Icons.Rounded.AudioFile,
-                title = stringResource(R.string.audio_cutter_enabled),
-                subtitle = stringResource(R.string.audio_cutter_enabled_subtitle),
-                trailing = {
-                    Switch(
-                        checked = audioCutterEnabled,
-                        onCheckedChange = AppSettings::setAudioCutterEnabled,
-                    )
-                },
-                onClick = { AppSettings.setAudioCutterEnabled(!audioCutterEnabled) },
+        if (shows(SettingsCategory.PLAYER)) {
+            PlayerActionsSettingsGroups(
+                quickActions = quickActions,
+                audioCutterEnabled = audioCutterEnabled,
+                hiddenPlayerDetailsActions = hiddenPlayerDetailsActions,
             )
-            PlayerDetailsAction.entries.forEach { action ->
-                RowDivider()
-                val title = stringResource(when (action) {
-                    PlayerDetailsAction.ALBUM -> R.string.go_to_album
-                    PlayerDetailsAction.ARTIST -> R.string.go_to_artist
-                    PlayerDetailsAction.ADD_TO_PLAYLIST -> R.string.add_to_playlist
-                    PlayerDetailsAction.EQUALIZER -> R.string.equalizer
-                    PlayerDetailsAction.CHROMECAST -> R.string.chromecast
-                    PlayerDetailsAction.PLAYBACK_TUNING -> R.string.playback_tuning
-                    PlayerDetailsAction.SLEEP_TIMER -> R.string.sleep_timer
-                    PlayerDetailsAction.TAG_EDITOR -> R.string.tag_editor
-                    PlayerDetailsAction.EDIT_LYRICS -> R.string.edit_lyrics
-                    PlayerDetailsAction.DETAILS -> R.string.details
-                    PlayerDetailsAction.SHARE_FILE -> R.string.share_file
-                })
-                val visible = action !in hiddenPlayerDetailsActions
-                SettingsRow(
-                    icon = Icons.Rounded.MoreVert,
-                    title = title,
-                    trailing = {
-                        Switch(
-                            checked = visible,
-                            onCheckedChange = { AppSettings.setPlayerDetailsActionVisible(action, it) },
-                        )
-                    },
-                    onClick = { AppSettings.setPlayerDetailsActionVisible(action, !visible) },
-                )
-            }
         }
 
-        SettingsGroup(header = stringResource(R.string.lyrics_display)) {
+        if (shows(SettingsCategory.LYRICS)) SettingsGroup(header = stringResource(R.string.lyrics_display)) {
             SettingsRow(
                 icon = Icons.AutoMirrored.Rounded.Notes,
                 title = stringResource(R.string.lyrics_font_size),
@@ -2144,7 +2072,7 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(header = stringResource(R.string.appearance)) {
+        if (shows(SettingsCategory.LOOKS)) SettingsGroup(header = stringResource(R.string.appearance)) {
             SettingsRow(icon = Icons.Rounded.Brightness4, title = stringResource(R.string.theme))
             SegmentedControl(
                 options = ThemeMode.entries.map { it.localizedLabel() },
@@ -2161,11 +2089,7 @@ fun SettingsScreen(
                 icon = Icons.Rounded.AutoAwesome,
                 title = stringResource(R.string.app_icon),
                 subtitle = stringResource(R.string.app_icon_subtitle),
-                value = stringResource(when (launcherIcon) {
-                    LauncherIcon.PINK -> R.string.app_icon_pink
-                    LauncherIcon.BLACK -> R.string.app_icon_black
-                    LauncherIcon.GREEN -> R.string.app_icon_green
-                }),
+                value = com.music.bitchord.ui.components.launcherIconLabel(launcherIcon),
                 onClick = { showLauncherIconPicker = true },
             )
             RowDivider()
@@ -2748,7 +2672,9 @@ fun SettingsScreen(
                         onClick = { AppSettings.setTransportAnimation(!transportAnimation) },
                     )
                 }
-                if (lockBottomBarExpanded) {
+                // Independent of the lock: integrated, the bar is one capsule when expanded and
+                // (unless locked) folds into [tab][now playing][search] on scroll.
+                run {
                     RowDivider()
                     SettingsRow(
                         icon = Icons.Rounded.ViewStream,
@@ -2785,7 +2711,8 @@ fun SettingsScreen(
                 },
                 onClick = { AppSettings.setHideNavigationBarLabels(!hideNavBarLabels) },
             )
-            RowDivider()
+        }
+        if (shows(SettingsCategory.PLAYER)) SettingsGroup(header = stringResource(R.string.settings_category_player)) {
             // Only on a window large enough to have the choice: a phone has
             // one layout whatever this says.
             if (windowHeight != Dp.Unspecified &&
@@ -2910,7 +2837,8 @@ fun SettingsScreen(
                 onClick = { AppSettings.setLegacyMeshGradient(!legacyMeshGradient) },
             )
 
-            RowDivider()
+        }
+        if (shows(SettingsCategory.LYRICS)) SettingsGroup(header = stringResource(R.string.settings_category_lyrics)) {
             SettingsRow(
                 icon = Icons.AutoMirrored.Rounded.Notes,
                 title = stringResource(R.string.synced_lyrics),
@@ -3190,6 +3118,24 @@ fun SettingsScreen(
                     val saveWordSync by AppSettings.lyricsSaveWordSync.collectAsStateWithLifecycle()
                     val levels = com.music.bitchord.data.lyrics.LyricsStrictness.entries
                     val current = levels.firstOrNull { it.name == autoStrictness } ?: com.music.bitchord.data.lyrics.LyricsStrictness.STANDARD
+                    val manualForLocal by AppSettings.lyricsManualForLocal.collectAsStateWithLifecycle()
+                    RowDivider()
+                    SettingsRow(
+                        icon = Icons.Rounded.Language,
+                        title = stringResource(R.string.lyrics_manual_for_local_title),
+                        subtitle = stringResource(R.string.lyrics_manual_for_local_subtitle),
+                        trailing = {
+                            Switch(
+                                checked = manualForLocal,
+                                onCheckedChange = AppSettings::setLyricsManualForLocal,
+                                colors = SwitchDefaults.colors(
+                                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            )
+                        },
+                        onClick = { AppSettings.setLyricsManualForLocal(!manualForLocal) },
+                    )
                     RowDivider()
                     SettingsRow(
                         icon = Icons.Rounded.Language,
@@ -3238,7 +3184,7 @@ fun SettingsScreen(
             }
         }
 
-        SettingsGroup(header = stringResource(R.string.main_navigation_tabs)) {
+        if (shows(SettingsCategory.LOOKS)) SettingsGroup(header = stringResource(R.string.main_navigation_tabs)) {
             val startupTitle = stringResource(when (startupTab) {
                 MainNavigationTab.SONGS -> R.string.songs
                 MainNavigationTab.ALBUMS -> R.string.albums
@@ -3247,6 +3193,7 @@ fun SettingsScreen(
                 MainNavigationTab.SEARCH -> R.string.search
                 MainNavigationTab.ALBUM_ARTISTS -> R.string.album_artists
                 MainNavigationTab.FOLDERS -> R.string.folders
+                MainNavigationTab.HOME -> R.string.home
             })
             SettingsRow(
                 icon = Icons.Rounded.MusicNote,
@@ -3266,6 +3213,7 @@ fun SettingsScreen(
                     MainNavigationTab.SEARCH -> R.string.search
                     MainNavigationTab.ALBUM_ARTISTS -> R.string.album_artists
                     MainNavigationTab.FOLDERS -> R.string.folders
+                    MainNavigationTab.HOME -> R.string.home
                 }
                 val icon = when (tab) {
                     MainNavigationTab.SONGS -> Icons.Rounded.MusicNote
@@ -3275,6 +3223,7 @@ fun SettingsScreen(
                     MainNavigationTab.SEARCH -> BitChordIcons.Search
                     MainNavigationTab.ALBUM_ARTISTS -> Icons.Rounded.Person
                     MainNavigationTab.FOLDERS -> Icons.Rounded.Folder
+                    MainNavigationTab.HOME -> Icons.Rounded.Home
                 }
                 val checked = if (tab == MainNavigationTab.ALBUM_ARTISTS) {
                     com.music.bitchord.data.settings.LocalLibraryTab.ALBUM_ARTISTS in localTabs
@@ -3324,7 +3273,7 @@ fun SettingsScreen(
             }
         }
 
-        SettingsGroup(header = stringResource(R.string.performance)) {
+        if (shows(SettingsCategory.SYSTEM)) SettingsGroup(header = stringResource(R.string.performance)) {
             SettingsRow(
                 icon = BitChordIcons.Performance,
                 title = stringResource(R.string.high_performance_mode),
@@ -3379,7 +3328,7 @@ fun SettingsScreen(
             }
         }
 
-        SettingsGroup(header = stringResource(R.string.local_music)) {
+        if (shows(SettingsCategory.LOCAL)) SettingsGroup(header = stringResource(R.string.local_music)) {
             SettingsRow(
                 icon = Icons.Rounded.Folder,
                 title = stringResource(R.string.music_folders),
@@ -3601,7 +3550,7 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(header = stringResource(R.string.storage)) {
+        if (shows(SettingsCategory.SYSTEM)) SettingsGroup(header = stringResource(R.string.storage)) {
             SettingsRow(
                 icon = Icons.Rounded.DeleteSweep,
                 title = stringResource(R.string.clear_image_cache),
@@ -3615,7 +3564,7 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(header = stringResource(R.string.playlist_tools)) {
+        if (shows(SettingsCategory.LOCAL)) SettingsGroup(header = stringResource(R.string.playlist_tools)) {
             SettingsRow(
                 icon = Icons.Rounded.FileUpload,
                 title = stringResource(R.string.import_m3u_playlist),
@@ -3663,13 +3612,15 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(header = stringResource(R.string.your_data)) {
+        if (shows(SettingsCategory.DATA)) SettingsGroup(header = stringResource(R.string.your_data)) {
             SettingsRow(
                 icon = Icons.Rounded.BarChart,
                 title = stringResource(R.string.replay),
                 subtitle = stringResource(R.string.replay_subtitle),
                 onClick = onOpenReplay,
             )
+            RowDivider()
+            HeatSettingsRows()
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.LocalOffer,
@@ -3707,7 +3658,7 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(
+        if (shows(SettingsCategory.OTHER)) SettingsGroup(
             header = stringResource(R.string.miscellaneous),
             footer = stringResource(R.string.miscellaneous_footer),
         ) {
@@ -3841,7 +3792,7 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(header = stringResource(R.string.language)) {
+        if (shows(SettingsCategory.OTHER)) SettingsGroup(header = stringResource(R.string.language)) {
             val selectedLanguage = AppCompatDelegate.getApplicationLocales().get(0)?.language
                 ?: Locale.getDefault().language
             SettingsRow(
@@ -3852,7 +3803,7 @@ fun SettingsScreen(
             )
         }
 
-        SettingsGroup(header = stringResource(R.string.advanced_options)) {
+        if (shows(SettingsCategory.OTHER)) SettingsGroup(header = stringResource(R.string.advanced_options)) {
             SettingsRow(
                 icon = Icons.Rounded.MusicNote,
                 title = stringResource(R.string.youtube_music_enabled),
@@ -3923,44 +3874,10 @@ fun SettingsScreen(
         }
 
         if (showLauncherIconPicker) {
-            GlassAlertDialog(
-                onDismissRequest = { showLauncherIconPicker = false },
-                title = { Text(stringResource(R.string.app_icon)) },
-                text = {
-                    Column {
-                        LauncherIcon.entries.forEach { icon ->
-                            val label = stringResource(when (icon) {
-                                LauncherIcon.PINK -> R.string.app_icon_pink
-                                LauncherIcon.BLACK -> R.string.app_icon_black
-                                LauncherIcon.GREEN -> R.string.app_icon_green
-                            })
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        AppSettings.setLauncherIcon(icon)
-                                        showLauncherIconPicker = false
-                                    }
-                                    .padding(vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                RadioButton(
-                                    selected = launcherIcon == icon,
-                                    onClick = {
-                                        AppSettings.setLauncherIcon(icon)
-                                        showLauncherIconPicker = false
-                                    },
-                                )
-                                Text(label, modifier = Modifier.padding(start = 8.dp))
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showLauncherIconPicker = false }) {
-                        Text(stringResource(R.string.done))
-                    }
-                },
+            com.music.bitchord.ui.components.AppIconPicker(
+                selected = launcherIcon,
+                onPick = AppSettings::setLauncherIcon,
+                onDismiss = { showLauncherIconPicker = false },
             )
         }
 
@@ -3984,6 +3901,7 @@ fun SettingsScreen(
                                 MainNavigationTab.SEARCH -> stringResource(R.string.search)
                                 MainNavigationTab.ALBUM_ARTISTS -> stringResource(R.string.album_artists)
                                 MainNavigationTab.FOLDERS -> stringResource(R.string.folders)
+                                MainNavigationTab.HOME -> stringResource(R.string.home)
                             }
                             Row(
                                 modifier = Modifier
@@ -5052,6 +4970,425 @@ private fun VolumeHandoffRows() {
             title = stringResource(R.string.volume_handoff_bluetooth),
             subtitle = stringResource(R.string.volume_handoff_bluetooth_subtitle),
             onClick = { permission.launch(android.Manifest.permission.BLUETOOTH_CONNECT) },
+        )
+    }
+}
+
+
+/** The pages the settings split into when shown by category. */
+private enum class SettingsCategory(val title: Int, val examples: Int, val icon: ImageVector) {
+    PLAYBACK(R.string.playback, R.string.settings_category_playback_examples, Icons.Rounded.GraphicEq),
+    PLAYER(R.string.settings_category_player, R.string.settings_category_player_examples, Icons.Rounded.Fullscreen),
+    LYRICS(R.string.settings_category_lyrics, R.string.settings_category_lyrics_examples, Icons.AutoMirrored.Rounded.Notes),
+    LOOKS(R.string.appearance, R.string.settings_category_looks_examples, Icons.Rounded.Brightness4),
+    LOCAL(R.string.local_music, R.string.settings_category_local_examples, Icons.Rounded.MusicNote),
+    SYSTEM(R.string.settings_category_system, R.string.settings_category_system_examples, Icons.Rounded.Tune),
+    DATA(R.string.your_data, R.string.settings_category_data_examples, Icons.Rounded.FileDownload),
+    OTHER(R.string.settings_category_other, R.string.settings_category_other_examples, Icons.Rounded.Language),
+}
+
+/**
+ * The settings search as a Material 3 Expressive search bar: a filled pill
+ * with no outline, whose corners tighten and whose fill lifts a step, on a
+ * spring, while it is being typed in.
+ */
+@Composable
+private fun ExpressiveSettingsSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val springy = spring(dampingRatio = 0.6f, stiffness = 500f, visibilityThreshold = 0.05.dp)
+    val corner by animateDpAsState(if (focused) 16.dp else 28.dp, springy, label = "searchCorner")
+    val height by animateDpAsState(if (focused) 56.dp else 52.dp, springy, label = "searchHeight")
+    val colors = MaterialTheme.colorScheme
+    val fill by animateColorAsState(
+        if (focused) colors.surfaceContainerHighest else colors.surfaceContainerHigh,
+        label = "searchFill",
+    )
+    val iconTint by animateColorAsState(
+        if (focused) colors.primary else colors.onSurfaceVariant,
+        label = "searchIcon",
+    )
+    androidx.compose.foundation.text.BasicTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        singleLine = true,
+        interactionSource = interaction,
+        textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
+        cursorBrush = androidx.compose.ui.graphics.SolidColor(colors.primary),
+        modifier = modifier
+            .height(height)
+            .clip(RoundedCornerShape(corner))
+            .background(fill),
+        decorationBox = { field ->
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 18.dp, end = 4.dp),
+            ) {
+                Icon(
+                    imageVector = BitChordIcons.Search,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                    if (query.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.search_settings),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = colors.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                    field()
+                }
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(
+                            imageVector = Icons.Rounded.Close,
+                            contentDescription = stringResource(R.string.settings_search_clear),
+                            tint = colors.onSurfaceVariant,
+                        )
+                    }
+                } else {
+                    Spacer(Modifier.width(14.dp))
+                }
+            }
+        },
+    )
+}
+
+/** The round button beside the search bar that shows the settings by category. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun SettingsCategoryToggle(checked: Boolean, onToggle: () -> Unit) {
+    val context = LocalContext.current
+    val label = stringResource(R.string.settings_by_category)
+    val colors = MaterialTheme.colorScheme
+    val corner by animateDpAsState(
+        if (checked) 16.dp else 26.dp,
+        spring(dampingRatio = 0.55f, stiffness = 500f, visibilityThreshold = 0.05.dp),
+        label = "categoryCorner",
+    )
+    val fill by animateColorAsState(if (checked) colors.primary else colors.surfaceContainerHigh, label = "categoryFill")
+    val tint by animateColorAsState(if (checked) colors.onPrimary else colors.onSurfaceVariant, label = "categoryTint")
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(52.dp)
+            .clip(RoundedCornerShape(corner))
+            .background(fill)
+            .semantics { contentDescription = label }
+            .combinedClickable(
+                role = androidx.compose.ui.semantics.Role.Switch,
+                onClick = onToggle,
+                onLongClick = { android.widget.Toast.makeText(context, label, android.widget.Toast.LENGTH_SHORT).show() },
+            ),
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.GridView,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+/** The search bar, the by-category button, and the category list or open category's title. */
+@Composable
+private fun SettingsSearchHeader(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    byCategory: Boolean,
+    openCategory: SettingsCategory?,
+    onToggleByCategory: () -> Unit,
+    onOpenCategory: (SettingsCategory) -> Unit,
+    onCloseCategory: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 4.dp),
+    ) {
+        ExpressiveSettingsSearchBar(query = query, onQueryChange = onQueryChange, modifier = Modifier.weight(1f))
+        SettingsCategoryToggle(checked = byCategory, onToggle = onToggleByCategory)
+    }
+    if (!byCategory || query.isNotBlank()) return
+    if (openCategory == null) {
+        SettingsGroup(header = stringResource(R.string.settings_categories)) {
+            SettingsCategory.entries.forEachIndexed { index, category ->
+                if (index > 0) RowDivider()
+                SettingsRow(
+                    icon = category.icon,
+                    title = stringResource(category.title),
+                    subtitle = stringResource(category.examples),
+                    trailing = { Chevron() },
+                    onClick = { onOpenCategory(category) },
+                )
+            }
+        }
+    } else {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 8.dp, end = 20.dp, top = 8.dp),
+        ) {
+            IconButton(onClick = onCloseCategory) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = stringResource(R.string.settings_categories),
+                    tint = MaterialTheme.colorScheme.onBackground,
+                )
+            }
+            Text(
+                text = stringResource(openCategory.title),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlayerActionsSettingsGroups(
+    quickActions: List<PlayerQuickAction>,
+    audioCutterEnabled: Boolean,
+    hiddenPlayerDetailsActions: Set<PlayerDetailsAction>,
+) {
+    SettingsGroup(
+        header = stringResource(R.string.player_quick_actions),
+        footer = stringResource(R.string.player_quick_actions_subtitle),
+    ) {
+        PlayerQuickAction.entries.forEachIndexed { actionIndex, action ->
+            if (actionIndex > 0) RowDivider()
+            val titleRes = when (action) {
+                PlayerQuickAction.LYRICS -> R.string.quick_action_lyrics
+                PlayerQuickAction.ADD_TO_PLAYLIST -> R.string.quick_action_add_to_playlist
+                PlayerQuickAction.PLAYBACK_TUNING -> R.string.quick_action_playback_tuning
+                PlayerQuickAction.QUEUE -> R.string.quick_action_queue
+                PlayerQuickAction.PLAYLISTS -> R.string.quick_action_playlists
+                PlayerQuickAction.SEARCH -> R.string.quick_action_search
+                PlayerQuickAction.ALBUM -> R.string.go_to_album
+                PlayerQuickAction.ARTIST -> R.string.go_to_artist
+                PlayerQuickAction.FOLDER -> R.string.go_to_folder
+                PlayerQuickAction.EQUALIZER -> R.string.equalizer
+                PlayerQuickAction.CHROMECAST -> R.string.chromecast
+                PlayerQuickAction.SLEEP_TIMER -> R.string.sleep_timer
+                PlayerQuickAction.TAG_EDITOR -> R.string.tag_editor
+                PlayerQuickAction.EDIT_LYRICS -> R.string.edit_lyrics
+                PlayerQuickAction.DETAILS -> R.string.details
+                PlayerQuickAction.SHARE_FILE -> R.string.share_file
+                PlayerQuickAction.FAVORITE -> R.string.quick_action_favorite
+            }
+            val selectedIndex = quickActions.indexOf(action)
+            SettingsRow(
+                icon = when (action) {
+                    PlayerQuickAction.LYRICS, PlayerQuickAction.EDIT_LYRICS -> Icons.AutoMirrored.Rounded.Notes
+                    PlayerQuickAction.ADD_TO_PLAYLIST -> Icons.AutoMirrored.Rounded.PlaylistAdd
+                    PlayerQuickAction.PLAYBACK_TUNING -> Icons.Rounded.Speed
+                    PlayerQuickAction.QUEUE -> Icons.Rounded.PlaylistPlay
+                    PlayerQuickAction.PLAYLISTS -> Icons.Rounded.LibraryMusic
+                    PlayerQuickAction.SEARCH -> Icons.Rounded.FilterAlt
+                    PlayerQuickAction.ALBUM -> Icons.Rounded.Album
+                    PlayerQuickAction.ARTIST -> Icons.Rounded.Person
+                    PlayerQuickAction.FOLDER -> Icons.Rounded.Folder
+                    PlayerQuickAction.EQUALIZER -> Icons.Rounded.GraphicEq
+                    PlayerQuickAction.CHROMECAST -> Icons.Rounded.Cast
+                    PlayerQuickAction.SLEEP_TIMER -> Icons.Rounded.Bedtime
+                    PlayerQuickAction.TAG_EDITOR -> Icons.Rounded.Edit
+                    PlayerQuickAction.DETAILS -> Icons.Rounded.Info
+                    PlayerQuickAction.SHARE_FILE -> Icons.Rounded.Share
+                    PlayerQuickAction.FAVORITE -> BitChordIcons.Heart
+                },
+                title = stringResource(titleRes),
+                subtitle = if (selectedIndex >= 0) stringResource(R.string.player_quick_action_order_subtitle) else null,
+                trailing = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (selectedIndex >= 0) {
+                            IconButton(
+                                enabled = selectedIndex > 0,
+                                onClick = { AppSettings.movePlayerQuickAction(action, -1) },
+                            ) {
+                                Icon(
+                                    Icons.Rounded.ArrowUpward,
+                                    stringResource(R.string.move_up),
+                                    tint = if (selectedIndex > 0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outlineVariant,
+                                )
+                            }
+                            IconButton(
+                                enabled = selectedIndex < quickActions.lastIndex,
+                                onClick = { AppSettings.movePlayerQuickAction(action, 1) },
+                            ) {
+                                Icon(
+                                    Icons.Rounded.ArrowDownward,
+                                    stringResource(R.string.move_down),
+                                    tint = if (selectedIndex < quickActions.lastIndex) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outlineVariant,
+                                )
+                            }
+                        }
+                        Switch(
+                            checked = selectedIndex >= 0,
+                            onCheckedChange = { checked ->
+                                AppSettings.setPlayerQuickActions(
+                                    if (checked) quickActions + action else quickActions - action,
+                                )
+                            },
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    SettingsGroup(
+        header = stringResource(R.string.player_details_actions),
+        footer = stringResource(R.string.player_details_actions_subtitle),
+    ) {
+        SettingsRow(
+            icon = Icons.Rounded.AudioFile,
+            title = stringResource(R.string.audio_cutter_enabled),
+            subtitle = stringResource(R.string.audio_cutter_enabled_subtitle),
+            trailing = {
+                Switch(
+                    checked = audioCutterEnabled,
+                    onCheckedChange = AppSettings::setAudioCutterEnabled,
+                )
+            },
+            onClick = { AppSettings.setAudioCutterEnabled(!audioCutterEnabled) },
+        )
+        PlayerDetailsAction.entries.forEach { action ->
+            RowDivider()
+            val title = stringResource(when (action) {
+                PlayerDetailsAction.ALBUM -> R.string.go_to_album
+                PlayerDetailsAction.ARTIST -> R.string.go_to_artist
+                PlayerDetailsAction.FOLDER -> R.string.go_to_folder
+                PlayerDetailsAction.ADD_TO_PLAYLIST -> R.string.add_to_playlist
+                PlayerDetailsAction.EQUALIZER -> R.string.equalizer
+                PlayerDetailsAction.CHROMECAST -> R.string.chromecast
+                PlayerDetailsAction.PLAYBACK_TUNING -> R.string.playback_tuning
+                PlayerDetailsAction.SLEEP_TIMER -> R.string.sleep_timer
+                PlayerDetailsAction.TAG_EDITOR -> R.string.tag_editor
+                PlayerDetailsAction.EDIT_LYRICS -> R.string.edit_lyrics
+                PlayerDetailsAction.DETAILS -> R.string.details
+                PlayerDetailsAction.SHARE_FILE -> R.string.share_file
+            })
+            val visible = action !in hiddenPlayerDetailsActions
+            SettingsRow(
+                icon = Icons.Rounded.MoreVert,
+                title = title,
+                trailing = {
+                    Switch(
+                        checked = visible,
+                        onCheckedChange = { AppSettings.setPlayerDetailsActionVisible(action, it) },
+                    )
+                },
+                onClick = { AppSettings.setPlayerDetailsActionVisible(action, !visible) },
+            )
+        }
+    }
+}
+
+/** The heat meter's rows in "Your data": the switch (and the meter's one explanation), colour, reset. */
+@Composable
+private fun HeatSettingsRows() {
+    val context = LocalContext.current
+    val heatMeterOn by AppSettings.heatMeterEnabled.collectAsStateWithLifecycle()
+    val heatColor by AppSettings.heatColor.collectAsStateWithLifecycle()
+    var confirmHeatReset by remember { mutableStateOf(false) }
+    SettingsRow(
+        icon = Icons.Rounded.Waves,
+        title = stringResource(R.string.heat_meter),
+        subtitle = stringResource(R.string.heat_meter_subtitle),
+        trailing = {
+            Switch(
+                checked = heatMeterOn,
+                onCheckedChange = AppSettings::setHeatMeterEnabled,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        },
+        onClick = { AppSettings.setHeatMeterEnabled(!heatMeterOn) },
+    )
+    if (heatMeterOn) {
+        RowDivider()
+        // Orange / pink / the album-art theme's hue, with the meter itself as the preview.
+        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Palette, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(16.dp))
+                Text(
+                    stringResource(R.string.heat_color),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                com.music.bitchord.ui.components.HeatMeter(level = 5f, width = 56.dp)
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    com.music.bitchord.data.settings.HeatColor.ORANGE to R.string.heat_color_orange,
+                    com.music.bitchord.data.settings.HeatColor.PINK to R.string.heat_color_pink,
+                    com.music.bitchord.data.settings.HeatColor.ARTWORK to R.string.heat_color_artwork,
+                ).forEach { (choice, label) ->
+                    androidx.compose.material3.FilterChip(
+                        selected = heatColor == choice,
+                        onClick = { AppSettings.setHeatColor(choice) },
+                        label = { Text(stringResource(label)) },
+                    )
+                }
+            }
+        }
+        RowDivider()
+        val heatInPlayer by AppSettings.heatInPlayer.collectAsStateWithLifecycle()
+        SettingsRow(
+            icon = Icons.Rounded.Waves,
+            title = stringResource(R.string.heat_in_player),
+            subtitle = stringResource(R.string.heat_in_player_subtitle),
+            trailing = {
+                Switch(
+                    checked = heatInPlayer,
+                    onCheckedChange = AppSettings::setHeatInPlayer,
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                        checkedBorderColor = MaterialTheme.colorScheme.primary,
+                    ),
+                )
+            },
+            onClick = { AppSettings.setHeatInPlayer(!heatInPlayer) },
+        )
+    }
+    RowDivider()
+    SettingsRow(
+        icon = Icons.Rounded.RestartAlt,
+        title = stringResource(R.string.heat_reset),
+        subtitle = stringResource(R.string.heat_reset_subtitle),
+        onClick = { confirmHeatReset = true },
+    )
+    if (confirmHeatReset) {
+        GlassAlertDialog(
+            onDismissRequest = { confirmHeatReset = false },
+            title = { Text(stringResource(R.string.heat_reset)) },
+            text = { Text(stringResource(R.string.heat_reset_subtitle)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmHeatReset = false
+                    com.music.bitchord.data.stats.HeatStore.reset()
+                    android.widget.Toast.makeText(context, R.string.heat_reset_done, android.widget.Toast.LENGTH_SHORT).show()
+                }) { Text(stringResource(R.string.heat_reset)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmHeatReset = false }) { Text(stringResource(R.string.cancel)) }
+            },
         )
     }
 }

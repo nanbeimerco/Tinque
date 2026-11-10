@@ -1,6 +1,7 @@
 package com.music.bitchord.feature.library.ui.components
 
 import androidx.compose.runtime.collectAsState
+import com.music.bitchord.ui.components.heatRing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +47,7 @@ fun LibraryFavoritesCard(
     onClick: () -> Unit,
     onPlay: () -> Unit,
     modifier: Modifier = Modifier,
+    heat: Float? = null,
 ) {
     Surface(
         modifier = modifier
@@ -64,6 +66,7 @@ fun LibraryFavoritesCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
+                    .heatRing(heat, RoundedCornerShape(16.dp))
                     .clip(RoundedCornerShape(16.dp))
                     .background(
                         Brush.linearGradient(

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Tinque mark (point-symmetric, round-mask fit) on the adaptive icon's 108dp
+     canvas: 93% of the 72dp visible circle, lifted 4 so the tails clear a
+     round mask as far as the top does (both about 10.9 of 100). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group android:translateX="21.52" android:translateY="17.64" android:scaleX="0.6696" android:scaleY="0.6696">
+        <path android:pathData="M22,32V68Q22,76 17,81" android:strokeColor="#FF111111" android:strokeWidth="13" android:strokeLineJoin="round" android:fillColor="#00000000" />
+        <path android:pathData="M40,32V68Q40,76 35,81" android:strokeColor="#FF111111" android:strokeWidth="13" android:strokeLineJoin="round" android:fillColor="#00000000" />
+        <path android:pathData="M63,18Q58,23 58,31V68Q58,76 53,81" android:strokeColor="#FF111111" android:strokeWidth="13" android:strokeLineJoin="round" android:fillColor="#00000000" />
+        <path android:pathData="M75,54V68Q75,76 80,81" android:strokeColor="#FF111111" android:strokeWidth="13" android:strokeLineJoin="round" android:fillColor="#00000000" />
+    </group>
+</vector>

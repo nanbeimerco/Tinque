@@ -43,6 +43,7 @@ fun LibraryFavoritesItem(
     /** Overrides for when the row sits inside a grouped (Expressive) container. */
     shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp),
     containerColor: Color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+    heat: Float? = null,
 ) {
     Surface(
         modifier = modifier
@@ -102,6 +103,8 @@ fun LibraryFavoritesItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+
+            com.music.bitchord.ui.components.GroupHeatMark(heat, Modifier.padding(start = 8.dp))
 
             if (songCount > 0) {
                 IconButton(onClick = onPlay) {

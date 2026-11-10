@@ -1,6 +1,7 @@
 package com.music.bitchord.feature.library.ui.components
 
 import com.music.bitchord.ui.components.GlassDropdownMenu
+import com.music.bitchord.ui.components.heatRing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -82,10 +83,18 @@ fun LibraryPlaylistCard(
                 .fillMaxWidth()
                 .padding(10.dp),
         ) {
+            val playlistSongs = androidx.compose.runtime.remember(playlist, librarySongs) {
+                com.music.bitchord.feature.localmusic.data.resolvePlaylistSongs(playlist, librarySongs)
+            }
+            val heat = com.music.bitchord.ui.components.rememberPlaylistTileHeat(
+                com.music.bitchord.data.stats.PlaySource.playlistKey(playlist.id),
+                playlistSongs,
+            )
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(1f)
+                    .heatRing(heat, RoundedCornerShape(16.dp))
                     .clip(RoundedCornerShape(16.dp))
                     .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)),
                 contentAlignment = Alignment.Center,

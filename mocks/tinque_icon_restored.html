@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tinque アイコン復元</title>
+<style>
+  :root { --bg: #f4f3f1; --card: #fff; --text: #1b1b1b; --sub: #6b6b6b; }
+  body { margin: 0; padding: 20px 16px; background: var(--bg); color: var(--text); font-family: "Noto Sans JP", system-ui, sans-serif; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.lead { font-size: 13px; color: var(--sub); margin: 0 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border-radius: 12px; padding: 14px; text-align: center; }
+  .card p { margin: 8px 0 0; font-size: 13px; font-weight: 500; }
+  .big { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<h1>Tinque アイコン（点対称版）復元</h1>
+<p class="lead">tinque_icon_c3_point_symmetric.html の定義から、そのまま SVG で描き直したもの。</p>
+
+<div class="big">
+  <div class="card">
+    <svg width="160" height="160" viewBox="0 0 100 100">
+      <rect width="100" height="100" rx="22" fill="#111"/>
+      <g transform="translate(1.5 0)" fill="none" stroke-width="13" stroke-linejoin="round">
+        <path d="M22 32V70Q22 80 15 85" stroke="#fff"/>
+        <path d="M40 32V70Q40 80 33 85" stroke="#fff"/>
+        <path d="M65 14Q58 19 58 29V70Q58 80 51 85" stroke="#FF5A36"/>
+        <path d="M75 54V70Q75 80 82 85" stroke="#fff"/>
+      </g>
+    </svg>
+    <p>通常（点対称）</p>
+  </div>
+  <div class="card">
+    <svg width="160" height="160" viewBox="0 0 100 100">
+      <rect width="100" height="100" rx="22" fill="#111"/>
+      <g transform="translate(1.5 0)" fill="none" stroke-width="13" stroke-linejoin="round" stroke="#fff">
+        <path d="M22 32V70Q22 80 15 85"/>
+        <path d="M40 32V70Q40 80 33 85"/>
+        <path d="M65 14Q58 19 58 29V70Q58 80 51 85"/>
+        <path d="M75 54V70Q75 80 82 85"/>
+      </g>
+    </svg>
+    <p>黒×白（新）</p>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <svg width="88" height="88" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#111"/><g transform="translate(1.5 0)" fill="none" stroke-width="13" stroke-linejoin="round"><path d="M22 32V70Q22 80 15 85" stroke="#fff"/><path d="M40 32V70Q40 80 33 85" stroke="#fff"/><path d="M65 14Q58 19 58 29V70Q58 80 51 85" stroke="#FF5A36"/><path d="M75 54V70Q75 80 82 85" stroke="#fff"/></g></svg>
+    <p>通常</p>
+  </div>
+  <div class="card">
+    <svg width="88" height="88" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#111"/><g transform="translate(1.5 0)" fill="none" stroke-width="13" stroke-linejoin="round"><path d="M22 32V70Q22 80 15 85" stroke="#FF5A36"/><path d="M40 32V70Q40 80 33 85" stroke="#FF5A36"/><path d="M65 14Q58 19 58 29V70Q58 80 51 85" stroke="#FF5A36"/><path d="M75 54V70Q75 80 82 85" stroke="#FF5A36"/></g></svg>
+    <p>黒×オレンジ</p>
+  </div>
+  <div class="card">
+    <svg width="88" height="88" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#FF5A36"/><g transform="translate(1.5 0)" fill="none" stroke-width="13" stroke-linejoin="round"><path d="M22 32V70Q22 80 15 85" stroke="#fff"/><path d="M40 32V70Q40 80 33 85" stroke="#fff"/><path d="M65 14Q58 19 58 29V70Q58 80 51 85" stroke="#fff"/><path d="M75 54V70Q75 80 82 85" stroke="#fff"/></g></svg>
+    <p>オレンジ×白</p>
+  </div>
+  <div class="card">
+    <svg width="88" height="88" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#F4F2EC"/><g transform="translate(1.5 0)" fill="none" stroke-width="13" stroke-linejoin="round"><path d="M22 32V70Q22 80 15 85" stroke="#111"/><path d="M40 32V70Q40 80 33 85" stroke="#111"/><path d="M65 14Q58 19 58 29V70Q58 80 51 85" stroke="#111"/><path d="M75 54V70Q75 80 82 85" stroke="#111"/></g></svg>
+    <p>クリーム×黒</p>
+  </div>
+  <div class="card">
+    <svg width="88" height="88" viewBox="0 0 100 100"><rect width="100" height="100" rx="22" fill="#fff" stroke="#D3D1C7" stroke-width="1"/><g transform="translate(1.5 0)" fill="none" stroke-width="13" stroke-linejoin="round"><path d="M22 32V70Q22 80 15 85" stroke="#111"/><path d="M40 32V70Q40 80 33 85" stroke="#111"/><path d="M65 14Q58 19 58 29V70Q58 80 51 85" stroke="#FF5A36"/><path d="M75 54V70Q75 80 82 85" stroke="#111"/></g></svg>
+    <p>白×黒×オレンジ</p>
+  </div>
+</div>
+</body>
+</html>

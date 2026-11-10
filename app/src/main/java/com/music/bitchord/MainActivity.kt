@@ -107,6 +107,7 @@ import kotlinx.coroutines.CancellationException
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Person
 import com.music.bitchord.feature.localmusic.ui.components.LocalPermissionCard
@@ -783,6 +784,8 @@ private fun BitChordApp(
     // which SearchScreen uses as a signal to focus the input field.
     var searchFocusTrigger by remember { mutableIntStateOf(0) }
     var libraryFilterRequest by remember { mutableStateOf<LibraryFilter?>(null) }
+    // A playlist (or Favourites) Home asked the Library to open.
+    var libraryPlaylistRequest by remember { mutableStateOf<String?>(null) }
     var libraryResetSignal by remember { mutableIntStateOf(0) }
     // Pages with their own large title report when it has scrolled out of
     // view; the top bar shows its title capsule only then.
@@ -943,6 +946,32 @@ private fun BitChordApp(
     val isRefreshingLocalMusic by viewModel.isRefreshingLocalMusic.collectAsStateWithLifecycle()
     val localArtworkPreload by viewModel.localArtworkPreload.collectAsStateWithLifecycle()
     val localSongs = (localSongsState as? UiState.Success)?.data.orEmpty()
+    // The one clock every flowing heat line runs on: only while music plays,
+    // and the pages' lines hold still while the player is raised over them.
+    com.music.bitchord.ui.components.HeatClockDriver()
+    // "Heat details" from any song's ⋮ menu.
+    com.music.bitchord.ui.components.HeatDetailsHost()
+    val heatClockPlaying = player.isPlaying
+    val heatPagesMayMove = playerDocked || !showNowPlaying
+    SideEffect {
+        com.music.bitchord.ui.components.HeatClock.playing = heatClockPlaying
+        com.music.bitchord.ui.components.HeatClock.pagesMayMove = heatPagesMayMove
+    }
+
+    // Heat starts from the play counts kept before 2.5.0, once, so the meter
+    // is not empty on the first day after the update.
+    LaunchedEffect(localSongs.isNotEmpty()) {
+        if (localSongs.isEmpty() || !com.music.bitchord.data.stats.HeatStore.needsSeed) return@LaunchedEffect
+        val songsNow = localSongs
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val counts = songsNow.mapNotNull { s ->
+                val stats = com.music.bitchord.feature.localsongactions.data.LocalPlayStatsStore
+                    .getStats(context, s.localUri ?: s.videoId)
+                if (stats.playedCount > 0) Triple(s, stats.playedCount, stats.lastPlayedTimestamp) else null
+            }
+            com.music.bitchord.data.stats.HeatStore.seedOnce(counts)
+        }
+    }
     // The lyrics catalog, opened from the player (its lyrics footer, its ⋮ menu).
     val catalogSong by com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.song.collectAsStateWithLifecycle()
     catalogSong?.let { target ->
@@ -1073,7 +1102,8 @@ private fun BitChordApp(
     val foldersLabel = stringResource(R.string.folders)
     val libraryLabel = stringResource(R.string.library)
     val searchLabel = stringResource(R.string.search)
-    val allTabs = remember(songsLabel, albumsLabel, artistsLabel, albumArtistsLabel, foldersLabel, libraryLabel, searchLabel) {
+    val homeLabel = stringResource(R.string.home)
+    val allTabs = remember(songsLabel, albumsLabel, artistsLabel, albumArtistsLabel, foldersLabel, libraryLabel, searchLabel, homeLabel) {
         listOf(
             BottomTab(songsLabel, Icons.Rounded.MusicNote),
             BottomTab(albumsLabel, Icons.Rounded.Album),
@@ -1082,6 +1112,7 @@ private fun BitChordApp(
             BottomTab(searchLabel, BitChordIcons.Search),
             BottomTab(albumArtistsLabel, Icons.Rounded.Person),
             BottomTab(foldersLabel, Icons.Rounded.Folder),
+            BottomTab(homeLabel, Icons.Rounded.Home),
         )
     }
     val tabs = remember(allTabs, visibleTabIndices) {
@@ -1089,6 +1120,8 @@ private fun BitChordApp(
     }
 
     val play: (List<Song>, Int) -> Unit = { songs, index ->
+        // Takes up (or clears) the playlist a screen said this queue comes from.
+        com.music.bitchord.data.stats.PlaySource.queueStarted()
         playJob?.cancel()
         playRequestGeneration++
         activeRadioSeed = null
@@ -1281,27 +1314,45 @@ private fun BitChordApp(
      * [YtMusicRepository.resolveAudio]). A search that finds nothing says so,
      * which is at least an answer.
      */
-    val openLocalAlbum: (String, String?) -> Unit = { albumName, art ->
-        val clean = albumName.trim()
-        if (clean.isNotBlank()) {
-            viewModel.openDetail(
-                browseId = "local:album:$clean",
-                title = clean,
-                thumbnailUrl = art,
-                type = BrowseType.ALBUM,
-            )
+    val closePlayerSheetIfOpen: () -> Unit = {
+        if (showNowPlaying && !playerDocked) {
+            if (reducePlayerMotion) showNowPlaying = false else playerSheetMotion.close()
         }
     }
 
-    val openLocalArtist: (String, String?) -> Unit = { artistName, art ->
+    val openLocalAlbum: (String, String?) -> Unit = { albumName, _ ->
+        val clean = albumName.trim()
+        if (clean.isNotBlank()) {
+            closePlayerSheetIfOpen()
+            showSettings = false
+            showReplay = false
+            viewModel.clearDetail()
+            targetAlbumDrillDown = clean
+            selectedTab = TAB_ALBUMS
+        }
+    }
+
+    val openLocalArtist: (String, String?) -> Unit = { artistName, _ ->
         val clean = artistName.trim()
         if (clean.isNotBlank()) {
-            viewModel.openDetail(
-                browseId = "local:artist:$clean",
-                title = clean,
-                thumbnailUrl = art,
-                type = BrowseType.ARTIST,
-            )
+            closePlayerSheetIfOpen()
+            showSettings = false
+            showReplay = false
+            viewModel.clearDetail()
+            targetArtistDrillDown = clean
+            selectedTab = TAB_ARTISTS
+        }
+    }
+
+    val openLocalFolder: (String) -> Unit = { folderPath ->
+        val clean = folderPath.trim()
+        if (clean.isNotBlank()) {
+            closePlayerSheetIfOpen()
+            showSettings = false
+            showReplay = false
+            viewModel.clearDetail()
+            targetFolderDrillDown = clean
+            selectedTab = TAB_FOLDERS
         }
     }
 
@@ -2038,6 +2089,36 @@ private fun BitChordApp(
             onQuickPlaybackTuning = { showPlaybackTuning = true },
             onQuickMenuAction = { action ->
                 when (action) {
+                    PlayerQuickAction.ALBUM -> {
+                        val albumName = song.albumName?.trim().orEmpty()
+                        if (albumName.isNotBlank()) {
+                            openLocalAlbum(albumName, song.thumbnailUrl)
+                        } else {
+                            Toast.makeText(context, context.getString(R.string.no_album_information), Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    PlayerQuickAction.ARTIST -> {
+                        val artists = com.music.bitchord.feature.artistimage.util.ArtistSplitter.split(song.artist)
+                        if (artists.size > 1) {
+                            menuFromPlayer = true
+                            songActions = song
+                        } else {
+                            val artistName = (artists.firstOrNull() ?: song.artist).trim()
+                            if (artistName.isNotBlank()) {
+                                openLocalArtist(artistName, null)
+                            } else {
+                                Toast.makeText(context, context.getString(R.string.no_artist_information), Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    PlayerQuickAction.FOLDER -> {
+                        val folderPath = song.localPath?.substringBeforeLast('/')?.trim().orEmpty()
+                        if (folderPath.isNotBlank()) {
+                            openLocalFolder(folderPath)
+                        } else {
+                            Toast.makeText(context, context.getString(R.string.streamed_song_no_file), Toast.LENGTH_SHORT).show()
+                        }
+                    }
                     PlayerQuickAction.EQUALIZER -> openEqualizer()
                     PlayerQuickAction.SHARE_FILE -> {
                         if (song.localUri != null || song.localPath != null) {
@@ -2073,7 +2154,7 @@ private fun BitChordApp(
                 }
             },
             onOpenPlaylists = {
-                showNowPlaying = false
+                closePlayerSheetIfOpen()
                 showSettings = false
                 showReplay = false
                 viewModel.clearDetail()
@@ -2081,7 +2162,7 @@ private fun BitChordApp(
                 selectedTab = TAB_LIBRARY
             },
             onOpenSearch = {
-                showNowPlaying = false
+                closePlayerSheetIfOpen()
                 showSettings = false
                 showReplay = false
                 viewModel.clearDetail()
@@ -2089,7 +2170,6 @@ private fun BitChordApp(
                 searchFocusTrigger++
             },
             onOpenAlbum = { _ ->
-                showNowPlaying = false
                 val albumName = song.albumName?.trim().orEmpty()
                 if (albumName.isNotBlank()) {
                     openLocalAlbum(albumName, song.thumbnailUrl)
@@ -2098,9 +2178,9 @@ private fun BitChordApp(
                 }
             },
             onOpenArtist = { _ ->
-                showNowPlaying = false
                 val artists = com.music.bitchord.feature.artistimage.util.ArtistSplitter.split(song.artist)
                 if (artists.size > 1) {
+                    menuFromPlayer = true
                     songActions = song
                 } else {
                     val artistName = (artists.firstOrNull() ?: song.artist).trim()
@@ -2492,6 +2572,7 @@ private fun BitChordApp(
                                 onArtworkPaletteChanged = onLocalArtworkPaletteChanged,
                                 onPlayNext = playNext,
                                 onAddToQueue = addToQueue,
+                                onGoToFolder = openLocalFolder,
                                 onDeleteSong = { viewModel.loadLocalMusic() },
                                 onSongTagsOrLyricsSaved = { viewModel.reloadLyrics(it) },
                                 onCollectionNavigationChanged = onCollectionNavigationChanged,
@@ -2541,6 +2622,7 @@ private fun BitChordApp(
                                 onDrillDownDismiss = { targetAlbumDrillDown = null },
                                 onPlayNext = playNext,
                                 onAddToQueue = addToQueue,
+                                onGoToFolder = openLocalFolder,
                                 onDeleteSong = { viewModel.loadLocalMusic() },
                                 onSongTagsOrLyricsSaved = { viewModel.reloadLyrics(it) },
                                 onCollectionNavigationChanged = onCollectionNavigationChanged,
@@ -2590,6 +2672,7 @@ private fun BitChordApp(
                                 onDrillDownDismiss = { targetArtistDrillDown = null },
                                 onPlayNext = playNext,
                                 onAddToQueue = addToQueue,
+                                onGoToFolder = openLocalFolder,
                                 onDeleteSong = { viewModel.loadLocalMusic() },
                                 onSongTagsOrLyricsSaved = { viewModel.reloadLyrics(it) },
                                 onCollectionNavigationChanged = onCollectionNavigationChanged,
@@ -2637,9 +2720,45 @@ private fun BitChordApp(
                                 onArtworkPaletteChanged = onLocalArtworkPaletteChanged,
                                 onPlayNext = playNext,
                                 onAddToQueue = addToQueue,
+                                onGoToFolder = openLocalFolder,
                                 onDeleteSong = { viewModel.loadLocalMusic() },
                                 onSongTagsOrLyricsSaved = { viewModel.reloadLyrics(it) },
                                 onCollectionNavigationChanged = onCollectionNavigationChanged,
+                            )
+                        }
+                        TAB_HOME -> if (!hasStoragePermission) {
+                            Box(modifier = Modifier.fillMaxSize().padding(listPadding), contentAlignment = Alignment.Center) {
+                                LocalPermissionCard(
+                                    onRequestPermission = requestDefaultPermission,
+                                    onFallbackPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) requestAudioPermission else null,
+                                )
+                            }
+                        } else {
+                            com.music.bitchord.feature.home.ui.HomeScreen(
+                                songs = localSongs,
+                                currentSong = player.song,
+                                isPlaying = player.isPlaying,
+                                onPlay = play,
+                                onShufflePlay = { list ->
+                                    if (list.isNotEmpty()) {
+                                        QueueShuffle.enableForNextQueue()
+                                        play(list, list.indices.random())
+                                    }
+                                },
+                                onOpenAlbum = { album, art -> openLocalAlbum(album, art) },
+                                onOpenArtist = { artist -> openLocalArtist(artist, null) },
+                                onOpenPlaylist = { id ->
+                                    libraryPlaylistRequest = id ?: LIBRARY_FAVORITES_REQUEST
+                                    selectedTab = TAB_LIBRARY
+                                },
+                                onOpenReplay = { showReplay = true },
+                                onShowAllRecent = {
+                                    libraryFilterRequest = LibraryFilter.RECENTLY_PLAYED
+                                    selectedTab = TAB_LIBRARY
+                                },
+                                contentPadding = listPadding,
+                                isRefreshing = isRefreshingLocalMusic,
+                                onRefresh = { viewModel.loadLocalMusic(isPullToRefresh = true) },
                             )
                         }
                         TAB_LIBRARY -> if (!hasStoragePermission) {
@@ -2666,6 +2785,7 @@ private fun BitChordApp(
                                 onAddToQueue = addToQueue,
                                 onGoToAlbum = { album, art -> openLocalAlbum(album, art) },
                                 onGoToArtist = { artist -> openLocalArtist(artist, null) },
+                                onGoToFolder = openLocalFolder,
                                 onOpenTagEditor = { song ->
                                     pendingPlayerQuickAction = PlayerQuickAction.TAG_EDITOR
                                     menuFromPlayer = false
@@ -2680,6 +2800,8 @@ private fun BitChordApp(
                                 onSongTagsOrLyricsSaved = { viewModel.reloadLyrics(it) },
                                 initialFilterRequest = libraryFilterRequest,
                                 onInitialFilterApplied = { libraryFilterRequest = null },
+                                openPlaylistRequest = libraryPlaylistRequest,
+                                onPlaylistRequestApplied = { libraryPlaylistRequest = null },
                                 onArtworkPaletteChanged = onLocalArtworkPaletteChanged,
                                 onCollectionNavigationChanged = onCollectionNavigationChanged,
                                 resetToTopSignal = libraryResetSignal,
@@ -2709,6 +2831,7 @@ private fun BitChordApp(
                                 onAddToQueue = addToQueue,
                                 onGoToAlbum = { album, art -> openLocalAlbum(album, art) },
                                 onGoToArtist = { artist -> openLocalArtist(artist, null) },
+                                onGoToFolder = openLocalFolder,
                                 onTagEditor = { song ->
                                     pendingPlayerQuickAction = PlayerQuickAction.TAG_EDITOR
                                     menuFromPlayer = false
@@ -2772,6 +2895,7 @@ private fun BitChordApp(
                                 onAddToQueue = addToQueue,
                                 onGoToAlbum = { album, art -> openLocalAlbum(album, art) },
                                 onGoToArtist = { artist -> openLocalArtist(artist, null) },
+                                onGoToFolder = openLocalFolder,
                                 onTagEditor = { song ->
                                     pendingPlayerQuickAction = PlayerQuickAction.TAG_EDITOR
                                     menuFromPlayer = false
@@ -2835,11 +2959,49 @@ private fun BitChordApp(
                         val tabsHere = (keptTabs + selectedTab).distinct()
                             .filter { it == selectedTab || it in visibleTabIndices }
                         SideEffect { if (selectedTab !in keptTabs) keptTabs.add(selectedTab) }
+                        // Tab switch: the arriving tab fades in while sliding a
+                        // short way in from the side of the bar it was tapped on
+                        // (PixelPlayer-style, kept small so going back and forth
+                        // stays quiet). Only the arrival moves; the tab left
+                        // behind is parked at once, as before.
+                        var lastShownTab by remember { mutableIntStateOf(selectedTab) }
+                        val tabDirection = remember(selectedTab) {
+                            val from = visibleTabIndices.indexOf(lastShownTab)
+                            val to = visibleTabIndices.indexOf(selectedTab)
+                            if (from < 0 || to < 0 || from == to) 0 else if (to > from) 1 else -1
+                        }
+                        SideEffect { lastShownTab = selectedTab }
                         Box(Modifier.fillMaxSize()) {
                             tabsHere.forEach { tab ->
                                 androidx.compose.runtime.key(tab) {
                                     val showing = tab == selectedTab
-                                    Box(Modifier.fillMaxSize().shownOrParked(showing)) {
+                                    val arrival = remember { androidx.compose.animation.core.Animatable(1f) }
+                                    LaunchedEffect(showing) {
+                                        if (showing && tabDirection != 0 && !reducePlayerMotion) {
+                                            arrival.snapTo(0f)
+                                            arrival.animateTo(
+                                                1f,
+                                                androidx.compose.animation.core.tween(
+                                                    260,
+                                                    easing = androidx.compose.animation.core.FastOutSlowInEasing,
+                                                ),
+                                            )
+                                        } else {
+                                            arrival.snapTo(1f)
+                                        }
+                                    }
+                                    Box(
+                                        Modifier
+                                            .fillMaxSize()
+                                            .shownOrParked(showing)
+                                            .graphicsLayer {
+                                                val t = arrival.value
+                                                if (t < 1f) {
+                                                    alpha = t
+                                                    translationX = (1f - t) * tabDirection * size.width * 0.08f
+                                                }
+                                            },
+                                    ) {
                                         if (showing) {
                                             pageBody("$TAB_KEY$tab")
                                         } else {
@@ -3237,14 +3399,18 @@ private fun BitChordApp(
             val nowPlayingSheetState = rememberSaveable(
                 saver = SheetState.Saver(
                     skipPartiallyExpanded = true,
+                    // Material 3 1.4 takes the thresholds rather than a
+                    // density; these are its own defaults for sheets.
+                    positionalThreshold = { with(sheetDensity) { 56.dp.toPx() } },
+                    velocityThreshold = { with(sheetDensity) { 125.dp.toPx() } },
                     confirmValueChange = confirmSheetValue,
-                    density = sheetDensity,
                     skipHiddenState = false,
                 ),
             ) {
                 SheetState(
                     skipPartiallyExpanded = true,
-                    density = sheetDensity,
+                    positionalThreshold = { with(sheetDensity) { 56.dp.toPx() } },
+                    velocityThreshold = { with(sheetDensity) { 125.dp.toPx() } },
                     initialValue = if (playerSheetMotion.holding) SheetValue.Expanded else SheetValue.Hidden,
                     confirmValueChange = confirmSheetValue,
                 )
@@ -3550,7 +3716,6 @@ private fun BitChordApp(
                     onSelectArtist = { selectedArtist ->
                         showArtistPicker = false
                         songActions = null
-                        showNowPlaying = false
                         val cleanArtist = selectedArtist.trim()
                         if (cleanArtist.isNotBlank()) {
                             openLocalArtist(cleanArtist, null)
@@ -3564,11 +3729,23 @@ private fun BitChordApp(
                         anchor = playerMenuAnchor,
                         streamed = song.localUri == null && song.localPath.isNullOrBlank(),
                         onExplainUnavailable = { res -> Toast.makeText(context, context.getString(res), Toast.LENGTH_SHORT).show() },
+                        onCopyLog = {
+                            songActions = null
+                            scope.launch {
+                                val text = TrackLog.forTrack(song, null)
+                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(text))
+                                val count = text.lines().size
+                                Toast.makeText(
+                                    context,
+                                    context.resources.getQuantityString(R.plurals.log_copied_line_count, count, count),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
                         song = song,
                         onDismissRequest = { songActions = null },
                         onGoToAlbum = {
                             songActions = null
-                            showNowPlaying = false
                             val albumName = song.albumName?.trim().orEmpty()
                             if (albumName.isNotBlank()) {
                                 openLocalAlbum(albumName, song.thumbnailUrl)
@@ -3582,13 +3759,21 @@ private fun BitChordApp(
                                 showArtistPicker = true
                             } else {
                                 songActions = null
-                                showNowPlaying = false
                                 val artistName = (artists.firstOrNull() ?: song.artist).trim()
                                 if (artistName.isNotBlank()) {
                                     openLocalArtist(artistName, null)
                                 } else {
                                     Toast.makeText(context, context.getString(R.string.no_artist_information), Toast.LENGTH_SHORT).show()
                                 }
+                            }
+                        },
+                        onGoToFolder = {
+                            songActions = null
+                            val folderPath = song.localPath?.substringBeforeLast('/')?.trim().orEmpty()
+                            if (folderPath.isNotBlank()) {
+                                openLocalFolder(folderPath)
+                            } else {
+                                Toast.makeText(context, context.getString(R.string.streamed_song_no_file), Toast.LENGTH_SHORT).show()
                             }
                         },
                         onAddToPlaylist = {
@@ -3637,7 +3822,6 @@ private fun BitChordApp(
                         onDismissRequest = { songActions = null },
                         onGoToAlbum = {
                             songActions = null
-                            showNowPlaying = false
                             val albumName = song.albumName?.trim().orEmpty()
                             if (albumName.isNotBlank()) {
                                 openLocalAlbum(albumName, song.thumbnailUrl)
@@ -3651,13 +3835,21 @@ private fun BitChordApp(
                                 showArtistPicker = true
                             } else {
                                 songActions = null
-                                showNowPlaying = false
                                 val artistName = (artists.firstOrNull() ?: song.artist).trim()
                                 if (artistName.isNotBlank()) {
                                     openLocalArtist(artistName, null)
                                 } else {
                                     Toast.makeText(context, context.getString(R.string.no_artist_information), Toast.LENGTH_SHORT).show()
                                 }
+                            }
+                        },
+                        onGoToFolder = {
+                            songActions = null
+                            val folderPath = song.localPath?.substringBeforeLast('/')?.trim().orEmpty()
+                            if (folderPath.isNotBlank()) {
+                                openLocalFolder(folderPath)
+                            } else {
+                                Toast.makeText(context, context.getString(R.string.streamed_song_no_file), Toast.LENGTH_SHORT).show()
                             }
                         },
                         onAddToPlaylist = {
@@ -4456,6 +4648,8 @@ private const val TAB_LIBRARY = 3
 private const val TAB_SEARCH = 4
 private const val TAB_ALBUM_ARTISTS = 5
 private const val TAB_FOLDERS = 6
+private const val TAB_HOME = 7
+private const val LIBRARY_FAVORITES_REQUEST = com.music.bitchord.feature.library.ui.LIBRARY_OPEN_FAVORITES
 
 
 

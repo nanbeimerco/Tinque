@@ -77,6 +77,8 @@ object Backup {
                 equalizer = equalizer,
                 listening = buckets,
                 savedQueues = savedQueues,
+                heat = HeatStore.exportAll(),
+                libraryEntries = com.music.bitchord.feature.library.data.LibraryEntryStore.exportAll(),
             )
             val text = json.encodeToString(BackupFile.serializer(), file)
             context.contentResolver.openOutputStream(target, "wt")
@@ -121,6 +123,8 @@ object Backup {
             EqualizerSettings.importBackup(file.equalizer)
             AppSettings.importPrefs(file.settings.mapValues { it.value.decoded() })
             ListeningStats.importAll(file.listening)
+            HeatStore.importAll(file.heat)
+            com.music.bitchord.feature.library.data.LibraryEntryStore.importAll(file.libraryEntries)
             SearchHistory.reload()
             check(SavedQueueStore.importQueues(file.savedQueues.map { it.toSavedQueue() })) {
                 "Could not restore saved queues"
@@ -175,6 +179,8 @@ object Backup {
         val equalizer: EqualizerBackup? = null,
         val listening: List<StoredBucket> = emptyList(),
         val savedQueues: List<BackupQueue> = emptyList(),
+        val heat: List<HeatEntry> = emptyList(),
+        val libraryEntries: List<com.music.bitchord.feature.library.data.LibraryEntry> = emptyList(),
     )
 
     @Serializable

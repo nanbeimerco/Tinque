@@ -127,8 +127,12 @@ fun rememberArtShape(selected: Boolean, playing: Boolean, spinning: Boolean): Sh
             angle.snapTo(0f)
         }
     }
-    LaunchedEffect(spinning && showPlaying) {
-        if (!(spinning && showPlaying)) return@LaunchedEffect
+    // Held still while the player is raised over the page, like the heat lines:
+    // the page is hidden then, and a tile turning every frame under the glass
+    // made the player's open/close stutter (as Home's turning hero did in 2.5.1).
+    val turns = spinning && showPlaying && HeatClock.pagesMayMove
+    LaunchedEffect(turns) {
+        if (!turns) return@LaunchedEffect
         while (true) {
             val start = angle.value % 360f
             angle.snapTo(start)

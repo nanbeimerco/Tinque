@@ -51,8 +51,8 @@ android {
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
         targetSdk = 36
-        versionCode = 77
-        versionName = "2.4.31"
+        versionCode = 93
+        versionName = "2.6.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -191,14 +191,16 @@ dependencies {
     // Pinned above the BOM's 1.7.6: [IosOverscroll] uses OverscrollFactory,
     // which that version doesn't have. Newer foundation alongside the BOM's
     // older ui/material3 is a combination Compose supports deliberately —
-    // foundation depends on ui, not the reverse — and this exact pairing was
-    // already in effect (foundation was reaching 1.10.0 transitively through
-    // the liquid-glass library before that dependency was removed).
+    // foundation depends on ui, not the reverse.
+    //
+    // Not the newest: Compose 1.12 (BOM 2026.09) needs Android Gradle plugin
+    // 9.1, which is its own migration. 1.10 is the newest this AGP takes.
     implementation("androidx.compose.foundation:foundation:1.10.0")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
+    // 2.5.0: Material 3 1.4 (from the BOM's 1.3) for the Expressive components.
+    implementation("androidx.compose.material3:material3:1.4.0")
     // Shape morphing (the M3 Expressive shapes) for grid artwork; just the
     // geometry library, without moving Material3 itself to a newer version.
     implementation("androidx.graphics:graphics-shapes:1.0.1")

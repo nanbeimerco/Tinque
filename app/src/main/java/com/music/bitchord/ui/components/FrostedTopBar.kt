@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.displayCutout
@@ -262,13 +263,17 @@ fun TabLogoHeader(
                 .height(TopBarContentHeight),
             contentAlignment = Alignment.CenterStart,
         ) {
-            Image(
-                painter = painterResource(R.drawable.ic_logo),
-                contentDescription = null,
-                colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.onSurface),
+            // One colour, the page's ink (white on dark, black on light).
+            // Kept below the status-bar fade (TopFadeBlur's first 14dp under the
+            // safe inset): the logo is page content, so whatever reaches into
+            // that strip is blurred — at 28dp, centred, the long line's tip
+            // did. 26dp, 2dp low: its top sits at 15dp.
+            TinqueLogo(
+                height = 26.dp,
+                ink = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier
                     .padding(start = 20.dp)
-                    .height(18.dp),
+                    .offset(y = 2.dp),
             )
         }
     }

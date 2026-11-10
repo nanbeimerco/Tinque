@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ヒートのタイル表示</title>
+<style>
+  :root {
+    --bg: #121212; --surface: #1d1d1f; --text: #ececec; --sub: #9a9a9a; --line: #2c2c2e;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) { --bg: #f4f3f1; --surface: #ffffff; --text: #1b1b1b; --sub: #6b6b6b; --line: #dedcd8; }
+  }
+  :root[data-theme="light"] { --bg: #f4f3f1; --surface: #ffffff; --text: #1b1b1b; --sub: #6b6b6b; --line: #dedcd8; }
+  :root[data-theme="dark"] { --bg: #121212; --surface: #1d1d1f; --text: #ececec; --sub: #9a9a9a; --line: #2c2c2e; }
+
+  @property --angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: "Noto Sans JP", system-ui, sans-serif; padding: 20px 16px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .lead { color: var(--sub); font-size: 13px; margin: 0 0 16px; line-height: 1.6; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .controls button { border: 1px solid var(--line); background: var(--surface); color: var(--text);
+    border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .controls button.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .group-label { font-size: 12px; color: var(--sub); align-self: center; margin-right: 2px; }
+
+  section { background: var(--surface); border-radius: 20px; padding: 16px; margin-bottom: 16px; }
+  section h2 { font-size: 16px; margin: 0 0 2px; }
+  section p { font-size: 12px; color: var(--sub); margin: 0 0 14px; line-height: 1.6; }
+  .row { display: flex; flex-wrap: wrap; gap: 26px 26px; padding: 22px 20px 8px; }
+  .cell { flex: 0 0 auto; width: 104px; text-align: center; }
+  .cap { font-size: 12px; color: var(--sub); margin-top: 10px; font-variant-numeric: tabular-nums; }
+
+  /* tile = frame (border layer) > art */
+  .tile { position: relative; width: 104px; height: 104px; border-radius: 16px; }
+  .tile.round { border-radius: 50%; }
+  .art { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; }
+  .frame { position: absolute; inset: -3px; border-radius: 19px; padding: 3px; pointer-events: none;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude; }
+  .tile.round .frame { border-radius: 50%; }
+  .frame.spin { animation: spin 3.2s linear infinite; }
+  .glow { position: absolute; inset: -18px; border-radius: 30px; pointer-events: none; z-index: 0; }
+  .tile.round .glow { border-radius: 50%; }
+  .glow.blur { filter: blur(14px); inset: -6px; }
+  .glow.pulse { animation: pulse 3.2s ease-in-out infinite; }
+  .art, .frame { z-index: 1; }
+  @keyframes spin { to { --angle: 360deg; } }
+  @keyframes pulse { 50% { opacity: .55; } }
+  body.paused .spin, body.paused .pulse { animation-play-state: paused; }
+
+  .note { font-size: 12px; color: var(--sub); line-height: 1.7; margin-top: 8px; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); margin-left: 6px; color: var(--sub); vertical-align: 2px; }
+</style>
+</head>
+<body>
+  <h1>ヒートのタイル表示（縁取り・グロー）</h1>
+  <p class="lead">アルバム・アーティストのタイルにヒートを付ける案の比較です。4未満は何も付けません。4.8以上は動きます（共通の時計で、再生中だけ動く想定）。</p>
+
+  <div class="controls">
+    <span class="group-label">色</span>
+    <button data-hue="22">橙 22°</button>
+    <button data-hue="16">赤橙 16°</button>
+    <button data-hue="12" class="on">赤橙 12°</button>
+    <button data-hue="8">赤橙 8°</button>
+    <button data-hue="335">ピンク</button>
+  </div>
+  <div class="controls">
+    <span class="group-label">動き</span>
+    <button id="play" class="on">再生中（動く）</button>
+    <button id="pause">一時停止（止まる）</button>
+    <span class="group-label" style="margin-left:10px">背景</span>
+    <button data-theme="dark" class="on">ダーク</button>
+    <button data-theme="light">ライト</button>
+  </div>
+
+  <div id="variants"></div>
+
+<script>
+  const LEVELS = [3.6, 4.0, 4.4, 4.8, 5.0];
+  const ARTS = [
+    "linear-gradient(135deg,#2b5876,#4e4376)",
+    "linear-gradient(160deg,#e0c3fc,#8ec5fc)",
+    "linear-gradient(135deg,#0f2027,#2c5364)",
+    "radial-gradient(circle at 30% 30%,#f6d365,#fda085 60%,#6b3a2a)",
+    "linear-gradient(200deg,#d4fc79,#3c8d5a)",
+  ];
+  const VARIANTS = [
+    { id: "A", title: "A：縁取りだけ", tag: "軽い",
+      desc: "4〜4.8 はヒート色の線（濃さがレベルで上がる）。4.8 以上は線がグラデーションになって回ります。",
+      border: true, glow: null },
+    { id: "B", title: "B：縁取り＋薄いグロー（ぼかさない）", tag: "軽い",
+      desc: "A に、ぼかしを使わない放射状のグラデーションを後ろに敷いたもの。4.8 以上はグローがゆっくり明滅します。",
+      border: true, glow: "radial" },
+    { id: "C", title: "C：グローだけ（縁取りなし）", tag: "軽い",
+      desc: "線を引かず、後ろの光だけでヒートを見せます。アートワークの形がそのまま見えます。",
+      border: false, glow: "radial" },
+    { id: "D", title: "D：縁取り＋ぼかしグロー（参考）", tag: "重い",
+      desc: "本物のぼかし（blur）を使った光。きれいですが、Android ではタイルの数だけ重くなるので参考として。",
+      border: true, glow: "blur" },
+  ];
+
+  let hue = 12;
+
+  // Same formula as heatColor() in HeatMeter.kt.
+  function heat(level, alpha = 1) {
+    const t = Math.min(Math.max(level / 5, 0), 1);
+    const e = Math.pow(t, 1.6);
+    const s = Math.min(Math.max(e * 0.92, 0), 1) * 100;
+    const l = Math.min(Math.max(0.70 - e * 0.08, 0), 1) * 100;
+    return `hsla(${hue} ${s}% ${l}% / ${alpha})`;
+  }
+  function heatShift(level, dh, dl, alpha = 1) {
+    const t = Math.min(Math.max(level / 5, 0), 1);
+    const e = Math.pow(t, 1.6);
+    const s = e * 92;
+    const l = (0.70 - e * 0.08) * 100 + dl;
+    return `hsla(${hue + dh} ${s}% ${l}% / ${alpha})`;
+  }
+
+  function tile(level, art, v, round) {
+    const flows = level >= 4.8;
+    const shown = level >= 4;
+    const strength = Math.min(Math.max((level - 4) / 0.8, 0), 1); // 0 at 4, 1 at 4.8
+    let glow = "", frame = "";
+    if (shown && v.glow) {
+      const a = (0.30 + 0.35 * strength).toFixed(2);
+      const bg = v.glow === "blur"
+        ? `background:${heat(level, Math.min(1, +a + 0.25))}`
+        : `background:radial-gradient(closest-side, ${heat(level, a)} 62%, ${heat(level, 0)} 100%)`;
+      glow = `<div class="glow ${v.glow === "blur" ? "blur" : ""} ${flows ? "pulse" : ""}" style="${bg}"></div>`;
+    }
+    if (shown && v.border) {
+      const bg = flows
+        ? `background:conic-gradient(from var(--angle), ${heat(level)}, ${heatShift(level, 18, 10)}, ${heat(level, 0.35)}, ${heatShift(level, -10, -6)}, ${heat(level)})`
+        : `background:${heat(level, 0.65 + 0.35 * strength)}`;
+      frame = `<div class="frame ${flows ? "spin" : ""}" style="${bg}"></div>`;
+    }
+    return `<div class="tile ${round ? "round" : ""}">${glow}<div class="art" style="background:${art}"></div>${frame}</div>`;
+  }
+
+  function render() {
+    document.getElementById("variants").innerHTML = VARIANTS.map(v => `
+      <section>
+        <h2>${v.title}<span class="tag">${v.tag}</span></h2>
+        <p>${v.desc}</p>
+        <div class="row">${LEVELS.map((l, i) => `<div class="cell">${tile(l, ARTS[i], v, false)}<div class="cap">アルバム ${l.toFixed(1)}</div></div>`).join("")}</div>
+        <div class="row">${LEVELS.map((l, i) => `<div class="cell">${tile(l, ARTS[(i + 2) % 5], v, true)}<div class="cap">アーティスト ${l.toFixed(1)}</div></div>`).join("")}</div>
+      </section>`).join("");
+  }
+
+  document.querySelectorAll("[data-hue]").forEach(b => b.onclick = () => {
+    hue = +b.dataset.hue;
+    document.querySelectorAll("[data-hue]").forEach(x => x.classList.toggle("on", x === b));
+    render();
+  });
+  document.getElementById("play").onclick = () => { document.body.classList.remove("paused"); play.classList.add("on"); pause.classList.remove("on"); };
+  document.getElementById("pause").onclick = () => { document.body.classList.add("paused"); pause.classList.add("on"); play.classList.remove("on"); };
+  document.querySelectorAll("[data-theme]").forEach(b => b.onclick = () => {
+    document.documentElement.dataset.theme = b.dataset.theme;
+    document.querySelectorAll("[data-theme]").forEach(x => x.classList.toggle("on", x === b));
+  });
+  document.documentElement.dataset.theme = "dark";
+  render();
+</script>
+</body>
+</html>

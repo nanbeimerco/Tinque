@@ -5,30 +5,45 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 
-/** The launcher artwork variants which ship with the app. */
-enum class LauncherIcon {
-    PINK,
-    BLACK,
-    GREEN,
+/**
+ * The launcher artwork variants which ship with the app, in the order the
+ * picker shows them.
+ *
+ * PINK, BLACK and GREEN are saved names from the BitChord artwork. They stay,
+ * with the Tinque mark in their place ("normal", black-and-white, forest), so
+ * an update never changes which alias is enabled — a launcher can drop a
+ * home-screen icon whose alias goes away.
+ */
+enum class LauncherIcon(
+    internal val alias: String,
+    /** Background colours (two for a gradient), lines, and the third line. */
+    val background: List<Long>,
+    val lines: Long,
+    val third: Long,
+) {
+    PINK(".LauncherPink", listOf(0xFF111111), 0xFFFFFFFF, 0xFFFF5A36),
+    BLACK(".LauncherBlack", listOf(0xFF111111), 0xFFFFFFFF, 0xFFFFFFFF),
+    BLACK_ORANGE(".LauncherBlackOrange", listOf(0xFF111111), 0xFFFF5A36, 0xFFFF5A36),
+    ORANGE(".LauncherOrange", listOf(0xFFFF5A36), 0xFFFFFFFF, 0xFFFFFFFF),
+    CREAM(".LauncherCream", listOf(0xFFF4F2EC), 0xFF111111, 0xFF111111),
+    WHITE(".LauncherWhite", listOf(0xFFFFFFFF), 0xFF111111, 0xFFFF5A36),
+    RED_ORANGE(".LauncherRedOrange", listOf(0xFFF76945), 0xFFFFFFFF, 0xFFFFFFFF),
+    HEAT_PINK(".LauncherHeatPink", listOf(0xFFF7458F), 0xFFFFFFFF, 0xFFFFFFFF),
+    NAVY(".LauncherNavy", listOf(0xFF14213D), 0xFFFFFFFF, 0xFFFF5A36),
+    GREEN(".LauncherGreen", listOf(0xFF1F3A2E), 0xFFF4F2EC, 0xFFF4F2EC),
+    SUNSET(".LauncherSunset", listOf(0xFFF76945, 0xFFF7458F), 0xFFFFFFFF, 0xFFFFFFFF),
 }
 
 /** Switches launcher aliases without restarting or disabling the app itself. */
 internal object LauncherIconManager {
-    private val aliases = mapOf(
-        LauncherIcon.PINK to ".LauncherPink",
-        LauncherIcon.BLACK to ".LauncherBlack",
-        LauncherIcon.GREEN to ".LauncherGreen",
-    )
-
     fun apply(context: Context, selected: LauncherIcon) {
         val packageManager = context.packageManager
         // Manifest-relative alias names are resolved against the app's code
         // namespace (com.music.bitchord), while context.packageName is the
-        // flavor applicationId (io.pockets.musicbestsp). ComponentName needs
-        // both values separately.
+        // flavor applicationId. ComponentName needs both values separately.
         val componentNamespace = "com.music.bitchord"
-        val states = aliases.map { (icon, className) ->
-            val component = ComponentName(context.packageName, componentNamespace + className)
+        val states = LauncherIcon.entries.map { icon ->
+            val component = ComponentName(context.packageName, componentNamespace + icon.alias)
             val state = if (icon == selected) {
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             } else {

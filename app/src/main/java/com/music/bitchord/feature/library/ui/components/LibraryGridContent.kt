@@ -88,6 +88,7 @@ fun LibraryGridContent(
                     songCount = favoriteSongCount,
                     onClick = onFavoritesClick,
                     onPlay = onFavoritesPlay,
+                    heat = com.music.bitchord.ui.components.rememberFavoritesTileHeat(librarySongs),
                 )
             }
         }

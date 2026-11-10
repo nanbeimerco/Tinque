@@ -136,6 +136,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.Constraints
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.pow
 
 /** Hoisted so the default is one stable lambda rather than a new one per call. */
 private val DefaultTabBarContentModifier: @Composable () -> Modifier = { Modifier }
@@ -229,6 +230,12 @@ fun FloatingTabBar(
     sizes: FloatingTabBarSizes = FloatingTabBarDefaults.sizes(),
     elevations: FloatingTabBarElevations = FloatingTabBarDefaults.elevations(),
     contentKey: Any? = null,
+    /**
+     * Integrated bar: the standalone tab is also one of [content]'s tabs; expanded it is a
+     * cell of the one bar, and it pinches off as its own circle only while folding. The pill
+     * then moves on the sample-measured physics too (see [GlassPillMotion.sampleModel]).
+     */
+    splitStandalone: Boolean = false,
     content: FloatingTabBarScope.() -> Unit
 ) {
     val scope = remember(contentKey) { FloatingTabBarScopeImpl().apply { content() } }
@@ -237,7 +244,7 @@ fun FloatingTabBar(
     val currentBounce by rememberUpdatedState(bounce)
 
     val fold = remember { Animatable(if (scrollConnection.isInline) 1f else 0f) }
-    val morph = remember { BarMorph { fold.value } }
+    val morph = remember(splitStandalone) { BarMorph({ fold.value }, splitStandalone) }
     val animationScope = rememberCoroutineScope()
     val currentReduceAnimation by rememberUpdatedState(reduceAnimation)
 
@@ -287,6 +294,7 @@ fun FloatingTabBar(
                     colors = colors,
                     elevations = elevations,
                     tabBarContentModifier = tabBarContentModifier,
+                    sampleModel = splitStandalone,
                     modifier = Modifier,
                 )
             }
@@ -352,9 +360,25 @@ fun FloatingTabBar(
 @Stable
 class BarMorph internal constructor(
     private val foldValue: () -> Float,
+    /**
+     * The integrated bar (Settings › integrate standalone tab): one capsule holding every tab
+     * when expanded, from whose right end the standalone tab pinches off as a circle while it
+     * folds into [tab][accessory][standalone] — staged after
+     * mocks/liquid_glass_v2_mock_antigravity.html (tab_transform.mp4 F19..F32).
+     */
+    internal val split: Boolean = false,
 ) {
     /** The whole fold: 0 = expanded, 1 = inline. */
     val fold: Float get() = foldValue().coerceIn(0f, 1f)
+
+    /** Integrated bar: the standalone circle moving out of the bar's right end (F19..F24). */
+    val searchSplit: Float get() = if (split) smoothStep(segment(fold, 0.02f, 0.42f)) else 1f
+
+    /** Integrated bar: the standalone circle's own surface coming on (none at all when expanded). */
+    val searchPresence: Float get() = if (split) smoothStep(segment(fold, 0.008f, 0.14f)) else 1f
+
+    /** Integrated bar: the accessory's next button going as it narrows (F21..F24). */
+    val buttonsGone: Float get() = segment(fold, 0.06f, 0.34f)
 
     /**
      * How far a bouncy fold has overshot an end (above 0 past inline, below 0
@@ -366,23 +390,32 @@ class BarMorph internal constructor(
     val overshoot: Float get() = foldValue() - fold
 
     /** The tab group and the standalone tab shrinking to circles. */
-    val tabs: Float get() = smoothStep(segment(fold, 0f, TABS_END))
+    val tabs: Float get() = smoothStep(segment(fold, 0f, if (split) 0.50f else TABS_END))
 
     /** The tabs other than the one that stays, and the pill, fading out. */
-    val tabFade: Float get() = segment(fold, 0f, TAB_FADE_END)
+    val tabFade: Float get() = if (split) segment(fold, 0.04f, 0.34f) else segment(fold, 0f, TAB_FADE_END)
 
     /** The tab labels fading out. */
-    val labelFade: Float get() = segment(fold, 0f, LABEL_FADE_END)
+    val labelFade: Float get() = segment(fold, 0f, if (split) 0.22f else LABEL_FADE_END)
 
     /** The accessory narrowing to the room between the two circles. */
-    val accessoryWidth: Float get() = smoothStep(segment(fold, ACCESSORY_WIDTH_START, ACCESSORY_WIDTH_END))
+    val accessoryWidth: Float get() = if (split) {
+        smoothStep(segment(fold, 0.06f, 0.52f))
+    } else {
+        smoothStep(segment(fold, ACCESSORY_WIDTH_START, ACCESSORY_WIDTH_END))
+    }
 
     /**
      * The accessory dropping into the row. Eased in rather than in and out:
      * on the way up it rises quickly, so it is out of the row early and the
      * tab group can start widening while it still has a little way to go.
+     * Integrated: falling into the gap the bar leaves, on a 1.8 power (F23..F28).
      */
-    val accessoryDrop: Float get() = segment(fold, ACCESSORY_DROP_START, 1f).let { it * it }
+    val accessoryDrop: Float get() = if (split) {
+        segment(fold, 0.15f, 1f).let { it.toDouble().pow(1.8).toFloat() }
+    } else {
+        segment(fold, ACCESSORY_DROP_START, 1f).let { it * it }
+    }
 
     /**
      * How far the accessory's right edge has come in from where it is when
@@ -488,42 +521,65 @@ private fun MorphingBar(
             heights.width = width
             heights.group = -1
         }
+        // Integrated bar: every tab (the standalone one included) is in the group, and the
+        // standalone circle only exists while folding, pinching off the group's right end.
+        val split = morph.split && standaloneM != null
         // The standalone circle is as tall as the group, so it takes the
         // group's width; assume a square from a first guess and settle it.
         if (heights.group < 0) {
             val guess = group?.maxIntrinsicHeight(width) ?: inline
-            val groupWidth = width - if (standaloneM != null) guess + gap else 0
+            val groupWidth = width - if (standaloneM != null && !split) guess + gap else 0
             geometry.groupContentWidth = (groupWidth - padH).coerceAtLeast(0)
             heights.group = (group?.maxIntrinsicHeight(groupWidth) ?: inline).coerceAtLeast(inline)
         }
         val expandedTabs = heights.group
 
-        val standaloneE = if (standaloneM != null) expandedTabs else 0
-        val groupWidthE = width - if (standaloneM != null) standaloneE + gap else 0
+        val standaloneE = if (standaloneM != null && !split) expandedTabs else 0
+        val groupWidthE = width - if (standaloneM != null && !split) standaloneE + gap else 0
         geometry.groupContentWidth = (groupWidthE - padH).coerceAtLeast(0)
         geometry.inlineSize = inline
 
-        // Inline: [tab][accessory][standalone] across the row, or, with no
-        // accessory, the two circles packed together in the middle.
-        val groupXI: Int
-        val standaloneXI: Int
-        if (accessoryM != null) {
-            groupXI = 0
-            standaloneXI = width - inline
-        } else {
-            val cluster = inline + if (standaloneM != null) gap + inline else 0
-            groupXI = (width - cluster) / 2
-            standaloneXI = groupXI + inline + gap
-        }
-        val accessoryXI = inline + gap
-        val accessoryWI = (width - accessoryXI - if (standaloneM != null) inline + gap else 0).coerceAtLeast(0)
-
         val t = morph.tabs
-        val groupX = lerp(0f, groupXI.toFloat(), t)
+        val groupX: Float
+        val standaloneX: Float
+        val standaloneS: Float
+        val accessoryXI: Int
+        val accessoryWI: Int
+        if (split) {
+            // mocks/liquid_glass_v2_mock_antigravity.html: inline the two circles sit a little
+            // in from the edges, the accessory between them with a wider gap.
+            val inset = SPLIT_INLINE_INSET.roundToPx()
+            val gapX = SPLIT_INLINE_GAP.roundToPx()
+            groupX = lerp(0f, inset.toFloat(), t)
+            val s = morph.searchSplit
+            val right = lerp(width.toFloat(), (width - inset).toFloat(), s)
+            // Not laid out at all until its surface starts to show: at rest it would
+            // sit over the bar's own last cell and take its taps.
+            standaloneS = if (morph.searchPresence < 0.01f) 0f else lerp(expandedTabs.toFloat(), inline.toFloat(), s)
+            standaloneX = right - standaloneS
+            accessoryXI = inset + inline + gapX
+            accessoryWI = (width - accessoryXI - inset - inline - gapX).coerceAtLeast(0)
+        } else {
+            // Inline: [tab][accessory][standalone] across the row, or, with no
+            // accessory, the two circles packed together in the middle.
+            val groupXI: Int
+            val standaloneXI: Int
+            if (accessoryM != null) {
+                groupXI = 0
+                standaloneXI = width - inline
+            } else {
+                val cluster = inline + if (standaloneM != null) gap + inline else 0
+                groupXI = (width - cluster) / 2
+                standaloneXI = groupXI + inline + gap
+            }
+            accessoryXI = inline + gap
+            accessoryWI = (width - accessoryXI - if (standaloneM != null) inline + gap else 0).coerceAtLeast(0)
+            groupX = lerp(0f, groupXI.toFloat(), t)
+            standaloneX = lerp((width - standaloneE).toFloat(), standaloneXI.toFloat(), t)
+            standaloneS = lerp(standaloneE.toFloat(), inline.toFloat(), t)
+        }
         val groupW = lerp(groupWidthE.toFloat(), inline.toFloat(), t)
         val groupH = lerp(expandedTabs.toFloat(), inline.toFloat(), t)
-        val standaloneX = lerp((width - standaloneE).toFloat(), standaloneXI.toFloat(), t)
-        val standaloneS = lerp(standaloneE.toFloat(), inline.toFloat(), t)
 
         val tw = morph.accessoryWidth
         val td = morph.accessoryDrop
@@ -569,9 +625,18 @@ private fun MorphingBar(
             scaleY = s
             transformOrigin = BounceOrigin
         }
+        // Integrated: the pinched-off circle's surface fades on as it separates.
+        val standaloneLayer: androidx.compose.ui.graphics.GraphicsLayerScope.() -> Unit = if (split) {
+            {
+                bounceLayer()
+                alpha = morph.searchPresence
+            }
+        } else {
+            bounceLayer
+        }
         layout(width, height) {
             groupP?.placeRelativeWithLayer(groupX.roundToInt(), height - groupP.height, layerBlock = bounceLayer)
-            standaloneP?.placeRelativeWithLayer(standaloneX.roundToInt(), height - standaloneP.height, layerBlock = bounceLayer)
+            standaloneP?.placeRelativeWithLayer(standaloneX.roundToInt(), height - standaloneP.height, layerBlock = standaloneLayer)
             accessoryP?.placeRelativeWithLayer(accessoryX.roundToInt(), (height - accessoryLift - accessoryH).roundToInt(), layerBlock = bounceLayer)
         }
     }
@@ -579,6 +644,10 @@ private fun MorphingBar(
 
 /** The accessory's expanded height until it has been measured expanded. */
 private val ACCESSORY_EXPANDED_FALLBACK = 60.dp
+
+/** Integrated bar, inline: the circles' inset from the bar's edges, and their gap to the accessory. */
+private val SPLIT_INLINE_INSET = 5.dp
+private val SPLIT_INLINE_GAP = 11.dp
 
 private class ExpandedHeights {
     var width = -1
@@ -750,7 +819,9 @@ private fun TabGroup(
     colors: FloatingTabBarColors,
     elevations: FloatingTabBarElevations,
     modifier: Modifier,
-    tabBarContentModifier: @Composable () -> Modifier
+    tabBarContentModifier: @Composable () -> Modifier,
+    /** The pill on the sample-measured physics (mocks/liquid_glass_v7.html); integrated bar only. */
+    sampleModel: Boolean = false,
 ) {
     // Past halfway the bar acts as the inline circle: one tap expands it.
     // Read through derivedStateOf, so this recomposes twice a fold, not on
@@ -800,6 +871,7 @@ private fun TabGroup(
     val pill = remember { GlassPillMotion(coroutineScope, selectedTabIndex.coerceAtLeast(0)) }
     pill.reduceMotion = reduceAnimation
     pill.motionStyle = pillMotionStyle
+    pill.sampleModel = sampleModel
     // The lens samples the recorded page, and "reduce dynamic blur" stops that recording.
     val glassPill = isGlassSupported() && !reduceDynamicBlur
     val barGlass = rememberLayerBackdrop()
@@ -836,7 +908,12 @@ private fun TabGroup(
     val liftedHeightPx = rowHeightPx + padTopPx + padBottomPx +
         with(density) { PILL_GROW_HEIGHT.toPx() }
     val liftedSize = if (rowHeightPx > 0f) {
-        Size(liftedHeightPx * tabWidthPx / rowHeightPx, liftedHeightPx)
+        if (sampleModel) {
+            // tab_animation.mp4, held: 121% of its width, 118.6% of the whole bar's height
+            Size(tabWidthPx * 1.21f, (rowHeightPx + padTopPx + padBottomPx) * 1.186f)
+        } else {
+            Size(liftedHeightPx * tabWidthPx / rowHeightPx, liftedHeightPx)
+        }
     } else {
         restSize
     }
@@ -898,6 +975,18 @@ private fun TabGroup(
         CompositionLocalProvider(LocalGlassExport provides activeGlassExport) {
             Box(
                 modifier = Modifier
+                    .then(
+                        if (sampleModel) {
+                            // Held, the whole bar swells about 3% with the pill (tab_animation.mp4).
+                            Modifier.graphicsLayer {
+                                val s = 1f + 0.03f * pill.liftX.coerceIn(0f, 1.2f)
+                                scaleX = s
+                                scaleY = s
+                            }
+                        } else {
+                            Modifier
+                        },
+                    )
                     .shadow(
                         shape = shapes.tabBarShape,
                         elevation = elevations.expandedElevation
@@ -1099,9 +1188,12 @@ private fun TabGroup(
                                 Box(
                                     modifier = Modifier.graphicsLayer {
                                         val pop = if (isSelected) reselectPress.value else 1f
+                                        // Sample physics: the tab being travelled to shrinks away
+                                        // under the moving glass and pops back on landing.
+                                        val glyph = if (sampleModel && isSelected) pill.glyphScale(tabIndex) else 1f
                                         // The selected tab's slight enlargement goes
                                         // as it becomes the inline circle's icon.
-                                        val s = lerp(iconScale, 1f, morph.tabs) * pop
+                                        val s = lerp(iconScale, 1f, morph.tabs) * pop * glyph
                                         scaleX = s
                                         scaleY = s
                                         if (!isInlineTab) alpha = 1f - morph.tabFade

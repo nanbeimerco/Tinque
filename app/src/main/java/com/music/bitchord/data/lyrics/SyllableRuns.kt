@@ -71,7 +71,7 @@ internal fun wordsFromRuns(runs: List<TimedRun>, spacingIsExplicit: Boolean = fa
 }
 
 /** Scripts written without spaces between words. */
-private fun Char.isUnspacedScript(): Boolean =
+internal fun Char.isUnspacedScript(): Boolean =
     this in '\u3400'..'\u9FFF' || // Han
         this in '\u3040'..'\u30FF' || // hiragana and katakana
         this in '\u3000'..'\u303F' || // CJK punctuation

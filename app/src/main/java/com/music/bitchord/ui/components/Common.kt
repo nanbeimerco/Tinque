@@ -572,6 +572,7 @@ private fun SongRowContent(
         if (downloadedTint != null) {
             DownloadedBadge(song.videoId, downloadedTint)
         }
+        SongHeatMark(song)
         if (isCurrent && trackNumber == null) {
             Spacer(Modifier.width(8.dp))
             Icon(

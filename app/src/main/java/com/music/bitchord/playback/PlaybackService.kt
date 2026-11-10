@@ -347,6 +347,7 @@ class PlaybackService : MediaLibraryService() {
         // A transition can have both players running. Stop its spare leg first
         // so a muted-volume event cannot leave the incoming track audible.
         crossfade?.cancelTransition()
+        PlaybackLog.note("pausing: media volume is 0 or muted")
         active.pause()
     }
 
@@ -365,6 +366,7 @@ class PlaybackService : MediaLibraryService() {
         resumeAfterAudioFocus = false
         if (active.mediaItemCount == 0) return
         if (!requestAudioFocus(AppSettings.audioFocusLevel.value)) {
+            PlaybackLog.note("pausing: audio focus request refused")
             active.pause()
             abandonAudioFocus()
         }
@@ -452,6 +454,11 @@ class PlaybackService : MediaLibraryService() {
     /** Idle peer, used only while the active track is nearing its end. */
     private var spare: ExoPlayer? = null
 
+    /** Re-opens the audio output when it stops draining — see [AudioStallWatchdog]. */
+    private val audioStallWatchdog = AudioStallWatchdog { message ->
+        PlaybackLog.note(message, about = player?.currentMediaItem?.mediaId)
+    }
+
     private var crossfade: CrossfadeController? = null
 
     /**
@@ -483,6 +490,7 @@ class PlaybackService : MediaLibraryService() {
     private var resumeAfterAudioFocus = false
 
     private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { change ->
+        PlaybackLog.note("audio focus ${PlaybackLog.focusChangeName(change)}")
         val active = player ?: return@OnAudioFocusChangeListener
         when (change) {
             AudioManager.AUDIOFOCUS_GAIN -> {
@@ -664,6 +672,9 @@ class PlaybackService : MediaLibraryService() {
      */
     private var repeatAllStash: List<MediaItem> = emptyList()
 
+    /** The track the heat meter last opened a listen for — see onMediaItemTransition. */
+    private var heatLastMediaId: String? = null
+
     /**
      * The track that was playing when [repeatAllStash] was taken. The stash
      * describes what came after *that* track, so it is only put back if the
@@ -704,6 +715,11 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            PlaybackLog.note(
+                "sound ${if (isPlaying) "started" else "stopped"}: ${PlaybackLog.stateName(exoPlayer.playbackState)}, " +
+                    "playWhenReady=${exoPlayer.playWhenReady}, suppression=${exoPlayer.playbackSuppressionReason}",
+                about = exoPlayer.currentMediaItem?.mediaId,
+            )
             if (isExternalPreviewPlaying(exoPlayer)) {
                 updateCurrentLocalPlayStats(isPlaying = false, song = exoPlayer.currentMediaItem?.toSong())
                 updateExternalAudioPopup(exoPlayer)
@@ -811,6 +827,13 @@ class PlaybackService : MediaLibraryService() {
          * on the audio, which is what the media notification shows too.
          */
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            player?.let { active ->
+                PlaybackLog.note(
+                    "${if (playWhenReady) "play" else "pause"}: ${PlaybackLog.playWhenReadyReason(reason)} " +
+                        "at ${active.currentPosition}ms, ${PlaybackLog.stateName(active.playbackState)}",
+                    about = active.currentMediaItem?.mediaId,
+                )
+            }
             handleAudioFocusPlaybackChange(playWhenReady)
             // Tinque's own media volume while it plays, the other apps' when it stops.
             var anyPlaying = false
@@ -923,6 +946,22 @@ class PlaybackService : MediaLibraryService() {
                 externalAudioPopupWindow?.dismiss()
                 externalPreviewReturnState = null
             }
+            // Heat: close the listen that just ended, judged by how it ended,
+            // and open the one that starts. A quality swap is the same song,
+            // so it neither closes nor reopens anything (onTrackStarted
+            // ignores the same id).
+            if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED ||
+                mediaItem?.mediaId != heatLastMediaId
+            ) {
+                val ranToEnd = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                    reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+                ListeningRecorder.onTransition(
+                    userSkipped = reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
+                    ranToEnd = ranToEnd,
+                )
+            }
+            ListeningRecorder.onTrackStarted(mediaItem?.toSong())
+            heatLastMediaId = mediaItem?.mediaId
             castPlayback.onLocalTransition(mediaItem, reason)
             // A quality swap replaces the playing item, which Media3
             // reports here as a playlist change — indistinguishable, from
@@ -1014,6 +1053,14 @@ class PlaybackService : MediaLibraryService() {
                 if (state == Player.STATE_ENDED) restoreExternalPreview(exoPlayer)
                 return
             }
+            // A stuck AudioTrack shows up as READY ⇄ BUFFERING every ~0.13 s;
+            // the watchdog seeks in place to open a fresh one. Not during a
+            // crossfade, when the standby player is the one being heard.
+            audioStallWatchdog.onPlaybackStateChanged(
+                exoPlayer,
+                state,
+                busy = spare?.isPlaying == true,
+            )
             if (state == Player.STATE_ENDED) {
                 SleepTimer.cancel()
                 if (exoPlayer.repeatMode == Player.REPEAT_MODE_OFF || SingleSongPlaybackManager.enabled.value) {
@@ -1026,6 +1073,9 @@ class PlaybackService : MediaLibraryService() {
                 // a full, deliberate listen is the one recorded as abandoned.
                 PlaybackTracker.onPlaybackFinished(lastPositionSeconds)
                 lastPositionSeconds = 0
+                // Heat: the last track played out with nothing after it.
+                ListeningRecorder.onTransition(userSkipped = false, ranToEnd = true)
+                heatLastMediaId = null
                 // The last track finished with nothing after it, so no
                 // transition will ever close it out. Scrobble it now.
                 val lastSong = listenBrainzSong
@@ -1062,8 +1112,14 @@ class PlaybackService : MediaLibraryService() {
             // back off is left with a queue that simply stops after the playing
             // track.
             when {
-                repeatMode == Player.REPEAT_MODE_ALL -> stashAutoplayTracks()
-                previous == Player.REPEAT_MODE_ALL -> restoreAutoplayTracks()
+                repeatMode == Player.REPEAT_MODE_ALL -> {
+                    stashAutoplayTracks()
+                    appendQueueWrapHead()
+                }
+                previous == Player.REPEAT_MODE_ALL -> {
+                    removeQueueWrapHead()
+                    restoreAutoplayTracks()
+                }
             }
             updatePauseAtEndOfMediaItems()
             // Turning repeat-all back off can leave the current item at the end
@@ -1269,25 +1325,18 @@ class PlaybackService : MediaLibraryService() {
                 actionFactory: androidx.media3.session.MediaNotification.ActionFactory,
                 onNotificationChangedCallback: androidx.media3.session.MediaNotification.Provider.Callback,
             ): androidx.media3.session.MediaNotification {
-                val icon = AppSettings.launcherIcon.value
-                val smallIconRes = when (icon) {
-                    LauncherIcon.GREEN -> R.drawable.ic_notification_logo_green
-                    LauncherIcon.BLACK -> R.drawable.ic_notification_logo_black
-                    LauncherIcon.PINK -> R.drawable.ic_notification_logo_pink
-                }
-                defaultProvider.setSmallIcon(smallIconRes)
+                // One mark for every launcher variant: the system draws it in one colour anyway.
+                defaultProvider.setSmallIcon(R.drawable.ic_notification_logo)
                 val mediaNotification = defaultProvider.createNotification(
                     mediaSession,
                     customLayout,
                     actionFactory,
                     onNotificationChangedCallback,
                 )
-                val accentColor = when (icon) {
-                    LauncherIcon.GREEN -> 0xFF148447.toInt()
-                    LauncherIcon.BLACK -> 0xFF212121.toInt()
-                    LauncherIcon.PINK -> 0xFFFA233B.toInt()
-                }
-                mediaNotification.notification.color = accentColor
+                // The icon's own accent: its orange line, or its background where the lines are plain.
+                val icon = AppSettings.launcherIcon.value
+                val plain = icon.third == 0xFFFFFFFF || icon.third == 0xFFF4F2EC || icon.third == 0xFF111111
+                mediaNotification.notification.color = (if (plain) icon.background.first() else icon.third).toInt()
                 return mediaNotification
             }
 
@@ -1865,6 +1914,51 @@ class PlaybackService : MediaLibraryService() {
     }
 
     /** Clears the queue's AutoPlay tail for the duration of repeat-all, keeping it to put back. */
+    /**
+     * Repeat-all switched on: the playlist rows before the tapped one go on the
+     * end, so the loop reaches the top of the playlist — see [QueueWrap].
+     * Only for the queue they were taken from: if that has been replaced since,
+     * its tapped row is gone and nothing is added.
+     */
+    private fun appendQueueWrapHead() {
+        val exoPlayer = player ?: return
+        val head = QueueWrap.head
+        if (head.isEmpty() || QueueWrap.appended) return
+        val anchor = QueueWrap.anchor ?: return
+        val stillThatQueue = (0 until exoPlayer.mediaItemCount)
+            .any { exoPlayer.getMediaItemAt(it).mediaId == anchor }
+        if (!stillThatQueue) {
+            QueueWrap.clear()
+            return
+        }
+        exoPlayer.addMediaItems(head.map { it.toMediaItem() })
+        QueueWrap.appended = true
+    }
+
+    /**
+     * Repeat-all switched off: take the added rows back off, so the queue stops
+     * at the playlist's end again. Left alone once the loop has reached them,
+     * since by then they are what is playing.
+     */
+    private fun removeQueueWrapHead() {
+        val exoPlayer = player ?: return
+        val head = QueueWrap.head
+        if (!QueueWrap.appended || head.isEmpty()) return
+        val size = exoPlayer.mediaItemCount
+        val from = size - head.size
+        val tailMatches = from > exoPlayer.currentMediaItemIndex &&
+            head.indices.all { i -> exoPlayer.getMediaItemAt(from + i).mediaId == head[i].videoId }
+        if (tailMatches) {
+            exoPlayer.removeMediaItems(from, size)
+            // Kept, so switching repeat-all back on adds them again.
+            QueueWrap.appended = false
+        } else {
+            // The loop has reached them, or the queue has changed: they are
+            // ordinary queue rows now.
+            QueueWrap.clear()
+        }
+    }
+
     private fun stashAutoplayTracks() {
         val exoPlayer = player ?: return
         // Only ever taken once per stretch of repeat-all: cycling
@@ -2085,11 +2179,7 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun sessionActivity(): PendingIntent {
         val icon = AppSettings.launcherIcon.value
-        val aliasClassName = when (icon) {
-            LauncherIcon.PINK -> "com.music.bitchord.LauncherPink"
-            LauncherIcon.BLACK -> "com.music.bitchord.LauncherBlack"
-            LauncherIcon.GREEN -> "com.music.bitchord.LauncherGreen"
-        }
+        val aliasClassName = "com.music.bitchord" + icon.alias
         val launchIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
             component = ComponentName(packageName, aliasClassName)
@@ -4367,6 +4457,7 @@ class PlaybackService : MediaLibraryService() {
                 if (deadline == null) return@collectLatest
                 val remaining = deadline - SystemClock.elapsedRealtime()
                 if (remaining > 0) delay(remaining)
+                PlaybackLog.note("pausing: sleep timer")
                 player?.pause()
                 SleepTimer.cancel()
             }
@@ -5489,10 +5580,15 @@ class PlaybackService : MediaLibraryService() {
             }
             var lines: List<LyricLine>? = null
             try {
-                if (targetUri != null) {
+                // Lyrics picked from the catalog win here too, as in the player.
+                lines = com.music.bitchord.data.lyrics.LyricsOverrideStore.lines(
+                    com.music.bitchord.data.lyrics.LyricsOverrideStore.keyFor(currentSong.videoId, currentSong.localUri),
+                )?.second
+                if (lines == null && targetUri != null) {
                     lines = EmbeddedLyrics.forUri(this@PlaybackService, targetUri)
                 }
-                if (lines == null) {
+                val waitsForPick = targetUri != null && AppSettings.lyricsManualForLocal.value
+                if (lines == null && !waitsForPick) {
                     val found = LyricsRepository.lyrics(
                         videoId = currentSong.videoId,
                         title = currentSong.title,
@@ -5701,16 +5797,25 @@ class PlaybackService : MediaLibraryService() {
             CastController.setVolume(CastController.volume.value + delta)
 
         override fun play() {
-            if (!canStartPlayback()) return
+            if (!canStartPlayback()) {
+                PlaybackLog.note("play refused: volume is 0 and play-at-zero-volume is blocked")
+                return
+            }
+            PlaybackLog.note("play requested${PlaybackLog.lastCommandFrom()}")
             if (cast.active) cast.play() else wrappedPlayer.play()
         }
 
         override fun pause() {
+            PlaybackLog.note("pause requested${PlaybackLog.lastCommandFrom()}")
             if (cast.active) cast.pause() else wrappedPlayer.pause()
         }
 
         override fun setPlayWhenReady(playWhenReady: Boolean) {
-            if (playWhenReady && !canStartPlayback()) return
+            if (playWhenReady && !canStartPlayback()) {
+                PlaybackLog.note("play refused: volume is 0 and play-at-zero-volume is blocked")
+                return
+            }
+            PlaybackLog.note("${if (playWhenReady) "play" else "pause"} requested${PlaybackLog.lastCommandFrom()}")
             if (cast.active) {
                 if (playWhenReady) cast.play() else cast.pause()
             } else {
@@ -5868,6 +5973,28 @@ class PlaybackService : MediaLibraryService() {
      * Handles browsing and content resolution for Android Auto and other MediaBrowser clients.
      */
     private inner class MediaLibraryCallback : MediaLibrarySession.Callback {
+
+        override fun onMediaButtonEvent(
+            session: MediaSession,
+            controllerInfo: MediaSession.ControllerInfo,
+            intent: Intent,
+        ): Boolean {
+            PlaybackLog.noteCommandFrom("${PlaybackLog.describeMediaButton(intent)} from ${PlaybackLog.describe(controllerInfo)}")
+            return super.onMediaButtonEvent(session, controllerInfo, intent)
+        }
+
+        @Deprecated("Media3 still calls it for every player command")
+        override fun onPlayerCommandRequest(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            playerCommand: Int,
+        ): Int {
+            if (playerCommand == Player.COMMAND_PLAY_PAUSE) {
+                PlaybackLog.noteCommandFrom(PlaybackLog.describe(controller))
+            }
+            @Suppress("DEPRECATION")
+            return super.onPlayerCommandRequest(session, controller, playerCommand)
+        }
 
         override fun onConnect(
             session: MediaSession,

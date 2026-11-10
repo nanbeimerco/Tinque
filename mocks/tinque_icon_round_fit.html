@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>丸形アイコンの下の窮屈さ</title>
+<style>
+  :root { --bg: #f4f3f1; --card: #fff; --text: #1b1b1b; --sub: #6b6b6b; --line: #dedcd8; }
+  :root[data-theme="dark"] { --bg: #121212; --card: #1d1d1f; --text: #ececec; --sub: #9a9a9a; --line: #2c2c2e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 20px 16px 40px; background: var(--bg); color: var(--text); font-family: "Noto Sans JP", system-ui, sans-serif; }
+  h1 { font-size: 19px; margin: 0 0 4px; }
+  .lead { font-size: 13px; color: var(--sub); margin: 0 0 14px; line-height: 1.6; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .controls button { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; }
+  .controls button.on { background: var(--text); color: var(--bg); }
+  .label { font-size: 12px; color: var(--sub); align-self: center; }
+  section { background: var(--card); border-radius: 18px; padding: 14px 16px; margin-bottom: 12px; }
+  section h2 { font-size: 14px; margin: 0 0 10px; color: var(--sub); font-weight: 500; }
+  .row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; text-align: center; }
+  .cell p { margin: 6px 0 0; font-size: 12px; color: var(--sub); line-height: 1.5; }
+  .cell p b { color: var(--text); font-size: 13px; }
+  .home { background: linear-gradient(160deg, #5b6b73, #3e4447); border-radius: 18px; padding: 18px 10px; }
+  .home .cell p { color: #fff; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>丸形アイコンの下の窮屈さを直す</h1>
+<p class="lead">今のアイコンは、円のふちまでの余白が上 11.7 に対して下（払いの先）は 5.7 しかありません（見える範囲を 100 としたとき）。上下の余白がそろう直し方を3つ並べています。</p>
+<div class="controls">
+  <span class="label">ガイド</span>
+  <button id="gOff" class="on">なし</button>
+  <button id="gOn">余白の目安を表示</button>
+  <span class="label" style="margin-left:8px">背景</span>
+  <button data-t="light" class="on">ライト</button>
+  <button data-t="dark">ダーク</button>
+</div>
+<div id="out"></div>
+<script>
+const P = ['M22 32V70Q22 80 15 85', 'M40 32V70Q40 80 33 85', 'M65 14Q58 19 58 29V70Q58 80 51 85', 'M75 54V70Q75 80 82 85'];
+// C: each tail ends 4 higher and 2 nearer its stem.
+const S = ['M22 32V68Q22 76 17 81', 'M40 32V68Q40 76 35 81', 'M65 14Q58 19 58 29V68Q58 76 53 81', 'M75 54V68Q75 76 80 81'];
+// C, point-symmetric: the long line's top bend shortened as much as its tail,
+// so it turns about (58, 49.5) exactly as the original does.
+const S2 = ['M22 32V68Q22 76 17 81', 'M40 32V68Q40 76 35 81', 'M63 18Q58 23 58 31V68Q58 76 53 81', 'M75 54V68Q75 76 80 81'];
+const K = 64 / 72; // the mark's size in the launcher's visible circle today
+const VARIANTS = [
+  { key: 'now', name: '今', note: '上 11.7 ／ 下 5.7', paths: P, k: K, dy: 0 },
+  { key: 'A', name: 'A 上へずらす', note: '上 8.3 ／ 下 8.5<br>大きさそのまま、3.5 上へ', paths: P, k: K, dy: -3.5 },
+  { key: 'B', name: 'B 少し小さく＋上へ', note: '上 12.3 ／ 下 11.0<br>92%、2.5 上へ', paths: P, k: 0.82, dy: -2.5 },
+  { key: 'C', name: 'C 払いを短く（前）', note: '上 10.8 ／ 下 10.9<br>オレンジの線が点対称でない', paths: S, k: K, dy: -1 },
+  { key: 'C2', name: 'C 点対称版', note: '上 10.9 ／ 下 10.8<br>上の曲げも短く・105%・4 上へ', paths: S2, k: 0.93, dy: -4 },
+];
+const SHAPES = [
+  { name: '円形（vivo など）', clip: '<circle cx="50" cy="50" r="50"/>' },
+  { name: 'スクワークル', clip: '<path d="M50 0C88 0 100 12 100 50S88 100 50 100 0 88 0 50 12 0 50 0Z"/>' },
+  { name: '角丸の四角', clip: '<rect width="100" height="100" rx="22"/>' },
+];
+let guide = false, uid = 0;
+function icon(v, clip, size) {
+  const id = 'c' + (uid++);
+  const off = (100 - 100 * v.k) / 2;
+  const g = guide ? '<circle cx="50" cy="50" r="40" fill="none" stroke="#1D9E75" stroke-width="0.8" stroke-dasharray="2 2"/>' : '';
+  return `<svg width="${size}" height="${size}" viewBox="0 0 100 100">
+    <defs><clipPath id="${id}">${clip}</clipPath></defs>
+    <g clip-path="url(#${id})">
+      <rect width="100" height="100" fill="#111"/>
+      <g transform="translate(${off + 1.5 * v.k} ${off + v.dy}) scale(${v.k})" fill="none" stroke-width="13" stroke-linejoin="round">
+        ${v.paths.map((d, i) => `<path d="${d}" stroke="${i === 2 ? '#FF5A36' : '#fff'}"/>`).join('')}
+      </g>
+      ${g}
+    </g>
+  </svg>`;
+}
+function render() {
+  uid = 0;
+  let html = `<section><h2>ホーム画面での見え方（円形・実寸に近い大きさ）</h2><div class="home"><div class="row">` +
+    VARIANTS.map(v => `<div class="cell">${icon(v, SHAPES[0].clip, 64)}<p>${v.name}</p></div>`).join('') + `</div></div></section>`;
+  SHAPES.forEach(s => {
+    html += `<section><h2>${s.name}</h2><div class="row">` +
+      VARIANTS.map(v => `<div class="cell">${icon(v, s.clip, 110)}<p><b>${v.name}</b><br>${v.note}</p></div>`).join('') + `</div></section>`;
+  });
+  document.getElementById('out').innerHTML = html;
+}
+const pick = (sel, b) => document.querySelectorAll(sel).forEach(x => x.classList.toggle('on', x === b));
+gOff.onclick = () => { guide = false; pick('#gOff,#gOn', gOff); render(); };
+gOn.onclick = () => { guide = true; pick('#gOff,#gOn', gOn); render(); };
+document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { document.documentElement.dataset.theme = b.dataset.t; pick('[data-t]', b); });
+render();
+</script>
+</body>
+</html>

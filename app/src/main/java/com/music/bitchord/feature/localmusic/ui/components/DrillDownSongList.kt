@@ -3,6 +3,7 @@ package com.music.bitchord.feature.localmusic.ui.components
 import androidx.compose.runtime.collectAsState
 import com.music.bitchord.data.settings.GridKind
 import com.music.bitchord.ui.components.ScaledGridCells
+import com.music.bitchord.ui.components.heatRing
 import com.music.bitchord.ui.components.pinchToResizeGrid
 import com.music.bitchord.ui.components.gridPulse
 import com.music.bitchord.ui.components.pressBounce
@@ -139,6 +140,13 @@ private fun Color.highContrastBlackOrWhite(): Color {
     val whiteContrast = 1.05f / (luminance + 0.05f)
     return if (blackContrast >= whiteContrast) Color.Black else Color.White
 }
+
+/**
+ * Something a page adds under its header's details — the album and artist
+ * pages' "Add to Library". Provided around the page rather than passed down
+ * through each header variant.
+ */
+val LocalDrillDownHeaderExtra = androidx.compose.runtime.compositionLocalOf<(@Composable () -> Unit)?> { null }
 
 @Composable
 fun DrillDownHeader(
@@ -282,6 +290,20 @@ private fun CompactDrillDownHeader(
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
+        com.music.bitchord.ui.components.rememberGroupHeat(songs)?.let { level ->
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                com.music.bitchord.ui.components.HeatMeter(
+                    level = level,
+                    width = 72.dp,
+                    trackColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.25f),
+                )
+            }
+        }
+        LocalDrillDownHeaderExtra.current?.let { extra ->
+            Spacer(Modifier.height(10.dp))
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { extra() }
+        }
     }
 }
 
@@ -361,6 +383,18 @@ private fun FullScreenCollectionHeader(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            com.music.bitchord.ui.components.rememberGroupHeat(songs)?.let { level ->
+                Spacer(Modifier.height(8.dp))
+                com.music.bitchord.ui.components.HeatMeter(
+                    level = level,
+                    width = 72.dp,
+                    trackColor = palette.onBackgroundVariant.copy(alpha = 0.3f),
+                )
+            }
+            LocalDrillDownHeaderExtra.current?.let { extra ->
+                Spacer(Modifier.height(10.dp))
+                extra()
+            }
         }
     }
 }
@@ -419,6 +453,7 @@ fun SongGridCard(
                     scaleX = artScale
                     scaleY = artScale
                 }
+                .heatRing(com.music.bitchord.ui.components.rememberSongTileHeat(song), shape, still = isCurrent)
                 .clip(shape)
                 .thumbnailBorder(shape)
                 .background(MaterialTheme.colorScheme.surfaceVariant),

@@ -47,6 +47,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.withStyle
 import coil3.compose.AsyncImage
 import com.music.bitchord.R
 import com.music.bitchord.data.model.ROW_ART_PX
@@ -156,6 +157,8 @@ fun ReplayScreen(
             contentPadding = contentPadding,
         ) {
             item("heading") { Heading(state, onPeriodChange, dark) }
+            // Today, this week, the streak: moved here from Home (2.6.3).
+            item("lately") { Lately(dark) }
 
             when {
                 state.loading && summary == null -> item("loading") {
@@ -472,6 +475,76 @@ private fun ReplayChartRow(row: ReplayRow, circular: Boolean, dark: Boolean, onC
                 color = textColor.copy(alpha = 0.45f),
             )
         }
+    }
+}
+
+/** Today, this week and the days-in-a-row streak, whatever period is chosen above. */
+@Composable
+private fun Lately(dark: Boolean) {
+    val context = LocalContext.current
+    val lately = androidx.compose.runtime.produceState<Pair<List<Pair<java.time.LocalDate, Long>>, Int>?>(null) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.music.bitchord.data.stats.ListeningStats.recentDays(7) to com.music.bitchord.data.stats.ListeningStats.streak()
+        }
+    }.value
+    val (week, streak) = lately ?: return
+    if (week.isEmpty()) return
+    val h = stringResource(R.string.replay_unit_hours)
+    val m = stringResource(R.string.replay_unit_minutes)
+    val d = stringResource(R.string.replay_unit_days)
+    Row(
+        Modifier.padding(horizontal = PAGE_GUTTER + 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        LatelyTile(stringResource(R.string.replay_today), listeningValue(week.last().second, h, m), dark, Modifier.weight(1f))
+        LatelyTile(stringResource(R.string.replay_this_week), listeningValue(week.sumOf { it.second }, h, m), dark, Modifier.weight(1f))
+        LatelyTile(stringResource(R.string.replay_streak), unitValue(listOf(streak.toString() to d)), dark, Modifier.weight(1f))
+    }
+}
+
+/**
+ * Hours and minutes with the numbers large and the units small, so "2 h 18 m"
+ * fits a third of the width on one line (the sentence form wrapped, and past a
+ * day the week fell back to "1,518 min").
+ */
+private fun listeningValue(ms: Long, h: String, m: String): androidx.compose.ui.text.AnnotatedString {
+    val minutes = ms / 60_000
+    return if (minutes < 60) unitValue(listOf(minutes.toString() to m))
+    else unitValue(listOf((minutes / 60).toString() to h, (minutes % 60).toString() to m))
+}
+
+private fun unitValue(parts: List<Pair<String, String>>): androidx.compose.ui.text.AnnotatedString =
+    androidx.compose.ui.text.buildAnnotatedString {
+        parts.forEach { (number, unit) ->
+            append(number)
+            withStyle(androidx.compose.ui.text.SpanStyle(fontSize = 13.sp, fontWeight = FontWeight.W700)) { append(unit) }
+        }
+    }
+
+@Composable
+private fun LatelyTile(label: String, value: androidx.compose.ui.text.AnnotatedString, dark: Boolean, modifier: Modifier = Modifier) {
+    val textColor = if (dark) Color.White else Color.Black
+    Column(
+        modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(textColor.copy(alpha = 0.09f))
+            .padding(horizontal = 6.dp, vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.W800,
+            color = textColor,
+            maxLines = 1,
+            softWrap = false,
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = textColor.copy(alpha = 0.55f),
+            letterSpacing = 1.sp,
+        )
     }
 }
 

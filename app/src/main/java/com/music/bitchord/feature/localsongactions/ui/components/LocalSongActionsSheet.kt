@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Edit
+import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Person
@@ -80,6 +81,7 @@ fun LocalSongActionsSheet(
     song: Song,
     onGoToAlbum: () -> Unit,
     onGoToArtist: () -> Unit,
+    onGoToFolder: (() -> Unit)? = null,
     onAddToPlaylist: () -> Unit,
     onEqualizer: () -> Unit,
     onPlaybackTuning: () -> Unit,
@@ -221,6 +223,15 @@ fun LocalSongActionsSheet(
                             label = stringResource(R.string.go_to_artist),
                             trailingIcon = if (artists.size > 1) Icons.AutoMirrored.Rounded.KeyboardArrowRight else null,
                             onClick = onGoToArtist,
+                        )
+                    }
+
+                    // 2b. Go to Folder
+                    if (onGoToFolder != null && PlayerDetailsAction.FOLDER !in hiddenActions && !song.localPath.isNullOrBlank()) {
+                        LocalSongActionItem(
+                            icon = Icons.Rounded.Folder,
+                            label = stringResource(R.string.go_to_folder),
+                            onClick = onGoToFolder,
                         )
                     }
 

@@ -252,8 +252,21 @@ enum class MainNavigationTab(val index: Int) {
     LIBRARY(3),
     SEARCH(4),
     ALBUM_ARTISTS(5),
-    FOLDERS(6);
+    FOLDERS(6),
+    HOME(7);
 }
+
+/** The heat meter's colour: one fixed hue, or the album-art theme's. */
+enum class HeatColor { ORANGE, PINK, ARTWORK }
+
+/** The shelves of the Home tab, in the order the listener chose. */
+enum class HomeSection {
+    MIXES, HERO, HOT, RISING, NEW_ADDITIONS, RECENTLY_PLAYED, TIME_CAPSULE, DEEP_CUTS,
+    TIME_OF_DAY, COOLING, UNPLAYED_ALBUMS, COVERAGE, STATS,
+}
+
+/** The groups of the Library's "All" page, in the order the listener chose. */
+enum class LibrarySection { RECENTLY_ADDED, FAVORITES, PLAYLISTS, SONGS, ALBUMS, ARTISTS }
 
 enum class ScreenOrientationMode { SYSTEM, PORTRAIT, LANDSCAPE }
 
@@ -279,6 +292,7 @@ enum class PlayerQuickAction {
     SEARCH,
     ALBUM,
     ARTIST,
+    FOLDER,
     EQUALIZER,
     CHROMECAST,
     SLEEP_TIMER,
@@ -293,6 +307,7 @@ enum class PlayerQuickAction {
 enum class PlayerDetailsAction {
     ALBUM,
     ARTIST,
+    FOLDER,
     ADD_TO_PLAYLIST,
     EQUALIZER,
     CHROMECAST,
@@ -502,6 +517,8 @@ object AppSettings {
     /** Grid column counts per page, keyed by [GridKind.key]; absent = that page's default. */
     val gridColumns = MutableStateFlow<Map<String, Int>>(emptyMap())
     val launcherIcon = MutableStateFlow(LauncherIcon.PINK)
+    /** Beta: how far right (0..3, of 100) the Tinque mark is drawn, to balance its weight. */
+    val iconCenterShift = MutableStateFlow(0)
     val frostedQueueManager = MutableStateFlow(true)
 
     /** The bottom bar's fold settles with a small M3 Expressive bounce. */
@@ -521,6 +538,10 @@ object AppSettings {
 
     /** Keep a lyric's furigana when saving or embedding it. */
     val lyricsKeepFurigana = MutableStateFlow(false)
+    /** A local song with no lyrics of its own waits for the listener to pick some, rather than one being fetched. */
+    val lyricsManualForLocal = MutableStateFlow(true)
+    /** Settings shown as a list of categories, each opening on its own page. */
+    val settingsByCategory = MutableStateFlow(false)
 
     /** Keep a media volume for Tinque apart from the other apps' (see VolumeHandoff). */
     val volumeHandoff = MutableStateFlow(false)
@@ -603,7 +624,7 @@ object AppSettings {
     /** When true, keeps the floating bottom bar expanded and prevents collapsing on scroll. */
     val lockBottomBarExpanded = MutableStateFlow(false)
 
-    /** When true and lockBottomBarExpanded is true, integrates the standalone tab (search) into the main tab group as a single bar. */
+    /** Integrates the standalone tab (search) into the main tab group as a single bar; independent of lockBottomBarExpanded. */
     val integrateStandaloneTab = MutableStateFlow(false)
 
     /** When true, hides labels in the bottom navigation bar and displays only icons. */
@@ -613,6 +634,18 @@ object AppSettings {
     val visibleMainNavigationTabs = MutableStateFlow(MainNavigationTab.entries.filterNot { it == MainNavigationTab.FOLDERS }.toSet())
     val mainNavigationTabOrder = MutableStateFlow<List<MainNavigationTab>>(MainNavigationTab.entries)
     val startupTab = MutableStateFlow(MainNavigationTab.SONGS)
+
+    /** Heat meter: shown at all (it keeps recording either way, so turning it on is never empty). */
+    val heatMeterEnabled = MutableStateFlow(true)
+    /** The meter beside the player's title too (off from 2.6.4: one colour when on). */
+    val heatInPlayer = MutableStateFlow(false)
+    /** Heat colour: the album-art theme's hue when that theme is on, otherwise a fixed red-orange. */
+    val heatColor = MutableStateFlow(HeatColor.ARTWORK)
+    /** Home shelves and Library groups: order, and which are shown. */
+    val homeSectionOrder = MutableStateFlow<List<HomeSection>>(HomeSection.entries)
+    val hiddenHomeSections = MutableStateFlow<Set<HomeSection>>(emptySet())
+    val librarySectionOrder = MutableStateFlow<List<LibrarySection>>(LibrarySection.entries)
+    val hiddenLibrarySections = MutableStateFlow<Set<LibrarySection>>(emptySet())
 
     /** System UI preferences; bars remain transiently revealable by swipe when hidden. */
     val showStatusBar = MutableStateFlow(true)
@@ -1049,7 +1082,7 @@ object AppSettings {
      */
     private fun applyFirstInstallDefaults() {
         if (prefs.all.isNotEmpty()) return
-        val firstTabs = listOf(MainNavigationTab.LIBRARY, MainNavigationTab.FOLDERS, MainNavigationTab.SEARCH)
+        val firstTabs = listOf(MainNavigationTab.HOME, MainNavigationTab.LIBRARY, MainNavigationTab.FOLDERS, MainNavigationTab.SEARCH)
         val order = MainNavigationTabs.normalizeOrder(firstTabs)
         prefs.edit()
             .putStringSet(KEY_VISIBLE_MAIN_NAVIGATION_TABS, firstTabs.map { it.name }.toSet())
@@ -1062,10 +1095,13 @@ object AppSettings {
                 LocalLibraryTab.entries.filterNot { it == LocalLibraryTab.ALBUM_ARTISTS }.map { it.name }.toSet(),
             )
             .putBoolean(KEY_ALBUM_ARTISTS_TAB_MIGRATED, true)
-            .putString(KEY_STARTUP_TAB, MainNavigationTab.FOLDERS.name)
+            .putString(KEY_STARTUP_TAB, MainNavigationTab.HOME.name)
+            .putBoolean(KEY_HOME_TAB_MIGRATED, true)
+            .putBoolean(KEY_BOTTOM_BAR_BOUNCE, true)
+            .putString(KEY_HEAT_COLOR, HeatColor.ORANGE.name)
             // Glass needs RenderEffect (Android 12); older devices keep plain bars.
             .putBoolean(KEY_LIQUID_GLASS, android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S)
-            .putString(KEY_GLASS_RENDER_STYLE, GlassRenderStyle.FROSTED.key)
+            .putString(KEY_GLASS_RENDER_STYLE, GlassRenderStyle.CLEAR.key)
             .putBoolean(KEY_LOCK_BOTTOM_BAR_EXPANDED, true)
             .putBoolean(KEY_INTEGRATE_STANDALONE_TAB, true)
             .putString(KEY_THEME, ThemeMode.ARTWORK.name)
@@ -1162,6 +1198,7 @@ object AppSettings {
         launcherIcon.value = runCatching {
             LauncherIcon.valueOf(prefs.getString(KEY_LAUNCHER_ICON, LauncherIcon.PINK.name) ?: LauncherIcon.PINK.name)
         }.getOrDefault(LauncherIcon.PINK)
+        iconCenterShift.value = prefs.getInt(KEY_ICON_CENTER_SHIFT, 0).coerceIn(0, 3)
         frostedQueueManager.value = prefs.getBoolean(KEY_FROSTED_QUEUE_MANAGER, true)
         gridTitleOverlay.value = prefs.getBoolean(KEY_GRID_TITLE_OVERLAY, false)
         volumeHandoff.value = prefs.getBoolean(KEY_VOLUME_HANDOFF, false)
@@ -1171,6 +1208,8 @@ object AppSettings {
         lyricsSaveWordSync.value = prefs.getBoolean(KEY_LYRICS_SAVE_WORD_SYNC, true)
         lyricsKeepTranslation.value = prefs.getBoolean(KEY_LYRICS_KEEP_TRANSLATION, false)
         lyricsKeepFurigana.value = prefs.getBoolean(KEY_LYRICS_KEEP_FURIGANA, false)
+        lyricsManualForLocal.value = prefs.getBoolean(KEY_LYRICS_MANUAL_FOR_LOCAL, true)
+        settingsByCategory.value = prefs.getBoolean(KEY_SETTINGS_BY_CATEGORY, false)
         frostedPlayerDetails.value = prefs.getBoolean(KEY_FROSTED_PLAYER_DETAILS, true)
         frostedCompactLyrics.value = prefs.getBoolean(KEY_FROSTED_COMPACT_LYRICS, true)
         // Off unless a source has been chosen: before the choice existed the
@@ -1222,6 +1261,17 @@ object AppSettings {
         visibleMainNavigationTabs.value = readVisibleMainNavigationTabs()
         mainNavigationTabOrder.value = readMainNavigationTabOrder()
         startupTab.value = readStartupTab()
+        heatMeterEnabled.value = prefs.getBoolean(KEY_HEAT_METER, true)
+        heatInPlayer.value = prefs.getBoolean(KEY_HEAT_IN_PLAYER, false)
+        // 2.5.0 stored an on/off "follow the theme"; an install that has it
+        // keeps what it meant. A fresh install writes ORANGE (first-install defaults).
+        heatColor.value = prefs.getString(KEY_HEAT_COLOR, null)
+            ?.let { name -> HeatColor.entries.firstOrNull { it.name == name } }
+            ?: if (prefs.getBoolean(KEY_HEAT_COLOR_THEME, true)) HeatColor.ARTWORK else HeatColor.ORANGE
+        homeSectionOrder.value = readOrder(KEY_HOME_SECTION_ORDER, HomeSection.entries)
+        hiddenHomeSections.value = readSet(KEY_HOME_SECTIONS_HIDDEN, HomeSection.entries)
+        librarySectionOrder.value = readOrder(KEY_LIBRARY_SECTION_ORDER, LibrarySection.entries)
+        hiddenLibrarySections.value = readSet(KEY_LIBRARY_SECTIONS_HIDDEN, LibrarySection.entries)
         showStatusBar.value = prefs.getBoolean(KEY_SHOW_STATUS_BAR, true)
         showNavigationBar.value = prefs.getBoolean(KEY_SHOW_NAVIGATION_BAR, true)
         quietMode.value = prefs.getBoolean(KEY_QUIET_MODE, false)
@@ -1639,6 +1689,16 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_LYRICS_KEEP_FURIGANA, value).apply()
     }
 
+    fun setLyricsManualForLocal(value: Boolean) {
+        lyricsManualForLocal.value = value
+        prefs.edit().putBoolean(KEY_LYRICS_MANUAL_FOR_LOCAL, value).apply()
+    }
+
+    fun setSettingsByCategory(value: Boolean) {
+        settingsByCategory.value = value
+        prefs.edit().putBoolean(KEY_SETTINGS_BY_CATEGORY, value).apply()
+    }
+
     fun setTransportAnimation(value: Boolean) {
         transportAnimation.value = value
         prefs.edit().putBoolean(KEY_TRANSPORT_ANIMATION, value).apply()
@@ -1845,6 +1905,12 @@ object AppSettings {
         val safeValue = value.coerceIn(0, 100)
         reverbAmount.value = safeValue
         prefs.edit().putInt(KEY_REVERB_AMOUNT, safeValue).apply()
+    }
+
+    fun setIconCenterShift(value: Int) {
+        val v = value.coerceIn(0, 3)
+        iconCenterShift.value = v
+        prefs.edit().putInt(KEY_ICON_CENTER_SHIFT, v).apply()
     }
 
     fun setLauncherIcon(value: LauncherIcon) {
@@ -2183,6 +2249,63 @@ object AppSettings {
     fun setPersistentLocalArtwork(value: Boolean) {
         persistentLocalArtwork.value = value
         prefs.edit().putBoolean(KEY_PERSISTENT_LOCAL_ARTWORK, value).apply()
+    }
+
+    private inline fun <reified E : Enum<E>> readOrder(key: String, all: List<E>): List<E> {
+        val saved = prefs.getString(key, null)?.split(',')
+            ?.mapNotNull { name -> all.firstOrNull { it.name == name } }
+            .orEmpty()
+        return (saved + all).distinct()
+    }
+
+    private inline fun <reified E : Enum<E>> readSet(key: String, all: List<E>): Set<E> =
+        prefs.getStringSet(key, null)?.mapNotNull { name -> all.firstOrNull { it.name == name } }?.toSet().orEmpty()
+
+    fun setHeatInPlayer(value: Boolean) {
+        heatInPlayer.value = value
+        prefs.edit().putBoolean(KEY_HEAT_IN_PLAYER, value).apply()
+    }
+
+    fun setHeatMeterEnabled(value: Boolean) {
+        heatMeterEnabled.value = value
+        prefs.edit().putBoolean(KEY_HEAT_METER, value).apply()
+    }
+
+    fun setHeatColor(value: HeatColor) {
+        heatColor.value = value
+        prefs.edit().putString(KEY_HEAT_COLOR, value.name).apply()
+    }
+
+    fun moveHomeSection(section: HomeSection, offset: Int) {
+        val list = homeSectionOrder.value.toMutableList()
+        val from = list.indexOf(section)
+        val to = (from + offset).coerceIn(0, list.lastIndex)
+        if (from < 0 || from == to) return
+        list.add(to, list.removeAt(from))
+        homeSectionOrder.value = list
+        prefs.edit().putString(KEY_HOME_SECTION_ORDER, list.joinToString( ) { it.name }).apply()
+    }
+
+    fun setHomeSectionVisible(section: HomeSection, visible: Boolean) {
+        val updated = if (visible) hiddenHomeSections.value - section else hiddenHomeSections.value + section
+        hiddenHomeSections.value = updated
+        prefs.edit().putStringSet(KEY_HOME_SECTIONS_HIDDEN, updated.map { it.name }.toSet()).apply()
+    }
+
+    fun moveLibrarySection(section: LibrarySection, offset: Int) {
+        val list = librarySectionOrder.value.toMutableList()
+        val from = list.indexOf(section)
+        val to = (from + offset).coerceIn(0, list.lastIndex)
+        if (from < 0 || from == to) return
+        list.add(to, list.removeAt(from))
+        librarySectionOrder.value = list
+        prefs.edit().putString(KEY_LIBRARY_SECTION_ORDER, list.joinToString( ) { it.name }).apply()
+    }
+
+    fun setLibrarySectionVisible(section: LibrarySection, visible: Boolean) {
+        val updated = if (visible) hiddenLibrarySections.value - section else hiddenLibrarySections.value + section
+        hiddenLibrarySections.value = updated
+        prefs.edit().putStringSet(KEY_LIBRARY_SECTIONS_HIDDEN, updated.map { it.name }.toSet()).apply()
     }
 
     private fun readMainNavigationTabOrder(): List<MainNavigationTab> {
@@ -3272,6 +3395,8 @@ object AppSettings {
     private const val KEY_REVERB_ENABLED = "reverb_enabled"
     private const val KEY_REVERB_AMOUNT = "reverb_amount"
     private const val KEY_LAUNCHER_ICON = "launcher_icon"
+    private const val KEY_ICON_CENTER_SHIFT = "icon_center_shift"
+    private const val KEY_HEAT_IN_PLAYER = "heat_in_player"
     private const val KEY_FROSTED_QUEUE_MANAGER = "frosted_queue_manager"
     private const val KEY_GRID_TITLE_OVERLAY = "grid_title_overlay"
     private const val KEY_VOLUME_HANDOFF = "volume_handoff"
@@ -3281,6 +3406,8 @@ object AppSettings {
     private const val KEY_LYRICS_SAVE_WORD_SYNC = "lyrics_save_word_sync"
     private const val KEY_LYRICS_KEEP_TRANSLATION = "lyrics_keep_translation"
     private const val KEY_LYRICS_KEEP_FURIGANA = "lyrics_keep_furigana"
+    private const val KEY_LYRICS_MANUAL_FOR_LOCAL = "lyrics_manual_for_local"
+    private const val KEY_SETTINGS_BY_CATEGORY = "settings_by_category"
     private const val KEY_FROSTED_PLAYER_DETAILS = "frosted_player_details"
     private const val KEY_FROSTED_COMPACT_LYRICS = "frosted_compact_lyrics"
     private const val KEY_AUTOPLAY = "autoplay"
@@ -3318,6 +3445,14 @@ object AppSettings {
     private const val KEY_VISIBLE_MAIN_NAVIGATION_TABS = "visible_main_navigation_tabs"
     private const val KEY_MAIN_NAVIGATION_TAB_ORDER = "main_navigation_tab_order"
     private const val KEY_STARTUP_TAB = "startup_tab"
+    private const val KEY_HOME_TAB_MIGRATED = "home_tab_migrated"
+    private const val KEY_HEAT_METER = "heat_meter_enabled"
+    private const val KEY_HEAT_COLOR_THEME = "heat_color_follows_theme"
+    private const val KEY_HEAT_COLOR = "heat_color"
+    private const val KEY_HOME_SECTION_ORDER = "home_section_order"
+    private const val KEY_HOME_SECTIONS_HIDDEN = "home_sections_hidden"
+    private const val KEY_LIBRARY_SECTION_ORDER = "library_section_order"
+    private const val KEY_LIBRARY_SECTIONS_HIDDEN = "library_sections_hidden"
     private const val KEY_SHOW_STATUS_BAR = "show_status_bar"
     private const val KEY_SHOW_NAVIGATION_BAR = "show_navigation_bar"
     private const val KEY_QUIET_MODE = "quiet_mode"

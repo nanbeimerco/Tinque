@@ -101,6 +101,7 @@ fun LocalSearchScreen(
     onAddToQueue: ((Song) -> Unit)? = null,
     onGoToAlbum: ((String, String?) -> Unit)? = null,
     onGoToArtist: ((String) -> Unit)? = null,
+    onGoToFolder: ((String) -> Unit)? = null,
     onTagEditor: ((Song) -> Unit)? = null,
     onDetails: ((Song) -> Unit)? = null,
     onDeleteSong: ((Song) -> Unit)? = null,
@@ -247,7 +248,7 @@ fun LocalSearchScreen(
             onAddToPlaylist = { songsForPlaylist = listOf(song) },
             onGoToAlbum = onGoToAlbum?.let { go -> { album -> go(album, song.thumbnailUrl) } },
             onGoToArtist = onGoToArtist,
-            onGoToFolder = null,
+            onGoToFolder = onGoToFolder,
             onTagEditor = { onTagEditor?.invoke(song) ?: onSongLongPress(song) },
             onShare = {
                 com.music.bitchord.feature.localsongactions.ui.LocalSongActionsHelper.shareSong(context, song)
@@ -285,6 +286,34 @@ fun LocalSearchScreen(
     ) { target ->
         if (target == "drill") {
             Column(Modifier.fillMaxSize()) {
+                // Albums and artists opened from search get "Add to Library"
+                // too, the same as from the Albums and Artists tabs.
+                val libraryChip: (@androidx.compose.runtime.Composable () -> Unit)? = when {
+                    isDrillDownAlbum -> {
+                        {
+                            com.music.bitchord.feature.library.ui.components.LibraryAddChip(
+                                type = com.music.bitchord.feature.library.data.LibraryEntryType.ALBUM,
+                                title = drillDownLabel.orEmpty(),
+                                artist = drillDownSongs.firstOrNull()?.let { it.albumArtist?.takeIf(String::isNotBlank) ?: it.artist },
+                                artworkUrl = drillDownArt ?: drillDownSongs.firstNotNullOfOrNull { it.thumbnailUrl },
+                            )
+                        }
+                    }
+                    isDrillDownArtist -> {
+                        {
+                            com.music.bitchord.feature.library.ui.components.LibraryAddChip(
+                                type = com.music.bitchord.feature.library.data.LibraryEntryType.ARTIST,
+                                title = drillDownLabel.orEmpty(),
+                                artist = null,
+                                artworkUrl = drillDownArt ?: drillDownSongs.firstNotNullOfOrNull { it.thumbnailUrl },
+                            )
+                        }
+                    }
+                    else -> null
+                }
+                androidx.compose.runtime.CompositionLocalProvider(
+                    com.music.bitchord.feature.localmusic.ui.components.LocalDrillDownHeaderExtra provides libraryChip,
+                ) {
                 DrillDownSongList(
                 label = drillDownLabel ?: "",
                 artworkUrl = drillDownArt,
@@ -316,6 +345,7 @@ fun LocalSearchScreen(
                 contentPadding = contentPadding,
                     modifier = Modifier.weight(1f),
                 )
+                }
             }
         } else {
             Column(

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.material.icons.rounded.PlaylistAdd
 import androidx.compose.material.icons.rounded.PlaylistPlay
 import androidx.compose.material3.Icon
@@ -228,6 +229,12 @@ fun SelectionActionToolbar(
             ToolbarAction(com.music.bitchord.ui.icons.BitChordIcons.PlayNext, playNext, palette.content, onHold = { tip = playNext }) { act(onPlayNext) }
             ToolbarAction(Icons.AutoMirrored.Rounded.QueueMusic, addToQueue, palette.content, onHold = { tip = addToQueue }) { act(onAddToQueue) }
             ToolbarAction(Icons.Rounded.PlaylistAdd, addToPlaylist, palette.content, onHold = { tip = addToPlaylist }) { act(onAddToPlaylist) }
+            val addToLibrary = stringResource(R.string.add_to_library)
+            val addedToLibrary = stringResource(R.string.added_to_library)
+            ToolbarAction(Icons.Rounded.LibraryAdd, addToLibrary, palette.content, onHold = { tip = addToLibrary }) {
+                act { picked -> com.music.bitchord.feature.library.data.LibraryEntryStore.addSongs(picked) }
+                tip = addedToLibrary
+            }
             if (delete != null) {
                 Box(
                     Modifier

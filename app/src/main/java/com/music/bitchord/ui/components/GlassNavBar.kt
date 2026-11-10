@@ -127,9 +127,10 @@ fun GlassNavBar(
     val isDark = isSystemInDarkTheme()
     val borderColor = if (isDark) GLASS_EDGE_COLOR else Color.Black.copy(alpha = 0.08f)
     val hideNavigationBarLabels by AppSettings.hideNavigationBarLabels.collectAsStateWithLifecycle()
-    val lockBottomBarExpanded by AppSettings.lockBottomBarExpanded.collectAsStateWithLifecycle()
+    // Independent of "lock expanded" (which only stops the fold): integrated, the standalone
+    // tab is a cell of the one bar, and while the bar folds it pinches off as its own circle.
     val integrateStandaloneTab by AppSettings.integrateStandaloneTab.collectAsStateWithLifecycle()
-    val shouldIntegrate = lockBottomBarExpanded && integrateStandaloneTab
+    val shouldIntegrate = integrateStandaloneTab
     val themeMode by AppSettings.themeMode.collectAsStateWithLifecycle()
     val isArtworkTheme = themeMode == com.music.bitchord.data.settings.ThemeMode.ARTWORK
     val liquidGlassOpacity by AppSettings.liquidGlassOpacity.collectAsStateWithLifecycle()
@@ -241,6 +242,7 @@ fun GlassNavBar(
         contentKey = remember(selectedIndex, tabs, contentColor, artworkColor, isArtworkTheme, hideNavigationBarLabels, shouldIntegrate) {
             listOf(selectedIndex, tabs, contentColor, artworkColor, isArtworkTheme, hideNavigationBarLabels, shouldIntegrate)
         },
+        splitStandalone = shouldIntegrate,
     ) {
         tabs.forEachIndexed { index, tab ->
             val isSelected = index == selectedIndex
@@ -293,6 +295,23 @@ fun GlassNavBar(
                     onClick = onClick,
                     indication = null,
                 )
+                if (index == standaloneIndex && shouldIntegrate) {
+                    // The same tab again as the circle that pinches off the bar's right end
+                    // while it folds (never shown expanded; see FloatingTabBar's splitStandalone).
+                    standaloneTab(
+                        key = index,
+                        icon = {
+                            Icon(
+                                imageVector = tab.icon,
+                                contentDescription = tab.label,
+                                tint = defaultTint,
+                                modifier = Modifier.size(25.dp),
+                            )
+                        },
+                        onClick = onClick,
+                        indication = null,
+                    )
+                }
             }
         }
     }
