@@ -246,6 +246,7 @@ fun LazyListScope.librarySongRows(
             onMore = onSongMore?.let { more -> { more(song, key) } },
             onSwipeToQueue = { onSongSwipe(song) },
             dropdownMenu = songMenu?.let { menu -> { menu(song, key) } },
+            showFavoriteMark = true,
         )
     }
 }

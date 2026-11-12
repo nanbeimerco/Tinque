@@ -37,6 +37,7 @@ object Backup {
 
     private const val APP_TAG = "musicbeat"
     private const val SCHEMA_VERSION = 4
+    private const val MAX_IMPORT_BYTES = 128 * 1024 * 1024
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -103,7 +104,7 @@ object Backup {
     suspend fun importFrom(context: Context, source: Uri): Result<Summary> = withContext(Dispatchers.IO) {
         runCatching {
             val text = context.contentResolver.openInputStream(source)
-                ?.use { it.readBytes().decodeToString() }
+                ?.use(::readBoundedBackup)
                 ?: error("Couldn't open that file")
             val file = runCatching { json.decodeFromString(BackupFile.serializer(), text) }
                 .getOrElse { error("That doesn't look like a valid MusicBeat backup") }
@@ -142,6 +143,21 @@ object Backup {
                 queues = file.savedQueues.size,
             )
         }
+    }
+
+    /** A user-picked document is untrusted input; cap it before allocating the JSON string. */
+    private fun readBoundedBackup(input: java.io.InputStream): String {
+        val bytes = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8 * 1024)
+        var total = 0
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            total += count
+            require(total <= MAX_IMPORT_BYTES) { "Backup file is too large" }
+            bytes.write(buffer, 0, count)
+        }
+        return String(bytes.toByteArray(), Charsets.UTF_8)
     }
 
     data class ExportSummary(

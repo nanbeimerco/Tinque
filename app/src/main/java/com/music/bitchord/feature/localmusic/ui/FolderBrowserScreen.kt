@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.localmusic.ui
 
+import com.music.bitchord.ui.components.glassMenuAnchor
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.MoreVert
 import com.music.bitchord.R
@@ -591,7 +592,7 @@ fun FolderBrowserScreen(
 
                                 if (!selecting && onBatchTagEditor != null) {
                                     var folderMenuOpen by remember { mutableStateOf(false) }
-                                    Box {
+                                    Box(Modifier.glassMenuAnchor()) {
                                         androidx.compose.material3.IconButton(onClick = { folderMenuOpen = true }) {
                                             Icon(
                                                 imageVector = Icons.Rounded.MoreVert,

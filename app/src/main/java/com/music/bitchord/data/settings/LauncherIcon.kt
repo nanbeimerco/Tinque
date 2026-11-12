@@ -34,6 +34,13 @@ enum class LauncherIcon(
     SUNSET(".LauncherSunset", listOf(0xFFF76945, 0xFFF7458F), 0xFFFFFFFF, 0xFFFFFFFF),
 }
 
+/**
+ * The old "mark one unit to the right" black-and-white alias. Every variant is
+ * centred that way now, so it is never chosen again; it stays in the manifest
+ * (and is switched off here) so an update never leaves a launcher entry dangling.
+ */
+internal const val BLACK_SHIFTED_ALIAS = ".LauncherBlackShifted"
+
 /** Switches launcher aliases without restarting or disabling the app itself. */
 internal object LauncherIconManager {
     fun apply(context: Context, selected: LauncherIcon) {
@@ -42,9 +49,11 @@ internal object LauncherIconManager {
         // namespace (com.music.bitchord), while context.packageName is the
         // flavor applicationId. ComponentName needs both values separately.
         val componentNamespace = "com.music.bitchord"
-        val states = LauncherIcon.entries.map { icon ->
-            val component = ComponentName(context.packageName, componentNamespace + icon.alias)
-            val state = if (icon == selected) {
+        val wanted = selected.alias
+        val aliases = LauncherIcon.entries.map { it.alias } + BLACK_SHIFTED_ALIAS
+        val states = aliases.map { alias ->
+            val component = ComponentName(context.packageName, componentNamespace + alias)
+            val state = if (alias == wanted) {
                 PackageManager.COMPONENT_ENABLED_STATE_ENABLED
             } else {
                 PackageManager.COMPONENT_ENABLED_STATE_DISABLED

@@ -290,7 +290,7 @@ private fun CompactDrillDownHeader(
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(),
         )
-        com.music.bitchord.ui.components.rememberGroupHeat(songs)?.let { level ->
+        rememberHeaderHeat(songs)?.let { level ->
             Spacer(Modifier.height(8.dp))
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 com.music.bitchord.ui.components.HeatMeter(
@@ -305,6 +305,20 @@ private fun CompactDrillDownHeader(
             Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { extra() }
         }
     }
+}
+
+/**
+ * The heat key of the playlist this page shows (pl:<id>, or Favourites'),
+ * so its header shows the same heat as the playlist's tile. Null for albums,
+ * artists and folders, which use the group's heat on both.
+ */
+val LocalDrillDownHeatKey = androidx.compose.runtime.staticCompositionLocalOf<String?> { null }
+
+@Composable
+private fun rememberHeaderHeat(songs: List<Song>): Float? {
+    val key = LocalDrillDownHeatKey.current
+        ?: return com.music.bitchord.ui.components.rememberGroupHeat(songs)
+    return com.music.bitchord.ui.components.rememberPlaylistTileHeat(key, songs)?.takeIf { it > 0f }
 }
 
 private const val COLLECTION_ART_RATIO = 0.92f
@@ -383,7 +397,7 @@ private fun FullScreenCollectionHeader(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            com.music.bitchord.ui.components.rememberGroupHeat(songs)?.let { level ->
+            rememberHeaderHeat(songs)?.let { level ->
                 Spacer(Modifier.height(8.dp))
                 com.music.bitchord.ui.components.HeatMeter(
                     level = level,

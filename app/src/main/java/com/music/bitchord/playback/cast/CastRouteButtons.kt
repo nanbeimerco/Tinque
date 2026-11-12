@@ -1,6 +1,8 @@
 package com.music.bitchord.playback.cast
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -10,7 +12,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cast
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,13 +66,25 @@ fun CastQuickActionButton(onUnavailable: () -> Unit, modifier: Modifier = Modifi
     val context = LocalContext.current
     val castContext = remember(context) { runCatching { CastContext.getSharedInstance(context) }.getOrNull() }
     if (castContext == null) {
-        IconButton(onClick = onUnavailable, modifier = modifier.size(48.dp)) {
+        // No press highlight, like the other buttons in the player's title row.
+        Box(
+            modifier = modifier
+                .size(48.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onUnavailable,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
             Icon(Icons.Rounded.Cast, contentDescription = stringResource(R.string.chromecast), tint = MaterialTheme.colorScheme.onSurface)
         }
     } else {
         AndroidView(
             factory = { viewContext ->
                 MediaRouteButton(viewContext).also {
+                    // The platform's selectable background is the press highlight.
+                    it.background = null
                     it.contentDescription = viewContext.getString(R.string.chromecast)
                     CastButtonFactory.setUpMediaRouteButton(viewContext, it)
                 }

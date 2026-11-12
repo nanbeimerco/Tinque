@@ -52,10 +52,10 @@
         android:usesCleartextTraffic="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@mipmap/ic_launcher_mono"
         android:label="@string/app_name"
         android:localeConfig="@xml/locales_config"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@mipmap/ic_launcher_mono"
         android:supportsRtl="true"
         android:theme="@style/Theme.BitChord"
         tools:targetApi="34">
@@ -220,7 +220,7 @@
              so an update never drops the icon someone has on their home screen. -->
         <activity-alias
             android:name=".LauncherPink"
-            android:enabled="true"
+            android:enabled="false"
             android:exported="true"
             android:icon="@mipmap/ic_launcher"
             android:roundIcon="@mipmap/ic_launcher"
@@ -233,10 +233,23 @@
         </activity-alias>
         <activity-alias
             android:name=".LauncherBlack"
-            android:enabled="false"
+            android:enabled="true"
             android:exported="true"
             android:icon="@mipmap/ic_launcher_mono"
             android:roundIcon="@mipmap/ic_launcher_mono"
+            android:label="@string/app_name"
+            android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name=".LauncherBlackShifted"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_mono_shift1"
+            android:roundIcon="@mipmap/ic_launcher_mono_shift1"
             android:label="@string/app_name"
             android:targetActivity=".MainActivity">
             <intent-filter>

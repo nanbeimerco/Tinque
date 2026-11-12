@@ -799,8 +799,8 @@
     <string name="app_icon_heat_pink">ピンク×白</string>
     <string name="app_icon_navy">ネイビー×オレンジ</string>
     <string name="app_icon_sunset">夕焼け</string>
-    <string name="icon_center_shift">マークの中心補正</string>
-    <string name="icon_center_shift_subtitle">マークを少し右に寄せて、見た目の中心に合わせます。今はこの画面の見本だけに反映され、ホーム画面のアイコンは変わりません。</string>
+    <string name="icon_center_shift">マークを少し右へ（+1）</string>
+    <string name="icon_center_shift_subtitle">見た目の中心に合わせます。ホーム画面のアイコンも変わります。</string>
     <string name="collection_duration_minutes">%1$d分</string>
     <string name="collection_duration_hours_minutes">%1$d時間%2$d分</string>
     <string name="artists_open_albums">アーティストを開いたときにアルバムを表示</string>

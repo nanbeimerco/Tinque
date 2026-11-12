@@ -2,6 +2,7 @@ package com.music.bitchord.ui.components
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -58,6 +59,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import com.music.bitchord.ui.haptics.Haptic
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import com.music.bitchord.ui.haptics.rememberHaptics
 
@@ -84,6 +86,18 @@ class GlassMenuController {
      */
     var visible by mutableStateOf(false)
         internal set
+
+    /** The open/close clock, in [PopupMotion] milliseconds. */
+    internal val clock = Animatable(0f)
+
+    /** The button the open menu came from (null for a wide strip), for [glassMenuAnchor]. */
+    internal var motionAnchor by mutableStateOf<Rect?>(null)
+
+    /** From that button toward the menu's centre, unit length. */
+    internal var motionDirection by mutableStateOf(Offset.Zero)
+
+    /** Reduced motion: the menu only fades. */
+    internal var motionReduced by mutableStateOf(false)
 
     /** The window the host draws in; a caller in another window cannot use it. */
     internal var hostView: android.view.View? = null
@@ -147,36 +161,30 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
     androidx.compose.runtime.SideEffect { controller.hostView = view }
     val request = controller.request
     var shown by remember { mutableStateOf<GlassMenuRequest?>(null) }
-    // The menu grows out of its button: from a point on the button's centre,
-    // across first and then down, settling with a slight bounce. It closes the
-    // same way backwards (down first, then across) into that point, without one.
-    val growX = remember { Animatable(0f) }
-    val growY = remember { Animatable(0f) }
-    val fade = remember { Animatable(0f) }
+    val reduced by com.music.bitchord.data.settings.AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    androidx.compose.runtime.SideEffect { controller.motionReduced = reduced }
+    val clock = controller.clock
     var hostOrigin by remember { mutableStateOf(Offset.Zero) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val stretch = remember(density) { MenuStretch(scope, with(density) { PopupMotion.STRETCH.toPx() }) }
 
+    // One clock drives the whole open (see PopupMotion); a close plays it back.
     LaunchedEffect(request) {
         if (request != null) {
             if (shown?.id != request.id) {
-                growX.snapTo(0f)
-                growY.snapTo(0f)
-                fade.snapTo(0f)
+                clock.snapTo(0f)
+                stretch.reset()
             }
             shown = request
             controller.visible = true
-            kotlinx.coroutines.coroutineScope {
-                // A fine settling threshold: the default (1%) ends the spring by
-                // jumping the last 1% of the menu's size, a visible snap.
-                launch { growX.animateTo(1f, spring(dampingRatio = 0.78f, stiffness = 700f, visibilityThreshold = 0.0005f)) }
-                launch { growY.animateTo(1f, spring(dampingRatio = 0.8f, stiffness = 500f, visibilityThreshold = 0.0005f)) }
-                launch { fade.animateTo(1f, spring(dampingRatio = 1f, stiffness = 900f, visibilityThreshold = 0.0005f)) }
-            }
+            controller.motionAnchor = if (request.wide) null else request.anchor
+            val left = (PopupMotion.END - clock.value).coerceAtLeast(1f)
+            clock.animateTo(PopupMotion.END, tween(left.toInt().coerceAtLeast(1), easing = LinearEasing))
         } else if (shown != null) {
-            kotlinx.coroutines.coroutineScope {
-                launch { growY.animateTo(0f, tween(150, easing = androidx.compose.animation.core.FastOutLinearInEasing)) }
-                launch { growX.animateTo(0f, tween(190, easing = androidx.compose.animation.core.FastOutLinearInEasing)) }
-                launch { fade.animateTo(0f, tween(190, easing = androidx.compose.animation.core.LinearEasing)) }
-            }
+            val from = minOf(clock.value, PopupMotion.CLOSE_FROM)
+            clock.snapTo(from)
+            clock.animateTo(0f, tween(from.toInt().coerceAtLeast(1), easing = LinearEasing))
             shown = null
             controller.visible = false
         }
@@ -196,7 +204,10 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
                 .pointerInput(menu.id) { detectTapGestures { controller.dismiss() } },
         )
         val anchor = menu.anchor.translate(-hostOrigin)
-        var pivot by remember(menu.id) { mutableStateOf(TransformOrigin(1f, 0f)) }
+        val frame = remember(menu.id) { MenuFrame() }
+        var menuSize by remember(menu.id) { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+        val shape = remember(frame) { RoundedCornerShape(LiveCornerSize { frame.radius }) }
+        val lens = remember(menu.id) { MenuLens { PopupMotion.frame(clock.value, controller.motionReduced).warp } }
         Box(
             modifier = Modifier
                 .layout { measurable, constraints ->
@@ -204,88 +215,141 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
                     val gap = MENU_GAP.roundToPx()
                     val top = topInset.roundToPx()
                     val maxW = (constraints.maxWidth - margin * 2).coerceAtLeast(0)
-                    val placeable = measurable.measure(
-                        Constraints(
-                            minWidth = if (menu.wide) maxW else MENU_MIN_WIDTH.roundToPx().coerceAtMost(maxW),
-                            maxWidth = if (menu.wide) maxW else MENU_MAX_WIDTH.roundToPx().coerceAtMost(maxW),
-                            maxHeight = (constraints.maxHeight - top - margin * 2).coerceAtLeast(0),
-                        ),
-                    )
-                    val w = placeable.width
-                    val h = placeable.height
-                    // Right edge on the button's right edge, below it if it fits, else above.
-                    // A wide one spans the screen and sits above its anchor if it fits.
+                    frame.minWidth = if (menu.wide) maxW else MENU_MIN_WIDTH.roundToPx().coerceAtMost(maxW)
+                    frame.maxWidth = if (menu.wide) maxW else MENU_MAX_WIDTH.roundToPx().coerceAtMost(maxW)
+                    frame.maxHeight = (constraints.maxHeight - top - margin * 2).coerceAtLeast(0)
+                    // The full menu's size, once its rows have been measured.
+                    val w = if (menuSize.width > 0) menuSize.width else frame.minWidth
+                    val h = menuSize.height.coerceAtLeast(1)
+                    // Right edge on the button's right edge. The first row sits on
+                    // the button (the menu spans it), held inside the screen. A wide
+                    // one spans the screen and sits above its anchor if it fits.
                     val x = if (menu.wide) margin else (anchor.right.toInt() - w).coerceIn(margin, (constraints.maxWidth - w - margin).coerceAtLeast(margin))
-                    val below = anchor.bottom.toInt() + gap
-                    val above = anchor.top.toInt() - gap - h
-                    val fitsBelow = below + h <= constraints.maxHeight - margin
-                    val y = (if (menu.wide) { if (above >= top) above else below } else if (fitsBelow) below else above)
-                        .coerceIn(top, (constraints.maxHeight - h - margin).coerceAtLeast(top))
-                    // The button's centre, even where it lies outside the menu:
-                    // the menu grows out of the button itself.
-                    pivot = TransformOrigin(
-                        (anchor.center.x - x) / w.coerceAtLeast(1),
-                        (anchor.center.y - y) / h.coerceAtLeast(1),
+                    val y = if (menu.wide) {
+                        val below = anchor.bottom.toInt() + gap
+                        val above = anchor.top.toInt() - gap - h
+                        if (above >= top) above else below
+                    } else {
+                        anchor.center.y.toInt() - PopupMotion.ACROSS_LIFT.roundToPx()
+                    }.coerceIn(top, (constraints.maxHeight - h - margin).coerceAtLeast(top))
+
+                    val f = PopupMotion.frame(clock.value, controller.motionReduced)
+                    val start = PopupMotion.START_SIZE.toPx()
+                    val stretchPx = stretch.offset.value
+                    val winW = PopupMotion.lerp(start, w.toFloat(), f.width)
+                    val winH = PopupMotion.lerp(start, h.toFloat(), f.height) + kotlin.math.abs(stretchPx) * 0.3f
+                    // The window grows around its centre, which travels from the
+                    // button's centre to the menu's.
+                    val cx = PopupMotion.lerp(anchor.center.x - x, w / 2f, f.travel)
+                    val cy = PopupMotion.lerp(anchor.center.y - y, h / 2f, f.travel) + stretchPx * 0.35f
+                    frame.radius = PopupMotion.cornerPx(winW, winH, f.round, PopupMotion.CORNER.toPx())
+                    val toCentre = Offset(x + w / 2f, y + h / 2f) - anchor.center
+                    val length = toCentre.getDistance()
+                    val direction = if (length > 0f) toCentre / length else Offset.Zero
+                    if (controller.motionDirection != direction) controller.motionDirection = direction
+                    val placeable = measurable.measure(
+                        Constraints.fixed(winW.toInt().coerceAtLeast(1), winH.toInt().coerceAtLeast(1)),
                     )
-                    layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(x, y) }
+                    layout(constraints.maxWidth, constraints.maxHeight) {
+                        placeable.place(x + (cx - winW / 2f).toInt(), y + (cy - winH / 2f).toInt())
+                    }
                 }
                 .graphicsLayer {
-                    // Gone by the time it is flat, so no hairline of glass edge
-                    // is left behind while it finishes narrowing.
-                    alpha = (fade.value * 3f).coerceIn(0f, 1f) *
-                        (minOf(growX.value, growY.value) * 6f).coerceIn(0f, 1f)
-                    scaleX = growX.value.coerceAtLeast(0.001f)
-                    scaleY = growY.value.coerceAtLeast(0.001f)
-                    transformOrigin = pivot
+                    alpha = PopupMotion.frame(clock.value, controller.motionReduced).glassAlpha
                 },
         ) {
-            Box(Modifier.glassMenuSurface(glassBackdrop)) {
+            Box(Modifier.glassMenuSurface(glassBackdrop, shape).clip(shape)) {
                 CompositionLocalProvider(LocalGlassMenuDismiss provides { controller.dismiss(menu.id) }) {
-                    Column(
-                        modifier = Modifier
-                            // The rows come in once the glass is most of the way
-                            // out, and are the first thing to go when it closes.
-                            .graphicsLayer {
-                                alpha = ((minOf(growX.value, growY.value) - 0.5f) / 0.4f).coerceIn(0f, 1f)
+                    Box(
+                        Modifier
+                            // The rows at the menu's full size, centred in the
+                            // window and seen through it.
+                            .layout { measurable, constraints ->
+                                val placeable = measurable.measure(
+                                    Constraints(
+                                        minWidth = frame.minWidth,
+                                        maxWidth = frame.maxWidth.coerceAtLeast(frame.minWidth),
+                                        maxHeight = frame.maxHeight,
+                                    ),
+                                )
+                                if (placeable.width != menuSize.width || placeable.height != menuSize.height) {
+                                    menuSize = androidx.compose.ui.unit.IntSize(placeable.width, placeable.height)
+                                }
+                                layout(constraints.maxWidth, constraints.maxHeight) {
+                                    placeable.place(
+                                        (constraints.maxWidth - placeable.width) / 2,
+                                        (constraints.maxHeight - placeable.height) / 2,
+                                    )
+                                }
                             }
-                            .heightIn(max = 520.dp)
-                            .nestedScroll(KeepMenuScroll)
-                            .verticalScroll(rememberScrollState())
-                            .padding(vertical = 8.dp),
-                    ) { androidx.compose.runtime.key(menu.id) { GlassContentTheme { menu.content() } } }
+                            .graphicsLayer {
+                                val f = PopupMotion.frame(clock.value, controller.motionReduced)
+                                alpha = f.contentAlpha
+                                scaleX = f.contentScale
+                                scaleY = f.contentScale
+                                val blur = f.blur * PopupMotion.BLUR.toPx()
+                                renderEffect = if (blur > 0.5f && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                                    androidx.compose.ui.graphics.BlurEffect(blur, blur)
+                                } else null
+                            },
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .onGloballyPositioned {
+                                    lens.top = it.positionInRoot().y
+                                    lens.height = it.size.height.toFloat()
+                                }
+                                .heightIn(max = 520.dp)
+                                .nestedScroll(stretch)
+                                .verticalScroll(rememberScrollState())
+                                .padding(vertical = 8.dp),
+                        ) {
+                            androidx.compose.runtime.key(menu.id) {
+                                CompositionLocalProvider(LocalMenuLens provides lens) {
+                                    GlassContentTheme { menu.content() }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-private val topInset = 24.dp
-
-/**
- * Keeps a scroll that starts in the menu inside the menu. Whatever the menu's
- * list doesn't use at either end is dropped here instead of travelling on to
- * what the menu sits over. In the player, which is a bottom sheet, that
- * leftover was read as a pull on the sheet: scrolling the menu back past its
- * top started sliding the player away to the mini player.
- */
-private object KeepMenuScroll : NestedScrollConnection {
-    override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset = available
-
-    override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity = available
+/** Where the open menu is, written while laying it out and read while drawing it. */
+private class MenuFrame {
+    var minWidth = 0
+    var maxWidth = 0
+    var maxHeight = 0
+    var radius = 0f
 }
 
+/**
+ * The open menu's lens: how strong it is now, and where the menu's rows span
+ * on screen, so each row can stretch by where it sits (the edge rows most).
+ */
+internal class MenuLens(val warp: () -> Float) {
+    var top = 0f
+    var height = 0f
+}
+
+internal val LocalMenuLens = staticCompositionLocalOf<MenuLens?> { null }
+
+private val topInset = 24.dp
+
 @Composable
-private fun Modifier.glassMenuSurface(glassBackdrop: Boolean): Modifier {
+private fun Modifier.glassMenuSurface(glassBackdrop: Boolean, shape: androidx.compose.foundation.shape.CornerBasedShape = MENU_SHAPE): Modifier {
     val glassEnabled = LocalLiquidGlassEnabled.current && isGlassSupported()
     return if (glassBackdrop && glassEnabled) {
         // Denser tint than the bars: a menu sits over text and has to stay readable.
-        liquidGlass(shape = MENU_SHAPE, surfaceAlpha = 0.72f)
+        liquidGlass(shape = shape, surfaceAlpha = 0.72f)
     } else {
         // Neutral like the glass, never the artwork theme's container.
         val palette = glassPalette()
         this
-            .background(palette.fallbackFill.copy(alpha = 0.97f), MENU_SHAPE)
-            .border(0.5.dp, palette.divider, MENU_SHAPE)
+            .background(palette.fallbackFill.copy(alpha = 0.97f), shape)
+            .border(0.5.dp, palette.divider, shape)
     }
 }
 
@@ -308,11 +372,14 @@ fun GlassMenuItem(
     val dismiss = LocalGlassMenuDismiss.current
     val haptics = rememberHaptics()
     val palette = glassPalette()
+    val lens = LocalMenuLens.current
+    var rowCentre by remember { mutableStateOf(Float.NaN) }
     val color = (if (destructive) palette.destructive else palette.content)
         .let { if (enabled) it else it.copy(alpha = 0.38f) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (lens != null) Modifier.menuLens(lens) { rowCentre }.onGloballyPositioned { rowCentre = it.positionInRoot().y + it.size.height / 2f } else Modifier)
             .padding(horizontal = 6.dp)
             .heightIn(min = 48.dp)
             .clip16()
@@ -370,6 +437,21 @@ fun GlassMenuDivider() {
 
 
 private fun Modifier.clip16(): Modifier = clip(RoundedCornerShape(16.dp))
+
+/**
+ * The lens on one row while the menu opens: rows toward the top and bottom
+ * edges are pulled outward along the edge and stretched, the outermost most.
+ */
+private fun Modifier.menuLens(lens: MenuLens, centre: () -> Float): Modifier = graphicsLayer {
+    val w = lens.warp()
+    val c = centre()
+    if (w <= 0.001f || lens.height <= 0f || c.isNaN()) return@graphicsLayer
+    val d = (((c - lens.top) / lens.height) * 2f - 1f).coerceIn(-1f, 1f)
+    val edge = ((kotlin.math.abs(d) - 0.7f) / 0.3f).coerceIn(0f, 1f)
+    translationY = d * w * 4.dp.toPx() + kotlin.math.sign(d) * edge * w * 2.dp.toPx()
+    scaleY = 1f + kotlin.math.abs(d) * w * 0.08f + edge * w * 0.3f
+    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, if (d < 0f) 1f else 0f)
+}
 
 /** Records where this composable is on screen, for [GlassMenuController.show]. */
 fun Modifier.trackBoundsInRoot(onBounds: (Rect) -> Unit): Modifier =

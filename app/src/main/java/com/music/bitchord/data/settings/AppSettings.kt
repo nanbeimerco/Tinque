@@ -516,9 +516,9 @@ object AppSettings {
 
     /** Grid column counts per page, keyed by [GridKind.key]; absent = that page's default. */
     val gridColumns = MutableStateFlow<Map<String, Int>>(emptyMap())
-    val launcherIcon = MutableStateFlow(LauncherIcon.PINK)
+    val launcherIcon = MutableStateFlow(LauncherIcon.BLACK)
     /** Beta: how far right (0..3, of 100) the Tinque mark is drawn, to balance its weight. */
-    val iconCenterShift = MutableStateFlow(0)
+    /** Black-and-white icon with the mark one unit right (home screen too). */
     val frostedQueueManager = MutableStateFlow(true)
 
     /** The bottom bar's fold settles with a small M3 Expressive bounce. */
@@ -1105,6 +1105,8 @@ object AppSettings {
             .putBoolean(KEY_LOCK_BOTTOM_BAR_EXPANDED, true)
             .putBoolean(KEY_INTEGRATE_STANDALONE_TAB, true)
             .putString(KEY_THEME, ThemeMode.ARTWORK.name)
+            // Black-and-white icon (the manifest's default alias too).
+            .putString(KEY_LAUNCHER_ICON, LauncherIcon.BLACK.name)
             .apply()
     }
 
@@ -1196,9 +1198,8 @@ object AppSettings {
             prefs.getInt(KEY_GRID_COLUMNS_PREFIX + kind.key, -1).takeIf { it > 0 }?.let { kind.key to it }
         }.toMap()
         launcherIcon.value = runCatching {
-            LauncherIcon.valueOf(prefs.getString(KEY_LAUNCHER_ICON, LauncherIcon.PINK.name) ?: LauncherIcon.PINK.name)
-        }.getOrDefault(LauncherIcon.PINK)
-        iconCenterShift.value = prefs.getInt(KEY_ICON_CENTER_SHIFT, 0).coerceIn(0, 3)
+            LauncherIcon.valueOf(prefs.getString(KEY_LAUNCHER_ICON, LauncherIcon.BLACK.name) ?: LauncherIcon.BLACK.name)
+        }.getOrDefault(LauncherIcon.BLACK)
         frostedQueueManager.value = prefs.getBoolean(KEY_FROSTED_QUEUE_MANAGER, true)
         gridTitleOverlay.value = prefs.getBoolean(KEY_GRID_TITLE_OVERLAY, false)
         volumeHandoff.value = prefs.getBoolean(KEY_VOLUME_HANDOFF, false)
@@ -1905,12 +1906,6 @@ object AppSettings {
         val safeValue = value.coerceIn(0, 100)
         reverbAmount.value = safeValue
         prefs.edit().putInt(KEY_REVERB_AMOUNT, safeValue).apply()
-    }
-
-    fun setIconCenterShift(value: Int) {
-        val v = value.coerceIn(0, 3)
-        iconCenterShift.value = v
-        prefs.edit().putInt(KEY_ICON_CENTER_SHIFT, v).apply()
     }
 
     fun setLauncherIcon(value: LauncherIcon) {
@@ -3395,7 +3390,6 @@ object AppSettings {
     private const val KEY_REVERB_ENABLED = "reverb_enabled"
     private const val KEY_REVERB_AMOUNT = "reverb_amount"
     private const val KEY_LAUNCHER_ICON = "launcher_icon"
-    private const val KEY_ICON_CENTER_SHIFT = "icon_center_shift"
     private const val KEY_HEAT_IN_PLAYER = "heat_in_player"
     private const val KEY_FROSTED_QUEUE_MANAGER = "frosted_queue_manager"
     private const val KEY_GRID_TITLE_OVERLAY = "grid_title_overlay"

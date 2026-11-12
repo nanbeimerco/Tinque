@@ -133,7 +133,6 @@ fun GlassNavBar(
     val shouldIntegrate = integrateStandaloneTab
     val themeMode by AppSettings.themeMode.collectAsStateWithLifecycle()
     val isArtworkTheme = themeMode == com.music.bitchord.data.settings.ThemeMode.ARTWORK
-    val liquidGlassOpacity by AppSettings.liquidGlassOpacity.collectAsStateWithLifecycle()
 
     val contentColor = if (useGlass) {
         if (isDark || isArtworkTheme) Color.White else glassContentColor()
@@ -151,16 +150,8 @@ fun GlassNavBar(
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
-    val milkyPillAlpha = (0.14f + liquidGlassOpacity * 0.25f).coerceIn(0.15f, 0.40f)
-    val renderStyle by AppSettings.glassRenderStyle.collectAsStateWithLifecycle()
-    val indicatorColor = when {
-        !useGlass -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-        // Mornye's resting pill: a faint wash, not a milky capsule.
-        renderStyle == com.music.bitchord.data.settings.GlassRenderStyle.CLEAR ->
-            if (isArtworkTheme || isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f)
-        isArtworkTheme || isDark -> Color.White.copy(alpha = milkyPillAlpha)
-        else -> Color.Black.copy(alpha = 0.12f)
-    }
+    val glassPill = glassSelectionPillColor()
+    val indicatorColor = if (useGlass) glassPill else MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
     val haptics = rememberHaptics()
 
     val currentOnTabSelected by rememberUpdatedState(onTabSelected)

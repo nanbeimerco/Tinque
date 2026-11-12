@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.localmusic.ui.components
 
+import com.music.bitchord.ui.components.glassMenuAnchor
 import com.music.bitchord.ui.components.GlassDropdownMenu
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -122,7 +123,7 @@ fun LocalFolderItem(
                 )
             }
 
-            Box {
+            Box(Modifier.glassMenuAnchor()) {
                 IconButton(onClick = { menuOpen = true }) {
                     Icon(
                         imageVector = Icons.Rounded.MoreVert,

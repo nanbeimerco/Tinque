@@ -702,6 +702,11 @@ fun LibraryScreen(
             modifier = Modifier.fillMaxSize(),
         ) { key ->
             if (key.startsWith("drill:")) {
+                val drillHeatKey = drillDownPlaylistId?.let(com.music.bitchord.data.stats.PlaySource::playlistKey)
+                    ?: com.music.bitchord.data.stats.PlaySource.FAVORITES_KEY
+                androidx.compose.runtime.CompositionLocalProvider(
+                    com.music.bitchord.feature.localmusic.ui.components.LocalDrillDownHeatKey provides drillHeatKey,
+                ) {
                 DrillDownSongList(
                     label = drillDownLabel.orEmpty(),
                     artworkUrl = drillDownArt,
@@ -809,6 +814,7 @@ fun LibraryScreen(
                     songDropdownMenu = { song -> libraryMenu(song, drillDownPlaylistId, null) },
                     onArtworkPaletteChanged = onArtworkPaletteChanged,
                 )
+                }
                 if (drillDownPlaylistId == null) SelectionScopeEffect(key = key, songs = drillDownSongs)
             } else if (key.startsWith("history:")) {
                 val isRecent = key == "history:recent"

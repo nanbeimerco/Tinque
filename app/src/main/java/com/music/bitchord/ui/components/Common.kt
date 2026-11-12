@@ -308,6 +308,8 @@ fun SongRow(
      * are being picked: a tap then only picks, and quick taps must all count.
      */
     debounce: Boolean = true,
+    /** A small star (or heart) after the title when the song is a favourite. */
+    showFavoriteMark: Boolean = false,
 ) {
     val haptics = rememberHaptics()
     val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
@@ -345,6 +347,7 @@ fun SongRow(
             activeTint = activeTint,
             selected = selected,
             dropdownMenu = dropdownMenu,
+            showFavoriteMark = showFavoriteMark,
         )
         return
     }
@@ -393,6 +396,7 @@ fun SongRow(
             activeTint = activeTint,
             selected = selected,
             dropdownMenu = dropdownMenu,
+            showFavoriteMark = showFavoriteMark,
         )
     }
 }
@@ -461,6 +465,7 @@ private fun SongRowContent(
     selected: Boolean = false,
     dropdownMenu: (@Composable () -> Unit)? = null,
     debounce: Boolean = true,
+    showFavoriteMark: Boolean = false,
 ) {
     val titleColor by animateColorAsState(
         targetValue = if (isCurrent) activeTint else MaterialTheme.colorScheme.onBackground,
@@ -552,11 +557,24 @@ private fun SongRowContent(
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            ExplicitSongTitle(
-                song = song,
-                style = MaterialTheme.typography.titleMedium,
-                color = titleColor,
-            )
+            if (showFavoriteMark) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f, fill = false)) {
+                        ExplicitSongTitle(
+                            song = song,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = titleColor,
+                        )
+                    }
+                    FavoriteMark(song)
+                }
+            } else {
+                ExplicitSongTitle(
+                    song = song,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = titleColor,
+                )
+            }
             Spacer(Modifier.height(2.dp))
             Text(
                 text = listOfNotNull(
@@ -600,6 +618,7 @@ private fun SongRowContent(
             )
             Box(
                 modifier = Modifier
+                    .glassMenuAnchor()
                     .size(36.dp)
                     .clip(CircleShape)
                     .graphicsLayer { alpha = moreAlpha }
@@ -729,4 +748,20 @@ fun MessageState(
             Button(onClick = onAction) { Text(actionLabel) }
         }
     }
+}
+
+/** A small star (or heart, per the setting) for a favourite song; nothing otherwise. */
+@Composable
+private fun FavoriteMark(song: Song) {
+    val ids by com.music.bitchord.feature.localmusic.data.LocalFavoritesStore.favoriteIds.collectAsStateWithLifecycle()
+    val favorite = (song.localUri ?: song.videoId) in ids || song.videoId in ids
+    if (!favorite) return
+    val star by AppSettings.favoriteUsesStar.collectAsStateWithLifecycle()
+    Spacer(Modifier.width(4.dp))
+    Icon(
+        imageVector = if (star) com.music.bitchord.ui.icons.BitChordIcons.StarFilled else com.music.bitchord.ui.icons.BitChordIcons.HeartFilled,
+        contentDescription = stringResource(R.string.favorites),
+        tint = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.size(14.dp),
+    )
 }

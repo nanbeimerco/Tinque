@@ -160,4 +160,31 @@ object Http {
         }
         .apply { if (USAGE_LOGGING_ENABLED) addNetworkInterceptor(usageInterceptor) }
         .build()
+
+    /**
+     * HTTP for lyrics extensions: their registry, their scripts, and the
+     * requests the scripts make.
+     *
+     * A fresh client rather than `client.newBuilder()`, with no cookies and no
+     * authenticator, so whatever the app ever attaches to its own traffic can
+     * never ride along on a URL an extension chose. The offline and YouTube
+     * Music switches still apply.
+     */
+    val lyricsClient: OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .dispatcher(Dispatcher().apply { maxRequestsPerHost = 16 })
+        .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES))
+        .cookieJar(okhttp3.CookieJar.NO_COOKIES)
+        .authenticator(okhttp3.Authenticator.NONE)
+        .addInterceptor { chain ->
+            if (AppSettings.offlineMode.value) throw IOException("Offline mode is enabled")
+            val request = chain.request()
+            if (isYoutubeMusicRelatedHost(request.url.host) && !AppSettings.youtubeMusicEnabled.value) {
+                throw IOException("YouTube Music is disabled")
+            }
+            chain.proceed(request)
+        }
+        .build()
 }

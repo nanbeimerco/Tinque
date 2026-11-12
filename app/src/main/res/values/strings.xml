@@ -893,8 +893,8 @@
     <string name="app_icon_heat_pink">Pink</string>
     <string name="app_icon_navy">Navy &amp; orange</string>
     <string name="app_icon_sunset">Sunset</string>
-    <string name="icon_center_shift">Centre the mark</string>
-    <string name="icon_center_shift_subtitle">Moves the mark a little right, where its weight looks centred. For now only the previews here follow it; the home-screen icon stays as it is.</string>
+    <string name="icon_center_shift">Move the mark a little right (+1)</string>
+    <string name="icon_center_shift_subtitle">Where its weight looks centred. The home-screen icon changes too.</string>
     <string name="collection_duration_minutes">%1$d min</string>
     <string name="collection_duration_hours_minutes">%1$d hr %2$d min</string>
     <string name="artists_open_albums">Show albums when opening an artist</string>

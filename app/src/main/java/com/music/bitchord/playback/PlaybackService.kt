@@ -1333,10 +1333,7 @@ class PlaybackService : MediaLibraryService() {
                     actionFactory,
                     onNotificationChangedCallback,
                 )
-                // The icon's own accent: its orange line, or its background where the lines are plain.
-                val icon = AppSettings.launcherIcon.value
-                val plain = icon.third == 0xFFFFFFFF || icon.third == 0xFFF4F2EC || icon.third == 0xFF111111
-                mediaNotification.notification.color = (if (plain) icon.background.first() else icon.third).toInt()
+                // No accent colour: the notification stays black and white, whatever launcher icon is chosen.
                 return mediaNotification
             }
 
@@ -2179,7 +2176,8 @@ class PlaybackService : MediaLibraryService() {
      */
     private fun sessionActivity(): PendingIntent {
         val icon = AppSettings.launcherIcon.value
-        val aliasClassName = "com.music.bitchord" + icon.alias
+        val alias = icon.alias
+        val aliasClassName = "com.music.bitchord" + alias
         val launchIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
             component = ComponentName(packageName, aliasClassName)

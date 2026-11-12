@@ -486,9 +486,10 @@ private fun GlassSongMenuContent(
 internal fun HeatDetailsGlassItem(song: Song) {
     val heatOn by com.music.bitchord.data.settings.AppSettings.heatMeterEnabled.collectAsState()
     if (!heatOn) return
+    val openDetails = com.music.bitchord.ui.components.rememberOpenHeatDetails()
     GlassMenuItem(
         stringResource(R.string.heat_details),
-        { com.music.bitchord.ui.components.HeatDetailsRequests.open(song) },
+        { openDetails(song) },
         icon = Icons.Rounded.Waves,
     )
 }
@@ -498,12 +499,13 @@ internal fun HeatDetailsGlassItem(song: Song) {
 private fun HeatDetailsDropdownItem(song: Song, onDismissRequest: () -> Unit) {
     val heatOn by com.music.bitchord.data.settings.AppSettings.heatMeterEnabled.collectAsState()
     if (!heatOn) return
+    val openDetails = com.music.bitchord.ui.components.rememberOpenHeatDetails()
     DropdownMenuItem(
         text = { Text(stringResource(R.string.heat_details)) },
         leadingIcon = { Icon(Icons.Rounded.Waves, contentDescription = null, modifier = Modifier.size(20.dp)) },
         onClick = {
             onDismissRequest()
-            com.music.bitchord.ui.components.HeatDetailsRequests.open(song)
+            openDetails(song)
         },
     )
 }

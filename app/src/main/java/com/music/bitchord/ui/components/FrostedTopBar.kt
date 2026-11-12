@@ -284,10 +284,10 @@ val TopBarGlassButtonSize = 42.dp
 
 /** The glass behind floating top controls, full refraction when the page is being recorded. */
 @Composable
-private fun topBarGlass(shape: androidx.compose.foundation.shape.CornerBasedShape): Modifier {
+internal fun topBarGlass(shape: androidx.compose.foundation.shape.CornerBasedShape): Modifier {
     val glassEnabled = LocalLiquidGlassEnabled.current && isGlassSupported()
     return if (LocalTopBarGlassBackdrop.current && glassEnabled) {
-        Modifier.liquidGlass(shape = shape)
+        Modifier.liquidGlass(shape = shape, role = LocalTopBarGlassRole.current)
     } else {
         Modifier.lightweightLiquidGlass(
             shape = shape,

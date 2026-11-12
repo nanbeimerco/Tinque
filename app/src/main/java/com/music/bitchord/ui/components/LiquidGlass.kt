@@ -157,6 +157,31 @@ fun glassIndicatorColor(): Color =
     if (MaterialTheme.colorScheme.surface.luminance() > 0.5f) Color.White else Color.Black
 
 /**
+ * The resting selection pill on a glass bar: the bottom tab bar's own fill, so
+ * every glass switch (the tab bar, an artist's Songs / Albums / Folders) shows
+ * the same pill. Follows the glass opacity and the Frosted / Clear style.
+ */
+@Composable
+fun glassSelectionPillColor(): Color {
+    val isDark = androidx.compose.foundation.isSystemInDarkTheme()
+    val themeMode by AppSettings.themeMode.collectAsStateWithLifecycle()
+    val isArtworkTheme = themeMode == com.music.bitchord.data.settings.ThemeMode.ARTWORK
+    val opacity by AppSettings.liquidGlassOpacity.collectAsStateWithLifecycle()
+    val style by AppSettings.glassRenderStyle.collectAsStateWithLifecycle()
+    val milky = (0.14f + opacity * 0.25f).coerceIn(0.15f, 0.40f)
+    return when {
+        // Mornye's resting pill: a faint wash, not a milky capsule.
+        style == com.music.bitchord.data.settings.GlassRenderStyle.CLEAR ->
+            if (isArtworkTheme || isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f)
+        isArtworkTheme || isDark -> Color.White.copy(alpha = milky)
+        else -> Color.Black.copy(alpha = 0.12f)
+    }
+}
+
+/** The role the floating top-bar glass takes; a page can ask for the tab bar's. */
+val LocalTopBarGlassRole = staticCompositionLocalOf { GlassRole.Control }
+
+/**
  * A lightweight visual match for liquid glass over a stable background.
  *
  * This keeps the same translucent tint, directional highlight and hairline as

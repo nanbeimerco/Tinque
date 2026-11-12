@@ -1939,6 +1939,7 @@ private fun BitChordApp(
                 ?: song
         }
         com.music.bitchord.ui.components.GlassWindowScope(menus = playerGlassMenus) {
+        com.music.bitchord.ui.components.HeatDetailsHost(root = false)
         NowPlayingScreen(
             song = displayedSong,
             onMenuAnchor = { playerMenuAnchor = it },
@@ -2831,6 +2832,10 @@ private fun BitChordApp(
                                 onAddToQueue = addToQueue,
                                 onGoToAlbum = { album, art -> openLocalAlbum(album, art) },
                                 onGoToArtist = { artist -> openLocalArtist(artist, null) },
+                                // An artist found by search opens the same page as
+                                // from the Artists tab or the Library (with its
+                                // Songs / Albums / Folders switch).
+                                onArtistClick = { artist, _ -> openLocalArtist(artist, null) },
                                 onGoToFolder = openLocalFolder,
                                 onTagEditor = { song ->
                                     pendingPlayerQuickAction = PlayerQuickAction.TAG_EDITOR
@@ -2959,11 +2964,8 @@ private fun BitChordApp(
                         val tabsHere = (keptTabs + selectedTab).distinct()
                             .filter { it == selectedTab || it in visibleTabIndices }
                         SideEffect { if (selectedTab !in keptTabs) keptTabs.add(selectedTab) }
-                        // Tab switch: the arriving tab fades in while sliding a
-                        // short way in from the side of the bar it was tapped on
-                        // (PixelPlayer-style, kept small so going back and forth
-                        // stays quiet). Only the arrival moves; the tab left
-                        // behind is parked at once, as before.
+                        // Tab switch: the arriving tab only fades in (no sideways
+                        // motion). The tab left behind is parked at once, as before.
                         var lastShownTab by remember { mutableIntStateOf(selectedTab) }
                         val tabDirection = remember(selectedTab) {
                             val from = visibleTabIndices.indexOf(lastShownTab)
@@ -2982,8 +2984,8 @@ private fun BitChordApp(
                                             arrival.animateTo(
                                                 1f,
                                                 androidx.compose.animation.core.tween(
-                                                    260,
-                                                    easing = androidx.compose.animation.core.FastOutSlowInEasing,
+                                                    200,
+                                                    easing = androidx.compose.animation.core.LinearOutSlowInEasing,
                                                 ),
                                             )
                                         } else {
@@ -2996,10 +2998,7 @@ private fun BitChordApp(
                                             .shownOrParked(showing)
                                             .graphicsLayer {
                                                 val t = arrival.value
-                                                if (t < 1f) {
-                                                    alpha = t
-                                                    translationX = (1f - t) * tabDirection * size.width * 0.08f
-                                                }
+                                                if (t < 1f) alpha = t
                                             },
                                     ) {
                                         if (showing) {

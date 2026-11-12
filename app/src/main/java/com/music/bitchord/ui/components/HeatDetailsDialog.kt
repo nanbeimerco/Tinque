@@ -3,7 +3,9 @@ package com.music.bitchord.ui.components
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
@@ -24,25 +26,58 @@ val EmptyHeatInfo = HeatInfo(
 /**
  * "Heat details" from a song's ⋮ menu (the player's or a list's): the
  * numbers that used to sit behind a long press on the player's meter.
+ *
+ * A request remembers the glass layer it was opened from ([owner], the sheet
+ * host there), so the dialog shows on that layer: opened from the player, it
+ * shows over the player, not behind it.
  */
 object HeatDetailsRequests {
-    private val _song = MutableStateFlow<Song?>(null)
-    val song = _song.asStateFlow()
-    fun open(song: Song) { _song.value = song }
-    fun close() { _song.value = null }
+    class Request(val song: Song, val owner: Any?)
+
+    private val _request = MutableStateFlow<Request?>(null)
+    val request = _request.asStateFlow()
+
+    /** Layers that have a host of their own. */
+    internal val hosted = mutableStateListOf<Any>()
+
+    fun open(song: Song, owner: Any? = null) { _request.value = Request(song, owner) }
+    fun close() { _request.value = null }
 }
 
-/** Shows [HeatDetailsRequests]. Once, near the root. */
+/** Opens the details on the glass layer this is called from. */
 @Composable
-fun HeatDetailsHost() {
-    val song by HeatDetailsRequests.song.collectAsStateWithLifecycle()
-    val target = song ?: return
+fun rememberOpenHeatDetails(): (Song) -> Unit {
+    val owner = LocalGlassSheets.current
+    return { song -> HeatDetailsRequests.open(song, owner) }
+}
+
+/**
+ * Shows [HeatDetailsRequests]. One near the root ([root] = true), and one in
+ * each glass window that can open the details on its own layer (the player).
+ */
+@Composable
+fun HeatDetailsHost(root: Boolean = true) {
+    val here = LocalGlassSheets.current
+    if (!root && here != null) {
+        DisposableEffect(here) {
+            HeatDetailsRequests.hosted.add(here)
+            onDispose { HeatDetailsRequests.hosted.remove(here) }
+        }
+    }
+    val request by HeatDetailsRequests.request.collectAsStateWithLifecycle()
+    val target = request ?: return
+    val mine = if (root) {
+        target.owner == null || target.owner == here || target.owner !in HeatDetailsRequests.hosted
+    } else {
+        target.owner != null && target.owner == here
+    }
+    if (!mine) return
     val info by HeatStore.info.collectAsStateWithLifecycle()
     val hue = rememberHeatHue()
     GlassAlertDialog(
         onDismissRequest = HeatDetailsRequests::close,
-        title = { Text(target.title, maxLines = 2) },
-        text = { HeatDetails(info = info[target.heatKey()] ?: EmptyHeatInfo, hue = hue, song = target) },
+        title = { Text(target.song.title, maxLines = 2) },
+        text = { HeatDetails(info = info[target.song.heatKey()] ?: EmptyHeatInfo, hue = hue, song = target.song) },
         confirmButton = {
             TextButton(onClick = HeatDetailsRequests::close) { Text(stringResource(R.string.done)) }
         },

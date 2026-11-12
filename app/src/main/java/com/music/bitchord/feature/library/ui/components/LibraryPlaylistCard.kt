@@ -1,5 +1,6 @@
 package com.music.bitchord.feature.library.ui.components
 
+import com.music.bitchord.ui.components.glassMenuAnchor
 import com.music.bitchord.ui.components.GlassDropdownMenu
 import com.music.bitchord.ui.components.heatRing
 import androidx.compose.foundation.background
@@ -162,7 +163,7 @@ fun LibraryPlaylistCard(
                     )
                 }
 
-                Box {
+                Box(Modifier.glassMenuAnchor()) {
                     IconButton(
                         onClick = { menuOpen = true },
                         modifier = Modifier.size(32.dp),

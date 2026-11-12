@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tinque Popup Motion</title>
+<style>
+  :root {
+    --bg: #07070a;
+    --line: rgba(255,255,255,.10);
+    --text: #f2f2f4;
+    --sub: #a1a1aa;
+    --accent: #ff7a3d;
+    --sky: #38bdf8;
+    --amber: #fcd34d;
+    --rose: #fb7185;
+    --green: #4ade80;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  body {
+    margin: 0; font-family: -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    background: radial-gradient(circle at 20% 15%, #1d130d 0%, var(--bg) 60%); color: var(--text); min-height: 100vh;
+  }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+  header h1 { margin: 0; font-size: 15px; }
+  header p { margin: 2px 0 0; font-size: 12px; color: var(--sub); }
+  main { max-width: 1320px; margin: 0 auto; padding: 20px 16px; display: grid; grid-template-columns: 420px 1fr; gap: 24px; align-items: start; }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } .phone-col { justify-self: center; } }
+
+  /* ---------- phone ---------- */
+  .phone { width: 392px; height: 820px; border-radius: 48px; padding: 10px; background: linear-gradient(145deg,#3f3f46,#18181b 40%,#27272a 75%,#09090b); box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 30px 80px -20px #000; }
+  .screen { width: 100%; height: 100%; border-radius: 39px; overflow: hidden; position: relative; background: #101014; }
+  .status { height: 38px; display: flex; align-items: center; justify-content: space-between; padding: 0 26px; font-size: 13px; font-weight: 600; }
+  .topbar { padding: 4px 20px 10px; display: flex; align-items: center; justify-content: space-between; }
+  .topbar .t { font-size: 26px; font-weight: 700; letter-spacing: -.01em; }
+  .chip { font-size: 12px; padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,.08); color: #ddd; }
+  .list { position: absolute; top: 96px; bottom: 0; left: 0; right: 0; overflow-y: auto; padding-bottom: 120px; }
+  .list::-webkit-scrollbar { width: 0; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 7px 8px 7px 18px; }
+  .row.sel { background: rgba(255,255,255,.05); }
+  .art { width: 48px; height: 48px; border-radius: 12px; flex-shrink: 0; }
+  .meta { flex: 1; min-width: 0; }
+  .meta .a { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .meta .b { font-size: 12.5px; color: #9a9aa3; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .star { color: var(--accent); font-size: 11px; margin-left: 4px; }
+  .dots { width: 40px; height: 40px; border-radius: 999px; border: 0; background: transparent; color: #d4d4d8; display: grid; place-items: center; cursor: pointer; will-change: transform, opacity; }
+  .dots svg { pointer-events: none; }
+  .mini { position: absolute; left: 10px; right: 10px; bottom: 16px; height: 62px; border-radius: 22px; background: rgba(36,36,42,.72); backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); box-shadow: inset 0 0 0 .7px rgba(255,255,255,.14); display: flex; align-items: center; gap: 10px; padding: 0 14px; z-index: 5; }
+  .backdrop { position: absolute; inset: 0; z-index: 30; display: none; }
+
+  /* ---------- popup ---------- */
+  .pop { position: absolute; width: 236px; z-index: 40; will-change: transform, opacity; display: none; touch-action: none; }
+  .surface { position: relative; overflow: hidden; padding: 8px;
+    background: radial-gradient(120% 90% at 50% 0%, rgba(255,255,255,.10), rgba(255,255,255,0) 60%), rgba(38,38,44,.74);
+    backdrop-filter: blur(36px) saturate(190%) brightness(1.05); -webkit-backdrop-filter: blur(36px) saturate(190%) brightness(1.05);
+    box-shadow: 0 24px 60px -10px rgba(0,0,0,.65), 0 8px 22px -6px rgba(0,0,0,.45), inset 0 1px .5px rgba(255,255,255,.26), inset 0 -1px .5px rgba(255,255,255,.10), inset 0 0 0 .8px rgba(255,255,255,.13);
+    will-change: border-radius, transform; transform-origin: 50% 0%; }
+  .rim { position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0; mix-blend-mode: screen; z-index: 3;
+    background: radial-gradient(ellipse at 50% 50%, transparent 58%, rgba(255,220,200,.25) 92%, rgba(255,255,255,.45) 100%); }
+  .inner { position: relative; z-index: 2; will-change: filter, transform; }
+  .item { display: flex; align-items: center; gap: 12px; padding: 10px 10px; border-radius: 14px; font-size: 14.5px; color: #fff; will-change: transform; cursor: pointer; }
+  .item:hover { background: rgba(255,255,255,.08); }
+  .item svg { width: 20px; height: 20px; flex-shrink: 0; opacity: .92; }
+  .item .chev { margin-left: auto; opacity: .5; font-size: 13px; }
+  .item.danger { color: #ff8a80; }
+  .sep { height: 1px; margin: 4px 10px; background: rgba(255,255,255,.09); }
+  .toast { position: absolute; top: 46px; left: 50%; transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; background: rgba(0,0,0,.8); font-size: 12px; opacity: 0; transition: opacity .2s; z-index: 60; pointer-events: none; white-space: nowrap; }
+
+  /* ---------- inspector ---------- */
+  .card { background: rgba(20,20,24,.9); border: 1px solid var(--line); border-radius: 18px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 14px; margin: 0 0 4px; }
+  .card .hint { font-size: 12px; color: var(--sub); margin: 0 0 12px; }
+  .readout { font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: var(--accent); }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 999px; background: rgba(255,255,255,.1); outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; cursor: grab; }
+  .kfs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 12px; }
+  @media (max-width: 640px) { .kfs { grid-template-columns: repeat(3, 1fr); } }
+  .kf { text-align: left; padding: 8px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,.04); color: var(--text); cursor: pointer; }
+  .kf.on { background: rgba(255,122,61,.18); border-color: rgba(255,122,61,.5); }
+  .kf .m { font-family: ui-monospace, monospace; font-size: 10px; color: var(--sub); }
+  .kf .n { font-size: 12px; font-weight: 600; margin-top: 2px; }
+  .kf .d { font-size: 10px; color: var(--sub); }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .btn { padding: 8px 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(255,255,255,.06); color: var(--text); font-size: 12px; cursor: pointer; }
+  .btn.primary { background: var(--accent); border-color: transparent; color: #1a0d05; font-weight: 700; }
+  .btn.on { background: rgba(255,122,61,.18); border-color: rgba(255,122,61,.5); color: #ffc6a8; }
+  .seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 12px; background: rgba(0,0,0,.4); border: 1px solid var(--line); align-items: center; flex-wrap: wrap; }
+  .seg span.l { font-size: 11px; color: var(--sub); padding: 0 6px; }
+  .seg button { border: 0; background: transparent; color: #d4d4d8; font-size: 12px; padding: 5px 9px; border-radius: 9px; cursor: pointer; }
+  .seg button.on { background: var(--accent); color: #1a0d05; font-weight: 700; }
+  .grid2 { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .tele { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 8px; }
+  .tele div { background: rgba(0,0,0,.4); border-radius: 10px; padding: 6px 8px; }
+  .tele .k { font-size: 10px; color: var(--sub); }
+  .tele .v { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 700; margin-top: 2px; }
+  canvas { width: 100%; height: 150px; display: block; background: rgba(0,0,0,.45); border-radius: 12px; border: 1px solid var(--line); }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 10px; margin-top: 6px; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  label.tg { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,.04); margin-bottom: 6px; cursor: pointer; }
+  label.tg b { font-size: 12px; display: block; }
+  label.tg small { font-size: 10.5px; color: var(--sub); }
+  label.tg input { accent-color: var(--accent); width: 16px; height: 16px; }
+  .sl { margin-top: 10px; }
+  .sl .h { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--sub); margin-bottom: 5px; }
+  .sl .h span:last-child { font-family: ui-monospace, monospace; color: #ffc6a8; }
+  .notes { font-size: 12.5px; line-height: 1.7; color: #d4d4d8; }
+  .notes h3 { font-size: 13px; margin: 10px 0 4px; color: #fff; }
+  .notes code { font-family: ui-monospace, monospace; color: #ffc6a8; font-size: 12px; }
+  .speedbox { background: rgba(255,122,61,.07); border: 1px solid rgba(255,122,61,.3); border-radius: 14px; padding: 12px; margin-top: 12px; }
+  .speedbox .h b { color: #fff; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Tinque ポップアップの開き方 — 解析つきモック</h1>
+    <p>楕円→角丸の変形、端の伸び、ぼけ→くっきり、はね返り、⋮ボタンの反応、中で引っぱると弾む</p>
+  </div>
+  <div class="seg" id="mode-seg"><span class="l">動き</span><button data-mode="new" class="on">新しい案</button><button data-mode="old">今（v2.6.5）</button></div>
+</header>
+
+<main>
+  <div class="phone-col">
+    <div class="phone"><div class="screen" id="screen">
+      <div class="status"><span>21:46</span><span>●●● 88</span></div>
+      <div class="topbar"><span class="t">曲</span><span class="chip">並べ替え</span></div>
+      <div class="list" id="list"></div>
+      <div class="mini">
+        <div class="art" style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#ff7a3d,#7c2d12)"></div>
+        <div class="meta"><div class="a" style="font-size:13.5px">夜明けのリフレイン</div><div class="b">Tinque Sessions</div></div>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff"><path d="M7 5h3v14H7zM14 5h3v14h-3z"/></svg>
+      </div>
+      <div class="backdrop" id="backdrop"></div>
+      <div class="pop" id="pop">
+        <div class="surface" id="surface">
+          <div class="rim" id="rim"></div>
+          <div class="inner" id="inner"></div>
+        </div>
+      </div>
+      <div class="toast" id="toast"></div>
+    </div></div>
+    <p style="font-size:12px;color:var(--sub);text-align:center;margin-top:10px">曲の「⋮」を押すと開きます。外を押すと閉じます。<br>開いたメニューの中を上下に引っぱると、メニューだけが弾みます。</p>
+  </div>
+
+  <div>
+    <section class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap">
+        <div><h2>タイムライン</h2><p class="hint">つまみを動かすと、その瞬間で止めて形を確かめられます。</p></div>
+        <div class="readout"><span id="ro-ms">0</span> ms <span style="color:var(--sub)">/ 止まるまで <span id="ro-total">350</span> ms</span></div>
+      </div>
+      <input type="range" id="scrub" min="0" max="420" step="1" value="0">
+      <div class="kfs" id="kfs"></div>
+
+      <div class="speedbox">
+        <div class="sl" style="margin-top:0">
+          <div class="h"><b>動きの速さ（アプリに入れる速さ）</b><span id="v-tempo">1.00倍 ・ 約350ms</span></div>
+          <input type="range" id="tempo" min="0.5" max="2.5" step="0.05" value="1">
+          <div style="display:flex;justify-content:space-between;font-size:10.5px;color:var(--sub);margin-top:4px"><span>ゆっくり</span><span>参考と同じ（1.00倍）</span><span>きびきび</span></div>
+        </div>
+        <div class="sl">
+          <div class="h"><span>閉じる速さ（開く速さに対して）</span><span id="v-close">1.35倍</span></div>
+          <input type="range" id="closeK" min="0.8" max="2.5" step="0.05" value="1.35">
+        </div>
+      </div>
+
+      <div class="bar">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn primary" id="b-open">▶ 開く</button>
+          <button class="btn" id="b-close">◀ 閉じる</button>
+          <button class="btn" id="b-loop">🔁 くり返し: OFF</button>
+        </div>
+        <div class="seg" id="speed-seg"><span class="l">スロー確認</span><button data-s="1" class="on">1x</button><button data-s="0.5">0.5x</button><button data-s="0.2">0.2x</button><button data-s="0.05">0.05x</button></div>
+      </div>
+      <div class="bar" style="border-top:0;margin-top:6px;padding-top:0">
+        <div class="seg" id="place-seg"><span class="l">開く位置</span><button data-p="below" class="on">ボタンの下</button><button data-p="across">ボタンをまたぐ</button></div>
+      </div>
+    </section>
+
+    <div class="grid2">
+      <section class="card">
+        <h2>いまの値と曲線</h2>
+        <div class="tele">
+          <div><div class="k">拡大 X/Y</div><div class="v" id="t-scale">-</div></div>
+          <div><div class="k">角の丸み</div><div class="v" id="t-rad" style="color:var(--amber)">-</div></div>
+          <div><div class="k">端の伸び</div><div class="v" id="t-warp" style="color:var(--rose)">-</div></div>
+          <div><div class="k">ぼけ</div><div class="v" id="t-blur" style="color:var(--sky)">-</div></div>
+          <div><div class="k">⋮の反応</div><div class="v" id="t-nudge" style="color:var(--green)">-</div></div>
+        </div>
+        <canvas id="cv"></canvas>
+        <div class="legend">
+          <span><i style="background:#fff"></i>拡大</span><span><i style="background:var(--rose)"></i>端の伸び</span>
+          <span><i style="background:var(--amber)"></i>楕円っぽさ</span><span><i style="background:var(--sky)"></i>ぼけ</span>
+          <span><i style="background:var(--green)"></i>⋮の反応</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>効果ごとに ON / OFF</h2>
+        <label class="tg"><div><b>① 楕円 → 角丸</b><small>最初は楕円、広がりきる直前に角丸へ</small></div><input type="checkbox" id="g-oval" checked></label>
+        <label class="tg"><div><b>② 端の伸び（レンズ）</b><small>上と下の行が、縁に沿って一瞬伸びる</small></div><input type="checkbox" id="g-lens" checked></label>
+        <label class="tg"><div><b>③ ぼけ → くっきり</b><small>ピントが合うように文字が現れる</small></div><input type="checkbox" id="g-blur" checked></label>
+        <label class="tg"><div><b>④ はね返り</b><small>少し大きくなりすぎてから戻る</small></div><input type="checkbox" id="g-over" checked></label>
+        <label class="tg"><div><b>⑤ ⋮ボタンの反応</b><small>押した瞬間、開く方向へほんの少し寄る</small></div><input type="checkbox" id="g-nudge" checked></label>
+        <label class="tg"><div><b>⑥ 中で引っぱると弾む</b><small>ページは動かず、メニューだけ</small></div><input type="checkbox" id="g-elastic" checked></label>
+        <div class="sl"><div class="h"><span>⋮ボタンの寄る量</span><span id="v-nudge">3.0px</span></div><input type="range" id="nudgePx" min="0" max="8" step="0.5" value="3"></div>
+        <div class="sl"><div class="h"><span>端の伸びの強さ</span><span id="v-warp">1.00倍</span></div><input type="range" id="warpK" min="0" max="2" step="0.05" value="1"></div>
+        <div class="sl"><div class="h"><span>最初のぼけ</span><span id="v-blur">14px</span></div><input type="range" id="blurPx" min="0" max="28" step="1" value="14"></div>
+      </section>
+    </div>
+
+    <section class="card notes">
+      <h2>アプリ（Compose）でどう作るか</h2>
+      <h3>動き</h3>
+      楕円→角丸は、角の丸みを <code>50% → 24dp</code> へ動かせば作れます。端の伸びは、上と下の行に <code>graphicsLayer</code> で縦の拡大をかけます。ぼけには <code>Modifier.blur</code> を使います（Android 12 以降。11 以前はぼけなしで、薄い状態から出すだけ）。
+      <h3>⋮ボタンの反応</h3>
+      押した瞬間に <code>0.9倍</code> へ縮みます。メニューが開く方向へ数px寄ってから、バネで元の位置へ戻ります。「ボタンをまたぐ」ときは、メニューに重なる前に消えます。閉じるときは逆の順に動くので、メニューを吸い込むように少し寄ってから戻ります。
+      <h3>速さ</h3>
+      上の「動きの速さ」で決めた倍率を、そのままアプリの時間にかけます。1.00倍は参考の解析と同じで、止まるまで約 350ms です。
+    </section>
+  </div>
+</main>
+
+<script>
+(() => {
+  // ---------- data ----------
+  const SONGS = [
+    ["夜明けのリフレイン","Tinque Sessions",["#ff7a3d","#7c2d12"],true],
+    ["Blue Hour Drive","Mio Kanade",["#38bdf8","#1e3a8a"],false],
+    ["灯台とソーダ水","ハルカミライト",["#fde68a","#b45309"],true],
+    ["Paper Satellites","North Lantern",["#a78bfa","#312e81"],false],
+    ["雨音メトロノーム","sora to umi",["#5eead4","#134e4a"],false],
+    ["Neon Garden","Kiyo & The Arcade",["#f472b6","#701a75"],true],
+    ["遠回りの帰り道","ミナトグラフ",["#fca5a5","#7f1d1d"],false],
+    ["Static Bloom","Velvet Coast",["#86efac","#14532d"],false],
+    ["真夜中のプリズム","Lumi Lumi",["#c4b5fd","#4c1d95"],false],
+    ["Low Tide Letters","Aoi Hoshino",["#93c5fd","#1e40af"],false],
+    ["シトラスの午後","Peach Fizz",["#fdba74","#9a3412"],true],
+    ["Afterglow FM","Radio Tsubame",["#fcd34d","#78350f"],false],
+  ];
+  const ICON = {
+    next:'<path d="M4 6l6 4-6 4z" fill="currentColor"/><path d="M13 7h7M13 12h7M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+    queue:'<path d="M4 6h16M4 11h16M13 16h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4 14l6 3.5L4 21z" fill="currentColor"/>',
+    pl:'<path d="M4 6h11M4 11h11M4 16h7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18 13v8M14 17h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+    lib:'<rect x="4" y="4" width="16" height="16" rx="4" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>',
+    go:'<circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M10 8l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/>',
+    tag:'<path d="M4 12V5h7l9 9-7 7z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><circle cx="8" cy="9" r="1.4" fill="currentColor"/>',
+    share:'<path d="M12 3v12M8 7l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 11v8h12v-8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>',
+    heat:'<path d="M12 3c1 4 5 5.5 5 10a5 5 0 01-10 0c0-2.5 1.5-3.5 2-5 1 1.5 2 2 2 2s-.5-4 1-7z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>',
+    info:'<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M12 11v5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="12" cy="8" r="1" fill="currentColor"/>',
+    del:'<path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/>',
+  };
+  const ITEMS = [
+    ["next","次に再生"],["queue","キューに追加"],["pl","プレイリストに追加"],["lib","ライブラリに追加"],
+    "-",["go","移動",true],["tag","タグを編集"],["share","共有"],"-",["heat","ヒートの詳細"],["info","詳細"],["del","端末から削除",false,true],
+  ];
+
+  const $ = (id) => document.getElementById(id);
+  const list = $("list"), pop = $("pop"), surface = $("surface"), inner = $("inner"), rim = $("rim"), backdrop = $("backdrop"), screen = $("screen");
+  list.innerHTML = SONGS.map((s, i) => `
+    <div class="row" data-i="${i}">
+      <div class="art" style="background:linear-gradient(135deg,${s[2][0]},${s[2][1]})"></div>
+      <div class="meta"><div class="a">${s[0]}${s[3] ? '<span class="star">★</span>' : ''}</div><div class="b">${s[1]}</div></div>
+      <button class="dots" data-i="${i}" aria-label="メニュー"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5.5" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="12" cy="18.5" r="1.9"/></svg></button>
+    </div>`).join("");
+  inner.innerHTML = ITEMS.map((it) => it === "-" ? '<div class="sep"></div>' :
+    `<div class="item${it[3] ? ' danger' : ''}" data-act="${it[1]}"><svg viewBox="0 0 24 24">${ICON[it[0]]}</svg><span>${it[1]}</span>${it[2] ? '<span class="chev">›</span>' : ''}</div>`).join("");
+  const rows = [...inner.querySelectorAll(".item")];
+
+  // ---------- config ----------
+  const C = { mode: "new", oval: true, lens: true, blur: true, over: true, nudge: true, elastic: true,
+    nudgePx: 3, warpK: 1, blurPx: 14, tempo: 1, closeK: 1.35, slow: 1, loop: false, place: "below" };
+  const BASE_END = 420;      // timeline length in reference ms
+  const SETTLED = 350;       // settled, in reference ms
+
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+  // spring step response (mass 1)
+  function springStep(k, z, tMs) {
+    const t = tMs / 1000, w = Math.sqrt(k);
+    if (z >= 1) return 1 - Math.exp(-w * t) * (1 + w * t);
+    const wd = w * Math.sqrt(1 - z * z);
+    return 1 - Math.exp(-z * w * t) * (Math.cos(wd * t) + (z * w / wd) * Math.sin(wd * t));
+  }
+  // ⋮ reaction: press + lean toward the menu, then spring back with a small rebound
+  function nudgeCurve(t) {
+    if (t <= 0) return 0;
+    if (t < 38) return Math.sin((t / 38) * Math.PI / 2);
+    const u = t - 38;
+    return Math.exp(-u / 62) * Math.cos(u / 40);
+  }
+
+  // ---------- physics (t = reference ms, 0..420) ----------
+  function evalNew(t) {
+    t = clamp(t, 0, BASE_END);
+    const omega = 16.5, zeta = C.over ? 0.66 : 0.98, tau = t / 1000;
+    const raw = 1 - Math.exp(-zeta * omega * tau) * Math.cos(omega * Math.sqrt(1 - zeta * zeta) * tau - 0.32) * 0.92;
+    let sx = 0.28 + 0.72 * raw;
+    let sy = (0.19 + 0.81 * raw) * (1 - 0.14 * Math.sin(clamp(t / 190, 0, 1) * Math.PI));
+    if (!C.over) { sx = Math.min(1, sx); sy = Math.min(1, sy); }
+    const ov = C.oval ? 1 - smooth(115, 220, t) : 0;
+    let warp = 0;
+    if (C.lens) warp = clamp((t <= 160 ? Math.sin((t / 160) * Math.PI / 2) : Math.exp(-Math.pow((t - 160) / 42, 2))) * C.warpK, 0, 2.2);
+    const blur = C.blur ? C.blurPx * Math.pow(1 - smooth(0, 205, t), 1.85) : 0;
+    const op = clamp(0.18 + smooth(0, 48, t) * 0.82, 0, 1);
+    return { t, sx, sy, ov, warp, blur, op, rowsOp: 1, nudge: C.nudge ? nudgeCurve(t) : 0, radius: 24 };
+  }
+  function evalOld(t) {
+    t = clamp(t, 0, BASE_END);
+    const sx = springStep(700, 0.78, t), sy = springStep(500, 0.8, t);
+    const m = Math.min(sx, sy);
+    return { t, sx: Math.max(0.001, sx), sy: Math.max(0.001, sy), ov: 0, warp: 0, blur: 0, op: smooth(0, 60, t), rowsOp: clamp((m - 0.5) / 0.4, 0, 1), nudge: 0, radius: 22 };
+  }
+  const evaluate = (t) => (C.mode === "new" ? evalNew(t) : evalOld(t));
+
+  // ---------- layout ----------
+  let activeIdx = 0, geo = null;
+  function layout(idx) {
+    const btn = list.querySelector(`.dots[data-i="${idx}"]`);
+    const sr = screen.getBoundingClientRect(), br = btn.getBoundingClientRect();
+    const bx = br.left - sr.left + br.width / 2, by = br.top - sr.top + br.height / 2;
+    pop.style.display = "block"; pop.style.transform = "none"; surface.style.transform = "none";
+    const W = pop.offsetWidth, H = pop.offsetHeight;
+    const left = clamp(br.right - sr.left - W + 4, 10, sr.width - W - 10);
+    let top = C.place === "below" ? br.bottom - sr.top + 2 : by - 26;
+    const maxTop = sr.height - H - 90;
+    if (top > maxTop) {
+      if (C.place === "below" && br.top - sr.top - H - 2 > 50) top = br.top - sr.top - H - 2;
+      else top = Math.max(50, maxTop);
+    }
+    pop.style.left = left + "px"; pop.style.top = top + "px";
+    pop.style.transformOrigin = `${bx - left}px ${by - top}px`;
+    const dx = left + W / 2 - bx, dy = top + H / 2 - by, len = Math.hypot(dx, dy) || 1;
+    geo = { btn, W, H, dx: dx / len, dy: dy / len };
+  }
+
+  // ---------- apply ----------
+  let cur = 0;
+  function apply(s) {
+    if (!geo) return;
+    const { btn, W, H } = geo;
+    pop.style.opacity = s.op.toFixed(3);
+    pop.style.transform = `scale(${s.sx.toFixed(4)}, ${s.sy.toFixed(4)})`;
+    const rx = s.radius + s.ov * (W / 2 - s.radius), ry = s.radius + s.ov * (H / 2 - s.radius);
+    surface.style.borderRadius = `${rx.toFixed(1)}px / ${ry.toFixed(1)}px`;
+    rim.style.opacity = clamp(s.warp * 0.7, 0, 0.9).toFixed(3);
+    inner.style.filter = s.blur > 0.08 ? `blur(${s.blur.toFixed(2)}px)` : "none";
+    inner.style.opacity = s.rowsOp.toFixed(3);
+
+    const w = s.warp, n = rows.length;
+    rows.forEach((r, i) => {
+      if (i === 0) { r.style.transformOrigin = "50% 100%"; r.style.transform = `translateY(${(-w * 5).toFixed(2)}px) scale(${(1 + w * 0.06).toFixed(3)}, ${(1 + w * 0.42).toFixed(3)})`; }
+      else if (i === n - 1) { r.style.transformOrigin = "50% 0%"; r.style.transform = `translateY(${(w * 5).toFixed(2)}px) scale(${(1 - w * 0.04).toFixed(3)}, ${(1 + w * 0.34).toFixed(3)})`; }
+      else { const d = (i - (n - 1) / 2) / ((n - 1) / 2); r.style.transformOrigin = "50% 50%"; r.style.transform = `translateY(${(d * w * 4).toFixed(2)}px) scaleY(${(1 + Math.abs(d) * w * 0.08).toFixed(3)})`; }
+    });
+
+    // ⋮ button reaction
+    const k = s.nudge * C.nudgePx, press = clamp(s.nudge, 0, 1);
+    const bOp = C.mode === "new" && C.place === "across" ? 1 - smooth(22, 70, s.t) : 1;
+    btn.style.transform = `translate(${(geo.dx * k).toFixed(2)}px, ${(geo.dy * k).toFixed(2)}px) scale(${(1 - 0.1 * press).toFixed(3)})`;
+    btn.style.opacity = bOp.toFixed(3);
+
+    // readouts
+    $("ro-ms").textContent = Math.round(s.t / C.tempo);
+    $("t-scale").textContent = `${s.sx.toFixed(2)} / ${s.sy.toFixed(2)}`;
+    $("t-rad").textContent = `${Math.round(rx)} / ${Math.round(ry)}`;
+    $("t-warp").textContent = `${(1 + w * 0.42).toFixed(2)}x`;
+    $("t-blur").textContent = `${s.blur.toFixed(1)}px`;
+    $("t-nudge").textContent = `${k.toFixed(1)}px`;
+    if (document.activeElement !== $("scrub")) $("scrub").value = Math.round(s.t);
+    document.querySelectorAll(".kf").forEach((b) => b.classList.toggle("on", Math.abs(s.t - +b.dataset.t) < 14));
+    draw(s.t);
+  }
+
+  // ---------- playback ----------
+  let raf = null, open = false, loopTimer = null;
+  const stop = () => { if (raf) cancelAnimationFrame(raf); raf = null; clearTimeout(loopTimer); };
+  function show(idx) {
+    activeIdx = idx;
+    list.querySelectorAll(".row").forEach((r) => r.classList.toggle("sel", +r.dataset.i === idx));
+    list.querySelectorAll(".dots").forEach((b) => { b.style.transform = ""; b.style.opacity = ""; });
+    layout(idx); backdrop.style.display = "block"; pop.style.pointerEvents = "auto"; open = true;
+  }
+  function playOpen(idx = activeIdx) {
+    stop(); show(idx);
+    let t0 = null;
+    const step = (now) => {
+      if (t0 == null) t0 = now;
+      const e = (now - t0) * C.slow * C.tempo;
+      cur = clamp(e, 0, BASE_END); apply(evaluate(cur));
+      if (e < BASE_END) raf = requestAnimationFrame(step);
+      else { raf = null; if (C.loop) loopTimer = setTimeout(() => C.loop && open && playClose(true), 500 / C.slow); }
+    };
+    raf = requestAnimationFrame(step);
+  }
+  function playClose(thenReopen = false) {
+    if (!open) return;
+    stop();
+    const from = cur > 30 ? Math.min(cur, 260) : 260;
+    const k = C.mode === "new" ? C.closeK : 2.2; // old: brisk tween-like close
+    let t0 = null;
+    const step = (now) => {
+      if (t0 == null) t0 = now;
+      const e = from - (now - t0) * C.slow * C.tempo * k;
+      cur = clamp(e, 0, BASE_END); apply(evaluate(cur));
+      if (e > 0) raf = requestAnimationFrame(step);
+      else {
+        raf = null;
+        pop.style.opacity = "0"; pop.style.pointerEvents = "none"; backdrop.style.display = "none"; open = false;
+        geo.btn.style.transform = ""; geo.btn.style.opacity = "";
+        if (thenReopen && C.loop) loopTimer = setTimeout(() => C.loop && playOpen(activeIdx), 450 / C.slow);
+      }
+    };
+    raf = requestAnimationFrame(step);
+  }
+  function jump(t) { stop(); if (!open) show(activeIdx); cur = clamp(t, 0, BASE_END); apply(evaluate(cur)); }
+
+  // ---------- elastic drag inside the menu ----------
+  let drag = null, off = 0, vel = 0, springRaf = null;
+  const MAXOFF = 14;
+  const rubber = (d) => Math.sign(d) * MAXOFF * (1 - Math.exp(-Math.abs(d) / (MAXOFF * 2.2)));
+  function setOff(o) {
+    off = o;
+    surface.style.transformOrigin = o > 0 ? "50% 0%" : "50% 100%";
+    surface.style.transform = `translateY(${(o * 0.35).toFixed(2)}px) scaleY(${(1 + Math.abs(o) / 420).toFixed(4)})`;
+    inner.style.transform = `translateY(${(o * 0.65).toFixed(2)}px)`;
+  }
+  pop.addEventListener("pointerdown", (e) => {
+    if (!C.elastic || !open || raf) return;
+    cancelAnimationFrame(springRaf); drag = { y: e.clientY, moved: false }; pop.setPointerCapture(e.pointerId);
+  });
+  pop.addEventListener("pointermove", (e) => {
+    if (!drag) return; const d = e.clientY - drag.y; if (Math.abs(d) > 4) drag.moved = true; setOff(rubber(d));
+  });
+  const release = () => {
+    if (!drag) return; const moved = drag.moved; drag = null; vel = 0;
+    const k = 500, c = 2 * 0.45 * Math.sqrt(k);
+    let last = null;
+    const step = (now) => {
+      if (last == null) last = now; const dt = Math.min(0.032, (now - last) / 1000) * C.slow; last = now;
+      for (let i = 0; i < 4; i++) { const h = dt / 4; vel += (-k * off - c * vel) * h; setOff(off + vel * h); }
+      if (Math.abs(off) > 0.05 || Math.abs(vel) > 0.5) springRaf = requestAnimationFrame(step); else setOff(0);
+    };
+    springRaf = requestAnimationFrame(step);
+    if (moved) pop._suppress = true;
+  };
+  pop.addEventListener("pointerup", release); pop.addEventListener("pointercancel", release);
+
+  // ---------- events ----------
+  list.addEventListener("click", (e) => { const b = e.target.closest(".dots"); if (b) { e.stopPropagation(); playOpen(+b.dataset.i); } });
+  backdrop.addEventListener("click", () => playClose());
+  inner.addEventListener("click", (e) => {
+    if (pop._suppress) { pop._suppress = false; return; }
+    const it = e.target.closest(".item"); if (!it) return;
+    const t = $("toast"); t.textContent = `${it.dataset.act} — ${SONGS[activeIdx][0]}`; t.style.opacity = 1;
+    clearTimeout(t._h); t._h = setTimeout(() => (t.style.opacity = 0), 1500);
+    playClose();
+  });
+
+  const KF = [[0,"① 押した瞬間","⋮ が縮む"],[38,"② ⋮ が寄る","開く方向へ"],[100,"③ 楕円で膨らむ","強いぼけ"],[167,"④ 端の伸び最大","上下の行が伸びる"],[217,"⑤ はね返り","約1.03倍"],[350,"⑥ 止まる","くっきり"]];
+  $("kfs").innerHTML = KF.map(([t, n, d]) => `<button class="kf" data-t="${t}"><div class="m">${t}ms</div><div class="n">${n}</div><div class="d">${d}</div></button>`).join("");
+  const refreshKf = () => document.querySelectorAll(".kf").forEach((b) => (b.querySelector(".m").textContent = Math.round(+b.dataset.t / C.tempo) + "ms"));
+  $("kfs").addEventListener("click", (e) => { const b = e.target.closest(".kf"); if (b) jump(+b.dataset.t); });
+  $("scrub").addEventListener("input", (e) => jump(+e.target.value));
+  $("b-open").onclick = () => playOpen();
+  $("b-close").onclick = () => playClose();
+  $("b-loop").onclick = (e) => {
+    C.loop = !C.loop; e.target.textContent = `🔁 くり返し: ${C.loop ? "ON" : "OFF"}`; e.target.classList.toggle("on", C.loop);
+    if (C.loop && !raf) open ? playClose(true) : playOpen();
+  };
+  const segs = (id, attr, fn) => $(id).addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    $(id).querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); fn(b.dataset[attr]);
+  });
+  segs("speed-seg", "s", (v) => { C.slow = +v; playOpen(); });
+  segs("place-seg", "p", (v) => { C.place = v; playOpen(); });
+  segs("mode-seg", "mode", (v) => { C.mode = v; playOpen(); });
+
+  $("tempo").addEventListener("input", (e) => {
+    C.tempo = +e.target.value;
+    $("v-tempo").textContent = `${C.tempo.toFixed(2)}倍 ・ 約${Math.round(SETTLED / C.tempo)}ms`;
+    $("ro-total").textContent = Math.round(SETTLED / C.tempo); refreshKf();
+  });
+  $("tempo").addEventListener("change", () => playOpen());
+  $("closeK").addEventListener("input", (e) => { C.closeK = +e.target.value; $("v-close").textContent = `${C.closeK.toFixed(2)}倍`; });
+  [["g-oval","oval"],["g-lens","lens"],["g-blur","blur"],["g-over","over"],["g-nudge","nudge"],["g-elastic","elastic"]].forEach(([id, k]) =>
+    $(id).addEventListener("change", (e) => { C[k] = e.target.checked; if (open) apply(evaluate(cur)); }));
+  [["nudgePx","nudgePx","v-nudge",(v) => v.toFixed(1) + "px"],["warpK","warpK","v-warp",(v) => v.toFixed(2) + "倍"],["blurPx","blurPx","v-blur",(v) => v + "px"]].forEach(([id, k, lab, f]) =>
+    $(id).addEventListener("input", (e) => { C[k] = +e.target.value; $(lab).textContent = f(C[k]); if (open) apply(evaluate(cur)); }));
+
+  // ---------- graph ----------
+  const cv = $("cv"), ctx = cv.getContext("2d");
+  function draw(play) {
+    const dpr = window.devicePixelRatio || 1, r = cv.getBoundingClientRect();
+    if (!r.width) return;
+    if (cv.width !== Math.round(r.width * dpr)) { cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr); }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const W = r.width, H = r.height; ctx.clearRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(255,255,255,.06)"; ctx.lineWidth = 1;
+    [0.25, 0.5, 0.75].forEach((g) => { ctx.beginPath(); ctx.moveTo(0, H * g); ctx.lineTo(W, H * g); ctx.stroke(); });
+    const y = (v) => H - 14 - clamp(v, -0.3, 1.15) * (H - 30);
+    const plot = (col, fn, lw = 1.7) => {
+      ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.beginPath();
+      for (let i = 0; i <= 105; i++) { const t = (i / 105) * BASE_END, s = evaluate(t), X = (t / BASE_END) * W; i ? ctx.lineTo(X, y(fn(s))) : ctx.moveTo(X, y(fn(s))); }
+      ctx.stroke();
+    };
+    plot("#38bdf8", (s) => s.blur / Math.max(1, C.blurPx), 1.4);
+    plot("#fcd34d", (s) => s.ov, 1.4);
+    plot("#4ade80", (s) => s.nudge, 1.4);
+    plot("#fb7185", (s) => s.warp / 1.2, 2);
+    plot("#ffffff", (s) => s.sx, 2);
+    const px = (clamp(play, 0, BASE_END) / BASE_END) * W;
+    ctx.strokeStyle = "#ff7a3d"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(px, 0); ctx.lineTo(px, H); ctx.stroke();
+  }
+  window.addEventListener("resize", () => draw(cur));
+
+  setTimeout(() => playOpen(0), 300);
+})();
+</script>
+</body>
+</html>

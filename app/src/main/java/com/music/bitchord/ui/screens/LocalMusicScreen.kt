@@ -103,6 +103,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import com.music.bitchord.ui.components.backdrop.backdrops.layerBackdrop
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -749,20 +750,41 @@ fun LocalMusicScreen(
                     val albumsForPage = remember(key) { key.albumEntries ?: albumEntries(key.songs, emptyList()) }
                     val isAlbumPage = !isArtistPage && key.songs.isNotEmpty() &&
                         key.songs.all { it.albumName?.trim().equals(key.label.trim(), ignoreCase = true) }
+                    // The artist page's switch floats on Glass over the list
+                    // (no band): the list starts below it and scrolls on under it.
                     val pagePadding = if (isArtistPage) {
-                        PaddingValues(bottom = bodyContentPadding.calculateBottomPadding())
+                        PaddingValues(
+                            top = bodyContentPadding.calculateTopPadding() + ARTIST_SWITCH_SPACE,
+                            bottom = bodyContentPadding.calculateBottomPadding(),
+                        )
                     } else bodyContentPadding
-                    Column(Modifier.fillMaxSize()) {
-                        if (isArtistPage) {
-                            ArtistPageSwitch(
-                                mode = artistMode,
-                                onModeChange = { artistMode = it },
-                                artist = key.label,
-                                artworkUrl = key.art ?: key.songs.firstNotNullOfOrNull { it.thumbnailUrl },
-                                modifier = Modifier.padding(top = bodyContentPadding.calculateTopPadding()),
-                            )
+                    // The switch is Glass over the list. The page as a whole is one
+                    // recorded layer the glass would sample itself in, so the list is
+                    // recorded on its own here, for the switch only.
+                    val artistGlassOn = isArtistPage &&
+                        com.music.bitchord.ui.components.LocalLiquidGlassEnabled.current &&
+                        com.music.bitchord.ui.components.isGlassSupported()
+                    val artistPageColor = MaterialTheme.colorScheme.background
+                    val artistPagePaint: androidx.compose.ui.graphics.drawscope.ContentDrawScope.() -> Unit =
+                        remember(artistPageColor) {
+                            {
+                                drawRect(artistPageColor)
+                                drawContent()
+                            }
                         }
-                        Box(Modifier.weight(1f)) {
+                    val artistListBackdrop = com.music.bitchord.ui.components.backdrop.backdrops.rememberLayerBackdrop(onDraw = artistPagePaint)
+                    Box(Modifier.fillMaxSize()) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .then(
+                                    if (artistGlassOn) {
+                                        Modifier.layerBackdrop(artistListBackdrop)
+                                    } else {
+                                        Modifier
+                                    },
+                                ),
+                        ) {
                             when {
                                 isArtistPage && artistMode == ArtistPageMode.FOLDERS -> ArtistFolderList(
                                     songs = key.songs,
@@ -862,6 +884,25 @@ fun LocalMusicScreen(
                                     onArtworkPaletteChanged = onArtworkPaletteChanged,
                                 )
                                 }
+                            }
+                        }
+                        if (isArtistPage) {
+                            androidx.compose.runtime.CompositionLocalProvider(
+                                // The tab bar's own glass: the chosen type and parameters.
+                                com.music.bitchord.ui.components.LocalTopBarGlassBackdrop provides artistGlassOn,
+                                com.music.bitchord.ui.components.LocalTopBarGlassRole provides com.music.bitchord.ui.components.GlassRole.TabBar,
+                                com.music.bitchord.ui.components.LocalAppBackdrop provides
+                                    (if (artistGlassOn) artistListBackdrop else com.music.bitchord.ui.components.LocalAppBackdrop.current),
+                            ) {
+                                ArtistPageSwitch(
+                                    mode = artistMode,
+                                    onModeChange = { artistMode = it },
+                                    artist = key.label,
+                                    artworkUrl = key.art ?: key.songs.firstNotNullOfOrNull { it.thumbnailUrl },
+                                    modifier = Modifier
+                                        .align(Alignment.TopCenter)
+                                        .padding(top = bodyContentPadding.calculateTopPadding()),
+                                )
                             }
                         }
                     }
@@ -2371,7 +2412,14 @@ private fun SectionHeader(
 /** What an artist page shows. */
 private enum class ArtistPageMode { SONGS, ALBUMS, FOLDERS }
 
-/** The artist page's Songs / Albums / Folders switch (an M3 Expressive connected group) and its Library chip. */
+/** Room the floating artist switch takes above the list: its height and the gaps around it. */
+private val ARTIST_SWITCH_SPACE = com.music.bitchord.ui.components.GlassSegmentBarHeight + 18.dp
+
+/**
+ * The artist page's Songs / Albums / Folders switch: a Glass bar with a pill
+ * that slides to the chosen one (the tab bar's structure), and beside it the
+ * artist's "Add to Library" as a round Glass button. Both float over the list.
+ */
 @Composable
 private fun ArtistPageSwitch(
     mode: ArtistPageMode,
@@ -2380,53 +2428,26 @@ private fun ArtistPageSwitch(
     artworkUrl: String?,
     modifier: Modifier = Modifier,
 ) {
-    val haptics = com.music.bitchord.ui.haptics.rememberHaptics()
-    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            val modes = listOf(
-                ArtistPageMode.SONGS to stringResource(R.string.songs),
-                ArtistPageMode.ALBUMS to stringResource(R.string.albums),
-                ArtistPageMode.FOLDERS to stringResource(R.string.folders),
-            )
-            modes.forEachIndexed { index, (m, label) ->
-                val selected = m == mode
-                val outer = 20.dp
-                val inner = 6.dp
-                val shape = androidx.compose.foundation.shape.RoundedCornerShape(
-                    topStart = if (index == 0 || selected) outer else inner,
-                    bottomStart = if (index == 0 || selected) outer else inner,
-                    topEnd = if (index == modes.lastIndex || selected) outer else inner,
-                    bottomEnd = if (index == modes.lastIndex || selected) outer else inner,
-                )
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(40.dp)
-                        .clip(shape)
-                        .background(
-                            if (selected) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.surfaceContainerHigh,
-                        )
-                        .clickable {
-                            haptics.play(com.music.bitchord.ui.haptics.Haptic.Select)
-                            onModeChange(m)
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        com.music.bitchord.feature.library.ui.components.LibraryAddChip(
+    val modes = listOf(ArtistPageMode.SONGS, ArtistPageMode.ALBUMS, ArtistPageMode.FOLDERS)
+    val labels = listOf(
+        stringResource(R.string.songs),
+        stringResource(R.string.albums),
+        stringResource(R.string.folders),
+    )
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        com.music.bitchord.ui.components.GlassSegmentBar(
+            labels = labels,
+            selectedIndex = modes.indexOf(mode),
+            onSelect = { onModeChange(modes[it]) },
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(10.dp))
+        com.music.bitchord.feature.library.ui.components.LibraryToggleGlassButton(
             type = com.music.bitchord.feature.library.data.LibraryEntryType.ARTIST,
             title = artist,
             artist = null,
@@ -2434,7 +2455,6 @@ private fun ArtistPageSwitch(
         )
     }
 }
-
 /** The folders an artist's files are in, each opening that folder. */
 @Composable
 private fun ArtistFolderList(

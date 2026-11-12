@@ -44,7 +44,7 @@ import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LauncherIcon
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -71,7 +71,7 @@ private val MARK = markPaths()
 
 /**
  * Draws the four strokes into a [box]-unit square at [origin], lines in [lines],
- * the third in [third]. [shift]: extra units to the right (the beta centring;
+ * the third in [third]. [shift]: extra units to the right (black-and-white's +1;
  * the mark's weight sits left of its bounds' centre).
  */
 private fun DrawScope.drawMarkStrokes(origin: Offset, box: Float, lines: Color, third: Color, shift: Int = 0) {
@@ -90,7 +90,8 @@ private fun DrawScope.drawMarkStrokes(origin: Offset, box: Float, lines: Color, 
 /** A launcher variant as its icon looks (a rounded square, as the original artwork). */
 @Composable
 fun TinqueIcon(icon: LauncherIcon, size: Dp, modifier: Modifier = Modifier) {
-    val shift by AppSettings.iconCenterShift.collectAsStateWithLifecycle()
+    // Every variant has the mark one unit to the right (its weight sits left of its bounds' centre).
+    val shift = 1
     Canvas(modifier.size(size)) {
         val s = this.size.minDimension
         val corner = CornerRadius(s * 0.22f, s * 0.22f)
@@ -137,48 +138,6 @@ fun launcherIconLabel(icon: LauncherIcon): String = stringResource(
         LauncherIcon.SUNSET -> R.string.app_icon_sunset
     },
 )
-
-/**
- * Beta: nudge the mark right, +0 to +3 (of 100). Only what the app draws
- * follows it for now — these previews; the home-screen icon, the notification
- * icon and the top bar's logo stay at +0.
- */
-@Composable
-private fun IconCenterShiftRow() {
-    val shift by AppSettings.iconCenterShift.collectAsStateWithLifecycle()
-    Spacer(Modifier.height(12.dp))
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            stringResource(R.string.icon_center_shift),
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            stringResource(R.string.beta),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            modifier = Modifier
-                .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(50))
-                .padding(horizontal = 8.dp, vertical = 2.dp),
-        )
-    }
-    Text(
-        stringResource(R.string.icon_center_shift_subtitle),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        (0..3).forEach { v ->
-            FilterChip(
-                selected = shift == v,
-                onClick = { AppSettings.setIconCenterShift(v) },
-                label = { Text("+$v") },
-            )
-        }
-    }
-}
 
 /** The app icon chooser: every variant as itself, three to a row. Kept out of SettingsScreen (method size). */
 @Composable
@@ -243,7 +202,6 @@ fun AppIconPicker(selected: LauncherIcon, onPick: (LauncherIcon) -> Unit, onDism
                     }
                     Spacer(Modifier.height(4.dp))
                 }
-                IconCenterShiftRow()
             }
         },
         confirmButton = {

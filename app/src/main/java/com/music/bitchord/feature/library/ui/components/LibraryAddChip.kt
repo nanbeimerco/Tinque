@@ -79,3 +79,42 @@ fun LibraryAddChip(
         modifier = modifier,
     )
 }
+
+/**
+ * The same toggle as a round Glass button with only its icon, for a page that
+ * floats its controls on Glass (the artist page's bar). It still says what it
+ * did with a toast.
+ */
+@Composable
+fun LibraryToggleGlassButton(
+    type: LibraryEntryType,
+    title: String,
+    artist: String?,
+    artworkUrl: String?,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val haptics = rememberHaptics()
+    val entries by LibraryEntryStore.entries.collectAsStateWithLifecycle()
+    val key = if (type == LibraryEntryType.ALBUM) albumKey(title, artist) else artistKey(title)
+    val inLibrary = remember(entries, key) { entries.any { it.type == type && it.key == key } }
+    com.music.bitchord.ui.components.TopBarGlassButton(
+        onClick = {
+            haptics.play(Haptic.Select)
+            if (inLibrary) {
+                LibraryEntryStore.remove(type, key)
+                Toast.makeText(context, R.string.removed_from_library, Toast.LENGTH_SHORT).show()
+            } else {
+                if (type == LibraryEntryType.ALBUM) {
+                    LibraryEntryStore.addAlbum(title, artist, artworkUrl)
+                } else {
+                    LibraryEntryStore.addArtist(title, artworkUrl)
+                }
+                Toast.makeText(context, R.string.added_to_library, Toast.LENGTH_SHORT).show()
+            }
+        },
+        icon = if (inLibrary) Icons.Rounded.LibraryAddCheck else Icons.Rounded.LibraryAdd,
+        contentDescription = stringResource(if (inLibrary) R.string.remove_from_library else R.string.add_to_library),
+        modifier = modifier,
+    )
+}

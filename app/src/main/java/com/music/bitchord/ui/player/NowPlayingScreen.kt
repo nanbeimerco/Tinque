@@ -263,6 +263,7 @@ import com.music.bitchord.data.lyrics.CharGrowth
 import com.music.bitchord.data.lyrics.GrowingWord
 import com.music.bitchord.data.lyrics.LrcParser
 import com.music.bitchord.ui.components.trackBoundsInRoot
+import com.music.bitchord.ui.components.glassMenuAnchor
 import com.music.bitchord.data.lyrics.LyricAlignment
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsStripText
@@ -2943,7 +2944,7 @@ fun NowPlayingScreen(
                     }
                     Spacer(Modifier.width(4.dp))
 
-                    Box(Modifier.trackBoundsInRoot(onMenuAnchor)) {
+                    Box(Modifier.trackBoundsInRoot(onMenuAnchor).glassMenuAnchor()) {
                         CircleGlyph(
                             icon = when {
                                 showRevertCue -> Icons.AutoMirrored.Rounded.Undo
@@ -5703,12 +5704,13 @@ private fun VideoAudioTab(
 }
 
 /**
- * Translucent circular button used for the track menu and the like control.
+ * A button in the title row's right side (the quick actions, the favourite,
+ * the ⋮): the icon alone, no disc behind it — the artwork shows through.
  *
- * [active] brightens the disc rather than only the glyph: this sits on album
- * artwork of any colour, and a white icon on a white-ish sleeve has no tint
- * change left to make. The filled heart carries the state as a shape too —
- * see [BitChordIcons.HeartFilled].
+ * The favourite carries its state in its shape: outlined, then filled once
+ * pressed (see [BitChordIcons.HeartFilled]). Whenever [active] flips, the icon
+ * gives a small M3 bounce (0.85 → 1). An open panel's button is a touch
+ * brighter than the rest. Pressing shows no highlight.
  */
 @Composable
 private fun CircleGlyph(
@@ -5722,28 +5724,34 @@ private fun CircleGlyph(
     haptic: Haptic = Haptic.Tap,
 ) {
     val haptics = rememberHaptics()
-    val glyphAlpha = if (enabled) 1f else 0.35f
-    // On (a favourite, or a panel that is open): the same look as the bottom
-    // row's — a 70% white disc with the glyph cut out of it.
-    val discAlpha by animateFloatAsState(
-        targetValue = if (active) SEGMENT_FILL_INVERTED else 0.18f,
-        animationSpec = tween(durationMillis = 350, easing = SegmentEasing),
-        label = "glyphDisc",
+    val glyphAlpha by animateFloatAsState(
+        targetValue = when {
+            !enabled -> 0.35f
+            active -> 1f
+            else -> 0.88f
+        },
+        animationSpec = tween(durationMillis = 250, easing = SegmentEasing),
+        label = "glyphAlpha",
     )
-    val cutOut by animateFloatAsState(
-        targetValue = if (active) 1f else 0f,
-        animationSpec = tween(durationMillis = 350, easing = SegmentEasing),
-        label = "glyphCutOut",
-    )
+    val bounce = remember { androidx.compose.animation.core.Animatable(1f) }
+    var lastActive by remember { mutableStateOf(active) }
+    LaunchedEffect(active) {
+        if (active != lastActive) {
+            lastActive = active
+            bounce.snapTo(0.85f)
+            bounce.animateTo(
+                1f,
+                androidx.compose.animation.core.spring(dampingRatio = 0.45f, stiffness = 600f),
+            )
+        }
+    }
     Box(
         modifier = Modifier
             .size(34.dp)
-            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-            .clip(CircleShape)
-            .background(Color.White.copy(alpha = discAlpha))
             .clickable(
                 enabled = enabled || onDisabledClick != null,
                 interactionSource = remember { MutableInteractionSource() },
+                // No press highlight: the glyph's own bounce is the only feedback.
                 indication = null,
             ) {
                 if (enabled) {
@@ -5760,30 +5768,20 @@ private fun CircleGlyph(
             animationSpec = tween(durationMillis = 180),
             label = "playerMenuGlyph",
         ) { glyph ->
-            Box(contentAlignment = Alignment.Center) {
-                if (cutOut < 1f) {
-                    Icon(
-                        imageVector = glyph,
-                        contentDescription = contentDescription,
-                        tint = Color.White.copy(alpha = (1f - cutOut) * glyphAlpha),
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-                if (cutOut > 0f) {
-                    Icon(
-                        imageVector = glyph,
-                        contentDescription = if (cutOut >= 1f) contentDescription else null,
-                        tint = Color.Black.copy(alpha = cutOut),
-                        modifier = Modifier
-                            .size(22.dp)
-                            .graphicsLayer { blendMode = BlendMode.DstOut },
-                    )
-                }
-            }
+            Icon(
+                imageVector = glyph,
+                contentDescription = contentDescription,
+                tint = Color.White.copy(alpha = glyphAlpha),
+                modifier = Modifier
+                    .size(24.dp)
+                    .graphicsLayer {
+                        scaleX = bounce.value
+                        scaleY = bounce.value
+                    },
+            )
         }
     }
 }
-
 /**
  * Transport / bottom glyphs. The circular clip belongs on the touch target,
  * never on the [Icon] — clipping the icon itself shaves the corners off wide
