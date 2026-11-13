@@ -19,7 +19,11 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.Month
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 /**
@@ -416,6 +420,149 @@ fun ReplaySummary.cards(context: Context): List<ReplayHeroCard> = buildList {
                 artworkUrl = it.artworkUrl,
                 page = ReplayStoryPage.ALBUMS,
             ),
+        )
+    }
+}
+
+/** One column in the Replay listening timeline bar chart. */
+data class ReplayTimelineBar(
+    val key: String,
+    val label: String,
+    val ms: Long,
+    val isPeak: Boolean,
+)
+
+/** Concentration breakdown across the period's most-played tracks. */
+data class ReplayConcentration(
+    val topOneShare: Float,
+    val topTwoThreeShare: Float,
+    val othersShare: Float,
+    val topThreeShare: Float,
+    val avgPlaysPerSong: Float,
+)
+
+/** Longest run of consecutive days with > 0ms listening in [dailyMs]. */
+fun longestStreakDays(dailyMs: Map<String, Long>): Int {
+    val activeDates = dailyMs.entries
+        .asSequence()
+        .filter { it.value > 0L }
+        .mapNotNull { runCatching { LocalDate.parse(it.key) }.getOrNull() }
+        .distinct()
+        .sorted()
+        .toList()
+    if (activeDates.isEmpty()) return 0
+    var best = 1
+    var run = 1
+    for (i in 1 until activeDates.size) {
+        val gap = ChronoUnit.DAYS.between(activeDates[i - 1], activeDates[i])
+        if (gap == 1L) {
+            run++
+            if (run > best) best = run
+        } else {
+            run = 1
+        }
+    }
+    return best
+}
+
+/** Count of distinct valid ISO dates in [dailyMs] with > 0ms listening. */
+fun activeDaysCount(dailyMs: Map<String, Long>): Int =
+    dailyMs.entries.count { (date, ms) ->
+        ms > 0L && runCatching { LocalDate.parse(date) }.isSuccess
+    }
+
+/** Average listening minutes per active day in the period. */
+fun avgDailyMinutes(totalMs: Long, dailyMs: Map<String, Long>): Int {
+    if (totalMs <= 0L) return 0
+    val days = activeDaysCount(dailyMs).coerceAtLeast(1)
+    return ((totalMs / 60_000.0) / days).toInt().coerceAtLeast(1.takeIf { totalMs >= 60_000L } ?: 0)
+}
+
+/** Share of total listening occupied by #1, #2–#3, and all remaining songs. */
+fun concentrationMetrics(summary: ReplaySummary): ReplayConcentration {
+    val topOneMs = summary.songs.firstOrNull()?.ms?.coerceAtLeast(0L) ?: 0L
+    val topThreeRawMs = summary.songs.take(3).sumOf { it.ms.coerceAtLeast(0L) }
+    val total = maxOf(summary.totalMs, topThreeRawMs, 1L)
+    val topThreeMs = topThreeRawMs.coerceAtMost(total)
+    val topTwoThreeMs = (topThreeMs - topOneMs).coerceAtLeast(0L)
+    val othersMs = (total - topThreeMs).coerceAtLeast(0L)
+    val distinct = summary.distinctSongs.coerceAtLeast(summary.songs.size)
+    val avgPlays = if (distinct > 0) summary.totalPlays.toFloat() / distinct.toFloat() else 0f
+    return ReplayConcentration(
+        topOneShare = (topOneMs.toFloat() / total).coerceIn(0f, 1f),
+        topTwoThreeShare = (topTwoThreeMs.toFloat() / total).coerceIn(0f, 1f),
+        othersShare = (othersMs.toFloat() / total).coerceIn(0f, 1f),
+        topThreeShare = (topThreeMs.toFloat() / total).coerceIn(0f, 1f),
+        avgPlaysPerSong = avgPlays,
+    )
+}
+
+/** Builds timeline bars appropriate for [ReplaySummary.period]. */
+fun buildTimelineBars(
+    summary: ReplaySummary,
+    today: LocalDate = LocalDate.now(),
+    locale: Locale = Locale.getDefault(),
+): List<ReplayTimelineBar> {
+    val raw = when (summary.period) {
+        ReplayPeriod.THIS_MONTH -> {
+            val activeMonth = summary.dailyMs.keys
+                .asSequence()
+                .mapNotNull { runCatching { YearMonth.from(LocalDate.parse(it)) }.getOrNull() }
+                .maxOrNull() ?: YearMonth.from(today)
+            (1..activeMonth.lengthOfMonth()).map { day ->
+                val key = activeMonth.atDay(day).toString()
+                Triple(key, day.toString(), summary.dailyMs[key] ?: 0L)
+            }
+        }
+        ReplayPeriod.THIS_YEAR -> {
+            val activeYear = summary.monthlyMs.keys
+                .asSequence()
+                .mapNotNull { runCatching { YearMonth.parse(it).year }.getOrNull() }
+                .maxOrNull() ?: today.year
+            (1..12).map { month ->
+                val ym = YearMonth.of(activeYear, month)
+                val key = ym.toString()
+                val label = Month.of(month).getDisplayName(TextStyle.SHORT, locale)
+                Triple(key, label, summary.monthlyMs[key] ?: 0L)
+            }
+        }
+        ReplayPeriod.ALL_TIME -> {
+            val parsed = summary.monthlyMs.entries
+                .asSequence()
+                .filter { it.value > 0L }
+                .mapNotNull { entry ->
+                    runCatching { YearMonth.parse(entry.key) }.getOrNull()?.let { it to entry.value }
+                }
+                .sortedBy { it.first }
+                .toList()
+            if (parsed.isEmpty()) {
+                emptyList()
+            } else {
+                val minYm = parsed.first().first
+                val maxYm = parsed.last().first
+                val spanMonths = ChronoUnit.MONTHS.between(minYm, maxYm).toInt() + 1
+                val startYm = if (spanMonths <= 12) minYm else maxYm.minusMonths(11)
+                val totalBars = ChronoUnit.MONTHS.between(startYm, maxYm).toInt() + 1
+                (0 until totalBars).map { offset ->
+                    val ym = startYm.plusMonths(offset.toLong())
+                    val key = ym.toString()
+                    val label = if (ym.year == maxYm.year) {
+                        ym.month.getDisplayName(TextStyle.SHORT, locale)
+                    } else {
+                        "%02d/%d".format(Locale.ROOT, ym.year % 100, ym.monthValue)
+                    }
+                    Triple(key, label, summary.monthlyMs[key] ?: 0L)
+                }
+            }
+        }
+    }
+    val peakMs = raw.maxOfOrNull { it.third } ?: 0L
+    return raw.map { (key, label, ms) ->
+        ReplayTimelineBar(
+            key = key,
+            label = label,
+            ms = ms,
+            isPeak = peakMs > 0L && ms == peakMs,
         )
     }
 }

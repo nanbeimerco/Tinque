@@ -63,6 +63,7 @@ import kotlin.math.roundToInt
 data class BottomTab(
     val label: String,
     val icon: ImageVector,
+    val selectedIcon: ImageVector? = null,
 )
 
 /**
@@ -366,7 +367,7 @@ private fun BottomBarItem(
             .padding(vertical = TAB_VERTICAL_PADDING),
     ) {
         Icon(
-            imageVector = tab.icon,
+            imageVector = if (selected) tab.selectedIcon ?: tab.icon else tab.icon,
             contentDescription = tab.label,
             tint = tint,
             modifier = Modifier

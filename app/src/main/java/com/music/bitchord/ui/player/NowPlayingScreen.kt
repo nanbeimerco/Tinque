@@ -672,7 +672,7 @@ fun dockedPlayerAvailable(windowWidth: Dp): Boolean =
     windowWidth >= DOCKED_PAGE_MIN_WIDTH + DOCKED_PLAYER_MIN_WIDTH + DOCK_DIVIDER_GAP
 
 /** How the player is laid out in a window: see [playerLayoutFor]. */
-enum class PlayerLayout { PHONE, TWO_COLUMN, DOCKED }
+enum class PlayerLayout { PHONE, TWO_COLUMN, DOCKED, LANDSCAPE_SPLIT }
 
 /**
  * Which layout a window of this size gets.
@@ -693,6 +693,7 @@ fun playerLayoutFor(
     windowHeight: Dp,
     landscapeLayout: com.music.bitchord.data.settings.LandscapePlayerLayout,
     portraitLayout: com.music.bitchord.data.settings.PortraitPlayerLayout,
+    phoneLandscapeSplit: Boolean = false,
 ): PlayerLayout {
     val size = androidx.window.core.layout.WindowSizeClass(windowWidth.value, windowHeight.value)
     val twoColumnFits =
@@ -700,16 +701,20 @@ fun playerLayoutFor(
             size.isHeightAtLeastBreakpoint(androidx.window.core.layout.WindowSizeClass.HEIGHT_DP_MEDIUM_LOWER_BOUND)
     val dockFits = dockedPlayerAvailable(windowWidth)
     return if (windowWidth > windowHeight) {
-        when (landscapeLayout) {
-            com.music.bitchord.data.settings.LandscapePlayerLayout.SIDE_BY_SIDE -> when {
-                dockFits -> PlayerLayout.DOCKED
-                twoColumnFits -> PlayerLayout.TWO_COLUMN
-                else -> PlayerLayout.PHONE
-            }
-            com.music.bitchord.data.settings.LandscapePlayerLayout.TWO_COLUMN -> when {
-                twoColumnFits -> PlayerLayout.TWO_COLUMN
-                dockFits -> PlayerLayout.DOCKED
-                else -> PlayerLayout.PHONE
+        if (phoneLandscapeSplit && !twoColumnFits) {
+            PlayerLayout.LANDSCAPE_SPLIT
+        } else {
+            when (landscapeLayout) {
+                com.music.bitchord.data.settings.LandscapePlayerLayout.SIDE_BY_SIDE -> when {
+                    dockFits -> PlayerLayout.DOCKED
+                    twoColumnFits -> PlayerLayout.TWO_COLUMN
+                    else -> PlayerLayout.PHONE
+                }
+                com.music.bitchord.data.settings.LandscapePlayerLayout.TWO_COLUMN -> when {
+                    twoColumnFits -> PlayerLayout.TWO_COLUMN
+                    dockFits -> PlayerLayout.DOCKED
+                    else -> PlayerLayout.PHONE
+                }
             }
         }
     } else {
@@ -720,6 +725,16 @@ fun playerLayoutFor(
         }
     }
 }
+
+internal fun needsLandscapeSplitClosePill(
+    landscapeSplit: Boolean,
+    lyricsOpen: Boolean,
+    queueOpen: Boolean,
+    visibleControls: Set<PlayerControl>,
+): Boolean =
+    landscapeSplit &&
+        ((lyricsOpen && PlayerControl.LYRICS !in visibleControls) ||
+            (queueOpen && PlayerControl.QUEUE !in visibleControls))
 
 /** Whether a window this size is large enough to offer the large-screen layout choices at all. */
 fun largeScreenPlayerChoiceAvailable(windowWidth: Dp, windowHeight: Dp): Boolean =
@@ -1026,10 +1041,10 @@ fun NowPlayingScreen(
     docked: Boolean = false,
     /** Whether the full-screen player splits into two columns — see [playerLayoutFor]. */
     twoColumnLayout: Boolean = false,
+    /** Phone landscape split mode: large square artwork left, controls / lyrics / queue right. */
+    landscapeSplitLayout: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    // Its own window: give the sheets and menus opened in it their glass.
-    com.music.bitchord.ui.components.GlassWindowScope {
     val context = LocalContext.current
     val density = LocalDensity.current
     val haptics = rememberHaptics()
@@ -1324,7 +1339,8 @@ fun NowPlayingScreen(
     // right, always there. With no border: one backdrop runs under both, and
     // the artwork melts into it. The lyrics and queue toggles then choose what
     // the right column shows instead of folding the sleeve away.
-    val twoColumn = !docked && twoColumnLayout
+    val landscapeSplit = !docked && landscapeSplitLayout
+    val twoColumn = !docked && twoColumnLayout && !landscapeSplit
     val leftColumnWidth = windowWidth * TWO_COLUMN_LEFT_FRACTION
     // In two columns the toggle row stands at the foot of the right column.
     // It is still built where it always is (it reads half the player's state);
@@ -1335,8 +1351,8 @@ fun NowPlayingScreen(
     // The full lyrics page is gone: lyrics open inside the player, as in the
     // beta layout, in both layouts. Only the classic "replace the artwork"
     // option keeps a lyrics view of its own.
-    val classicLyrics = !twoColumn && lyricsOpen && !betaLayout && lyricsReplaceArtworkOnly
-    val inPlayerLyrics = !twoColumn && lyricsOpen && !classicLyrics
+    val classicLyrics = !twoColumn && !landscapeSplit && lyricsOpen && !betaLayout && lyricsReplaceArtworkOnly
+    val inPlayerLyrics = !twoColumn && !landscapeSplit && lyricsOpen && !classicLyrics
     val inPlayerLyricsT by animateFloatAsState(
         targetValue = if (inPlayerLyrics) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
@@ -1617,7 +1633,7 @@ fun NowPlayingScreen(
     // half of the artwork jumped, the other half glided after it, and the pair
     // read as a stutter rather than as either. One animation, both surfaces.
     val p by animateFloatAsState(
-        targetValue = if (!twoColumn && (queueOpen || inPlayerLyrics || (classicLyrics && !lyricsReplaceArtworkOnly))) 1f else 0f,
+        targetValue = if (!twoColumn && !landscapeSplit && (queueOpen || inPlayerLyrics || (classicLyrics && !lyricsReplaceArtworkOnly))) 1f else 0f,
         animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
         label = "sleeveCollapse",
     )
@@ -1671,7 +1687,7 @@ fun NowPlayingScreen(
     // ignored [fullBleedArt] entirely, so turning the setting off still left a
     // clip running the full screen. CanvasArtworkPlayer masks itself on every
     // API level now, and both layers answer to this.
-    val heroMode = fullBleedArt && (docked || playerFillsWindow(if (twoColumn) leftColumnWidth else windowWidth))
+    val heroMode = !landscapeSplit && fullBleedArt && (docked || playerFillsWindow(if (twoColumn) leftColumnWidth else windowWidth))
     // Whether there's a still image to blow out — a placeholder tile is a card
     // or it is nothing, and going full-bleed with one would just tint the top
     // third of the screen.
@@ -1820,6 +1836,46 @@ fun NowPlayingScreen(
     // position into the same space as the two edges above.
     var dismissBandSpace by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
+    val segments = rememberPlayerToggleSegments(
+        playerControlOrder = playerControlOrder,
+        visiblePlayerControls = visiblePlayerControls,
+        shuffleEnabled = shuffleEnabled,
+        onToggleShuffle = onToggleShuffle,
+        repeatMode = repeatMode,
+        onCycleRepeat = onCycleRepeat,
+        lyricsOpen = lyricsOpen,
+        queueOpen = queueOpen,
+        onToggleLyrics = {
+            lyricsOpen = !lyricsOpen
+            if (lyricsOpen) queueOpen = false
+        },
+        onToggleQueue = {
+            lyricsOpen = false
+            queueOpen = !queueOpen
+        },
+        includeLike = PlayerQuickAction.FAVORITE !in playerQuickActions,
+        favoriteUsesStar = favoriteUsesStar,
+        liked = liked,
+        toggleLike = toggleLike,
+        likeAvailable = likeAvailable,
+        likeUnavailableReason = likeUnavailableReason,
+        likeDescription = likeDescription,
+        useLibraryIconForPlaylistControl = useLibraryIconForPlaylistControl,
+        onOpenPlaylists = onOpenPlaylists,
+        onOpenSearch = onOpenSearch,
+        includeClosePill = needsLandscapeSplitClosePill(
+            landscapeSplit = landscapeSplit,
+            lyricsOpen = lyricsOpen,
+            queueOpen = queueOpen,
+            visibleControls = visiblePlayerControls,
+        ),
+        onClosePanel = {
+            lyricsLogsOpen = false
+            lyricsOpen = false
+            queueOpen = false
+        },
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -1904,6 +1960,123 @@ fun NowPlayingScreen(
             }
         }
 
+        if (landscapeSplit) {
+            LandscapeSplitPlayerContent(
+                song = song,
+                isPlaying = isPlaying,
+                isLoading = isLoading,
+                positionMs = positionMs,
+                durationMs = durationMs,
+                effectiveDurationMs = effectiveDurationMs,
+                shown = shown,
+                onScrubChange = {
+                    scrubbing = true
+                    scrubValue = it
+                },
+                onScrubFinished = {
+                    haptics.play(Haptic.Select)
+                    pendingSeek = scrubValue
+                    onSeekFraction(scrubValue)
+                    scrubbing = false
+                },
+                showStatusBar = showStatusBar && !quietMode,
+                localPreviewRequest = localPreviewRequest,
+                artRequest = artRequest,
+                useRemoteArtworkFallback = useRemoteArtworkFallback,
+                artScale = artScale,
+                canvas = canvas,
+                canvasRendered = canvasRendered,
+                meshRefreshMs = if (dockMoving) null else meshRefreshMs,
+                playerHaze = playerHaze,
+                sleeveContentScale = sleeveContentScale,
+                swipeThreshold = swipeThreshold,
+                swipeSettle = swipeSettle,
+                onSwipeOffsetChange = { swipeOffset = it },
+                hasPrevious = hasPrevious,
+                hasNext = hasNext,
+                onPrevious = onPrevious,
+                onNext = onNext,
+                onPlayPause = onPlayPause,
+                onSeek = onSeek,
+                showPlayerArtist = showPlayerArtist,
+                centerPlayerTrackInfo = centerPlayerTrackInfo,
+                onOpenAlbum = onOpenAlbum,
+                onOpenArtist = onOpenArtist,
+                playerQuickActions = playerQuickActions,
+                likeIcon = likeIcon,
+                likeAvailable = likeAvailable,
+                liked = liked,
+                signedIn = signedIn,
+                streamedSong = streamedSong,
+                likeUnavailableReason = likeUnavailableReason,
+                toggleLike = toggleLike,
+                explain = explain,
+                onQuickAddToPlaylist = onQuickAddToPlaylist,
+                onQuickPlaybackTuning = onQuickPlaybackTuning,
+                onQuickMenuAction = onQuickMenuAction,
+                onOpenPlaylists = onOpenPlaylists,
+                onOpenSearch = onOpenSearch,
+                onOpenSleepTimer = { quickSleepTimerOpen = true },
+                lyricsOpen = lyricsOpen,
+                queueOpen = queueOpen,
+                lyricsLogsOpen = lyricsLogsOpen,
+                onOpenLyrics = { queueOpen = false; lyricsOpen = true },
+                onOpenQueue = { lyricsOpen = false; queueOpen = true },
+                onCloseLyricsLogs = { lyricsLogsOpen = false },
+                onOpenLyricsLogs = { lyricsLogsOpen = true },
+                showLyricsLogsEnabled = showLyricsLogsEnabled,
+                showRevertCue = showRevertCue,
+                playerDetailsVerticalMenu = playerDetailsVerticalMenu,
+                onMenuAnchor = onMenuAnchor,
+                onOpenMenu = onOpenMenu,
+                lyrics = lyrics,
+                lyricsSource = lyricsSource,
+                lyricsUnavailable = lyricsUnavailable,
+                syncedLyricsEnabled = syncedLyricsEnabled,
+                showPlayerLyricsStrip = showPlayerLyricsStrip,
+                hideLyricsStatusText = hideLyricsStatusText,
+                hideLyricsSavedMessage = hideLyricsSavedMessage,
+                showTrackDurationInsteadOfRemaining = showTrackDurationInsteadOfRemaining,
+                seekIntervalSeconds = seekIntervalSeconds,
+                seekButtonMode = seekButtonMode,
+                hideSeekButtonLabels = hideSeekButtonLabels,
+                betaLayout = betaLayout,
+                hideVolumeBar = hideVolumeBar,
+                volume = volume.value,
+                onVolumeChange = {
+                    volumeDragging = true
+                    scope.launch { volume.snapTo(it) }
+                    audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, (it * maxVolume).roundToInt(), 0)
+                },
+                onVolumeChangeFinished = { volumeDragging = false },
+                queue = queue,
+                queueIndex = queueIndex,
+                autoplayEnabled = autoplayEnabled,
+                repeatMode = repeatMode,
+                onJumpTo = onJumpTo,
+                onRemoveFromQueue = onRemoveFromQueue,
+                onMoveInQueue = onMoveInQueue,
+                onClearQueue = onClearQueue,
+                onManageQueues = { savedQueueManagerOpen = true },
+                segments = segments,
+                artLoaded = artLoaded,
+                onArtLoadedChange = { artLoaded = it },
+                onCanvasRenderedChanged = { canvasRendered = it },
+                onCanvasFrameCaptured = { canvasFrame = it },
+                onArtErrorFallback = {
+                    if (localPreviewArtUrl != null && !fullLocalArtworkAllowed) {
+                        fullLocalArtworkAllowed = true
+                        artFailed = false
+                    } else if (!useRemoteArtworkFallback && remoteArtFallbackUrl != null) {
+                        useRemoteArtworkFallback = true
+                        artFailed = false
+                    } else {
+                        artFailed = true
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else {
         Column(
             modifier = Modifier
                 .then(if (twoColumn) Modifier.fillMaxHeight().width(leftColumnWidth) else Modifier.fillMaxSize())
@@ -3691,125 +3864,7 @@ fun NowPlayingScreen(
             // is open: the transport and volume fold away, this row slides up
             // under the queue, and a shuffle can be watched reordering it.
             // Full-screen lyrics still take it away along with everything else.
-            if (visiblePlayerControls.isNotEmpty() && (!lyricsMode || p < 1f)) {
-                val segments = buildList {
-                    playerControlOrder.forEach { control ->
-                        if (control !in visiblePlayerControls) return@forEach
-                        when (control) {
-                            PlayerControl.SHUFFLE -> add(
-                                ToggleSegment(
-                                    key = control,
-                                    icon = PlayerControlIcons.Shuffle,
-                                    contentDescription = stringResource(
-                                        if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
-                                    ),
-                                    selected = shuffleEnabled,
-                                    onClick = onToggleShuffle,
-                                    haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
-                                    tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
-                                    popOnSelect = true,
-                                ),
-                            )
-                            PlayerControl.REPEAT -> add(
-                                ToggleSegment(
-                                    key = control,
-                                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) {
-                                        PlayerControlIcons.RepeatOne
-                                    } else {
-                                        PlayerControlIcons.Repeat
-                                    },
-                                    contentDescription = when (repeatMode) {
-                                        Player.REPEAT_MODE_ONE -> stringResource(R.string.repeat_one)
-                                        Player.REPEAT_MODE_ALL -> stringResource(R.string.repeat_all)
-                                        else -> stringResource(R.string.repeat_off)
-                                    },
-                                    selected = repeatMode != Player.REPEAT_MODE_OFF,
-                                    onClick = onCycleRepeat,
-                                    haptic = when (repeatMode) {
-                                        Player.REPEAT_MODE_OFF -> Haptic.ToggleOn
-                                        Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
-                                        else -> Haptic.Select
-                                    },
-                                    // Every step turns the arrows, so all → one,
-                                    // which keeps the same shape, still reads as a move.
-                                    spinKey = repeatMode,
-                                ),
-                            )
-                            PlayerControl.LYRICS -> add(
-                                ToggleSegment(
-                                    key = control,
-                                    icon = PlayerControlIcons.Lyrics,
-                                    contentDescription = stringResource(R.string.quick_action_lyrics),
-                                    selected = lyricsOpen,
-                                    onClick = {
-                                        lyricsOpen = !lyricsOpen
-                                        if (lyricsOpen) queueOpen = false
-                                    },
-                                    haptic = if (lyricsOpen) Haptic.Tap else Haptic.Select,
-                                    // No bounce: it would land on the frames that build
-                                    // the panel, and the panel opening is feedback enough.
-                                ),
-                            )
-                            PlayerControl.LIKE -> if (PlayerQuickAction.FAVORITE !in playerQuickActions) add(
-                                ToggleSegment(
-                                    key = control,
-                                    icon = when {
-                                        favoriteUsesStar && liked -> PlayerControlIcons.StarFilled
-                                        favoriteUsesStar -> PlayerControlIcons.Star
-                                        liked -> PlayerControlIcons.HeartFilled
-                                        else -> PlayerControlIcons.Heart
-                                    },
-                                    contentDescription = likeDescription,
-                                    selected = liked,
-                                    onClick = toggleLike,
-                                    enabled = likeAvailable,
-                                    onDisabledClick = likeUnavailableReason,
-                                    haptic = if (liked) Haptic.ToggleOff else Haptic.ToggleOn,
-                                    popOnSelect = true,
-                                ),
-                            )
-                            PlayerControl.QUEUE -> add(
-                                ToggleSegment(
-                                    key = control,
-                                    icon = PlayerControlIcons.Queue,
-                                    contentDescription = stringResource(R.string.up_next),
-                                    selected = queueOpen,
-                                    onClick = {
-                                        lyricsOpen = false
-                                        queueOpen = !queueOpen
-                                    },
-                                    haptic = if (queueOpen) Haptic.Tap else Haptic.Expand,
-                                    // No bounce: it would land on the frames that build
-                                    // the panel, and the panel opening is feedback enough.
-                                ),
-                            )
-                            PlayerControl.PLAYLIST -> add(
-                                ToggleSegment(
-                                    key = control,
-                                    icon = if (useLibraryIconForPlaylistControl) {
-                                        Icons.Rounded.LibraryMusic
-                                    } else {
-                                        PlayerControlIcons.Playlists
-                                    },
-                                    contentDescription = stringResource(R.string.playlists),
-                                    selected = false,
-                                    onClick = onOpenPlaylists,
-                                    haptic = Haptic.Select,
-                                ),
-                            )
-                            PlayerControl.SEARCH -> add(
-                                ToggleSegment(
-                                    key = control,
-                                    icon = PlayerControlIcons.Search,
-                                    contentDescription = stringResource(R.string.search),
-                                    selected = false,
-                                    onClick = onOpenSearch,
-                                    haptic = Haptic.Select,
-                                ),
-                            )
-                        }
-                    }
-                }
+            if (segments.isNotEmpty() && (!lyricsMode || p < 1f)) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3861,7 +3916,7 @@ fun NowPlayingScreen(
               Column(Modifier.fillMaxSize()) {
                 Crossfade(
                     targetState = rightShowsQueue,
-                    modifier = Modifier.weight(1f).fadeEdgesVertically(),
+                    modifier = Modifier.weight(1f),
                     animationSpec = tween(durationMillis = 260),
                     label = "twoColumnRight",
                 ) { showQueue ->
@@ -3936,7 +3991,7 @@ fun NowPlayingScreen(
               }
             }
         }
-    }
+        }
     }
 }
 
@@ -5988,7 +6043,7 @@ private fun SeekTransportGlyph(
 
 /** One button in the player's bottom row. */
 private class ToggleSegment(
-    val key: PlayerControl,
+    val key: Any,
     val icon: ImageVector,
     val contentDescription: String,
     val selected: Boolean,
@@ -6036,24 +6091,63 @@ private fun PlayerToggleGroup(
      * one connected group: rounded only at the run's two ends.
      */
     inverted: Boolean = false,
+    vertical: Boolean = false,
+    modifier: Modifier = Modifier,
 ) {
     val ons = segments.map { it.selected && it.enabled }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(SEGMENT_GAP),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        segments.forEachIndexed { index, segment ->
-            key(segment.key) {
-                PlayerToggleSegment(
-                    segment = segment,
-                    first = index == 0,
-                    last = index == segments.lastIndex,
-                    inverted = inverted,
-                    prevOn = ons.getOrElse(index - 1) { false },
-                    nextOn = ons.getOrElse(index + 1) { false },
-                    modifier = Modifier.weight(1f),
-                )
+    if (vertical) {
+        BoxWithConstraints(
+            modifier = modifier
+                .width(SEGMENT_HEIGHT)
+                .fillMaxHeight(),
+            contentAlignment = Alignment.Center,
+        ) {
+            val totalGap = SEGMENT_GAP * (segments.size - 1).coerceAtLeast(0)
+            val segmentHeight = ((maxHeight - totalGap) / segments.size.coerceAtLeast(1))
+                .coerceIn(34.dp, SEGMENT_HEIGHT)
+            val glyphSize = if (segmentHeight < 42.dp) 22.dp else if (inverted) SEGMENT_GLYPH_BETA else 22.dp
+            Column(
+                modifier = Modifier.width(SEGMENT_HEIGHT),
+                verticalArrangement = Arrangement.spacedBy(SEGMENT_GAP),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                segments.forEachIndexed { index, segment ->
+                    key(segment.key) {
+                        PlayerToggleSegment(
+                            segment = segment,
+                            first = index == 0,
+                            last = index == segments.lastIndex,
+                            inverted = inverted,
+                            vertical = true,
+                            prevOn = ons.getOrElse(index - 1) { false },
+                            nextOn = ons.getOrElse(index + 1) { false },
+                            segmentHeight = segmentHeight,
+                            glyphSize = glyphSize,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+        }
+    } else {
+        Row(
+            modifier = modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(SEGMENT_GAP),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            segments.forEachIndexed { index, segment ->
+                key(segment.key) {
+                    PlayerToggleSegment(
+                        segment = segment,
+                        first = index == 0,
+                        last = index == segments.lastIndex,
+                        inverted = inverted,
+                        vertical = false,
+                        prevOn = ons.getOrElse(index - 1) { false },
+                        nextOn = ons.getOrElse(index + 1) { false },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
     }
@@ -6065,8 +6159,11 @@ private fun PlayerToggleSegment(
     first: Boolean,
     last: Boolean,
     inverted: Boolean = false,
+    vertical: Boolean = false,
     prevOn: Boolean = false,
     nextOn: Boolean = false,
+    segmentHeight: Dp = SEGMENT_HEIGHT,
+    glyphSize: Dp = if (inverted) SEGMENT_GLYPH_BETA else 22.dp,
     modifier: Modifier = Modifier,
 ) {
     val haptics = rememberHaptics()
@@ -6076,7 +6173,7 @@ private fun PlayerToggleSegment(
     val lastTap = remember { mutableLongStateOf(-segment.tapWindowMs) }
     val on = segment.selected && segment.enabled
 
-    val round = SEGMENT_HEIGHT / 2
+    val round = segmentHeight / 2
     val shapeSpec = tween<Dp>(durationMillis = 600, easing = SegmentEasing)
     val startCorner by animateDpAsState(
         targetValue = when {
@@ -6142,15 +6239,24 @@ private fun PlayerToggleSegment(
         glyphScale.animateTo(1f, spring(dampingRatio = 0.5f, stiffness = 420f))
     }
 
-    val shape = RoundedCornerShape(
-        topStart = startCorner,
-        bottomStart = startCorner,
-        topEnd = endCorner,
-        bottomEnd = endCorner,
-    )
+    val shape = if (vertical) {
+        RoundedCornerShape(
+            topStart = startCorner,
+            topEnd = startCorner,
+            bottomStart = endCorner,
+            bottomEnd = endCorner,
+        )
+    } else {
+        RoundedCornerShape(
+            topStart = startCorner,
+            bottomStart = startCorner,
+            topEnd = endCorner,
+            bottomEnd = endCorner,
+        )
+    }
     Box(
         modifier = modifier
-            .height(SEGMENT_HEIGHT)
+            .height(segmentHeight)
             .graphicsLayer {
                 scaleX = squeeze
                 scaleY = squeeze
@@ -6181,7 +6287,6 @@ private fun PlayerToggleSegment(
             },
         contentAlignment = Alignment.Center,
     ) {
-        val glyphSize = if (inverted) SEGMENT_GLYPH_BETA else 22.dp
         val glyphMotion: GraphicsLayerScope.() -> Unit = {
             rotationZ = glyphTurn.value
             scaleX = glyphScale.value
@@ -6464,6 +6569,44 @@ private fun Modifier.fadingEdges(): Modifier = this
         )
     }
 
+/** Softens the queue edges only where items actually scroll past a boundary. */
+private fun Modifier.fadingEdges(
+    listState: LazyListState,
+    topFade: Dp = 18.dp,
+    bottomFade: Dp = 24.dp,
+): Modifier = this
+    .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+    .drawWithContent {
+        drawContent()
+        val topFadePx = topFade.toPx().coerceAtLeast(1f)
+        val topStrength = when {
+            !listState.canScrollBackward -> 0f
+            listState.firstVisibleItemIndex > 0 -> 1f
+            else -> (listState.firstVisibleItemScrollOffset / topFadePx).coerceIn(0f, 1f)
+        }
+        if (topStrength > 0.01f) {
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color.Black.copy(alpha = 1f - topStrength), Color.Black),
+                    startY = 0f,
+                    endY = topFadePx,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+        val bottomFadePx = bottomFade.toPx().coerceAtLeast(1f)
+        if (listState.canScrollForward) {
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(Color.Black, Color.Transparent),
+                    startY = size.height - bottomFadePx,
+                    endY = size.height,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
+        }
+    }
+
 /** How many of the queue's first tracks repeat all shows after its end. */
 private const val REPEAT_PREVIEW_COUNT = 20
 
@@ -6613,8 +6756,13 @@ private fun InlineQueue(
                 // Without this the sheet treats the list's leftover scroll as a
                 // drag on itself and slides the whole player away.
                 .nestedScroll(keepScroll)
-                .fadingEdges(),
-            contentPadding = PaddingValues(horizontal = PLAYER_GUTTER),
+                .fadingEdges(listState),
+            contentPadding = PaddingValues(
+                start = PLAYER_GUTTER,
+                end = PLAYER_GUTTER,
+                top = 16.dp,
+                bottom = 20.dp,
+            ),
         ) {
             // What was asked for: the album, playlist or station the queue was
             // started from, plus anything queued by hand since.
@@ -7584,6 +7732,809 @@ private fun PlayerHeatMeter(song: Song) {
                 hue = heatHue,
                 song = song,
             )
+        }
+    }
+}
+
+@Composable
+private fun rememberPlayerToggleSegments(
+    playerControlOrder: List<PlayerControl>,
+    visiblePlayerControls: Set<PlayerControl>,
+    shuffleEnabled: Boolean,
+    onToggleShuffle: () -> Unit,
+    repeatMode: Int,
+    onCycleRepeat: () -> Unit,
+    lyricsOpen: Boolean,
+    queueOpen: Boolean,
+    onToggleLyrics: () -> Unit,
+    onToggleQueue: () -> Unit,
+    includeLike: Boolean,
+    favoriteUsesStar: Boolean,
+    liked: Boolean,
+    toggleLike: () -> Unit,
+    likeAvailable: Boolean,
+    likeUnavailableReason: () -> Unit,
+    likeDescription: String,
+    useLibraryIconForPlaylistControl: Boolean,
+    onOpenPlaylists: () -> Unit,
+    onOpenSearch: () -> Unit,
+    includeClosePill: Boolean,
+    onClosePanel: () -> Unit,
+): List<ToggleSegment> = buildList {
+    if (includeClosePill) {
+        add(
+            ToggleSegment(
+                key = "landscape_close_panel",
+                icon = Icons.Rounded.Close,
+                contentDescription = stringResource(R.string.landscape_split_close_panel),
+                selected = true,
+                onClick = onClosePanel,
+                haptic = Haptic.Tap,
+            ),
+        )
+    }
+    playerControlOrder.forEach { control ->
+        if (control !in visiblePlayerControls) return@forEach
+        when (control) {
+            PlayerControl.SHUFFLE -> add(
+                ToggleSegment(
+                    key = control,
+                    icon = PlayerControlIcons.Shuffle,
+                    contentDescription = stringResource(
+                        if (shuffleEnabled) R.string.shuffle_on else R.string.shuffle_off,
+                    ),
+                    selected = shuffleEnabled,
+                    onClick = onToggleShuffle,
+                    haptic = if (shuffleEnabled) Haptic.ToggleOff else Haptic.ToggleOn,
+                    tapWindowMs = SHUFFLE_TAP_WINDOW_MS,
+                    popOnSelect = true,
+                ),
+            )
+            PlayerControl.REPEAT -> add(
+                ToggleSegment(
+                    key = control,
+                    icon = if (repeatMode == Player.REPEAT_MODE_ONE) {
+                        PlayerControlIcons.RepeatOne
+                    } else {
+                        PlayerControlIcons.Repeat
+                    },
+                    contentDescription = when (repeatMode) {
+                        Player.REPEAT_MODE_ONE -> stringResource(R.string.repeat_one)
+                        Player.REPEAT_MODE_ALL -> stringResource(R.string.repeat_all)
+                        else -> stringResource(R.string.repeat_off)
+                    },
+                    selected = repeatMode != Player.REPEAT_MODE_OFF,
+                    onClick = onCycleRepeat,
+                    haptic = when (repeatMode) {
+                        Player.REPEAT_MODE_OFF -> Haptic.ToggleOn
+                        Player.REPEAT_MODE_ONE -> Haptic.ToggleOff
+                        else -> Haptic.Select
+                    },
+                    spinKey = repeatMode,
+                ),
+            )
+            PlayerControl.LYRICS -> add(
+                ToggleSegment(
+                    key = control,
+                    icon = PlayerControlIcons.Lyrics,
+                    contentDescription = stringResource(R.string.quick_action_lyrics),
+                    selected = lyricsOpen,
+                    onClick = onToggleLyrics,
+                    haptic = if (lyricsOpen) Haptic.Tap else Haptic.Select,
+                ),
+            )
+            PlayerControl.LIKE -> if (includeLike) add(
+                ToggleSegment(
+                    key = control,
+                    icon = when {
+                        favoriteUsesStar && liked -> PlayerControlIcons.StarFilled
+                        favoriteUsesStar -> PlayerControlIcons.Star
+                        liked -> PlayerControlIcons.HeartFilled
+                        else -> PlayerControlIcons.Heart
+                    },
+                    contentDescription = likeDescription,
+                    selected = liked,
+                    onClick = toggleLike,
+                    enabled = likeAvailable,
+                    onDisabledClick = likeUnavailableReason,
+                    haptic = if (liked) Haptic.ToggleOff else Haptic.ToggleOn,
+                    popOnSelect = true,
+                ),
+            )
+            PlayerControl.QUEUE -> add(
+                ToggleSegment(
+                    key = control,
+                    icon = PlayerControlIcons.Queue,
+                    contentDescription = stringResource(R.string.up_next),
+                    selected = queueOpen,
+                    onClick = onToggleQueue,
+                    haptic = if (queueOpen) Haptic.Tap else Haptic.Expand,
+                ),
+            )
+            PlayerControl.PLAYLIST -> add(
+                ToggleSegment(
+                    key = control,
+                    icon = if (useLibraryIconForPlaylistControl) {
+                        Icons.Rounded.LibraryMusic
+                    } else {
+                        PlayerControlIcons.Playlists
+                    },
+                    contentDescription = stringResource(R.string.playlists),
+                    selected = false,
+                    onClick = onOpenPlaylists,
+                    haptic = Haptic.Select,
+                ),
+            )
+            PlayerControl.SEARCH -> add(
+                ToggleSegment(
+                    key = control,
+                    icon = PlayerControlIcons.Search,
+                    contentDescription = stringResource(R.string.search),
+                    selected = false,
+                    onClick = onOpenSearch,
+                    haptic = Haptic.Select,
+                ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun LandscapeSplitPlayerContent(
+    song: Song,
+    isPlaying: Boolean,
+    isLoading: Boolean,
+    positionMs: Long,
+    durationMs: Long,
+    effectiveDurationMs: Long,
+    shown: Float,
+    onScrubChange: (Float) -> Unit,
+    onScrubFinished: () -> Unit,
+    showStatusBar: Boolean,
+    localPreviewRequest: ImageRequest?,
+    artRequest: ImageRequest,
+    useRemoteArtworkFallback: Boolean,
+    artScale: Float,
+    canvas: CanvasArtwork?,
+    canvasRendered: Boolean,
+    meshRefreshMs: Long?,
+    playerHaze: HazeState,
+    sleeveContentScale: ContentScale,
+    swipeThreshold: Float,
+    swipeSettle: Float,
+    onSwipeOffsetChange: (Float) -> Unit,
+    hasPrevious: Boolean,
+    hasNext: Boolean,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onPlayPause: () -> Unit,
+    onSeek: (Long) -> Unit,
+    showPlayerArtist: Boolean,
+    centerPlayerTrackInfo: Boolean,
+    onOpenAlbum: (String) -> Unit,
+    onOpenArtist: (String) -> Unit,
+    playerQuickActions: List<PlayerQuickAction>,
+    likeIcon: ImageVector,
+    likeAvailable: Boolean,
+    liked: Boolean,
+    signedIn: Boolean,
+    streamedSong: Boolean,
+    likeUnavailableReason: () -> Unit,
+    toggleLike: () -> Unit,
+    explain: (Int) -> Unit,
+    onQuickAddToPlaylist: () -> Unit,
+    onQuickPlaybackTuning: () -> Unit,
+    onQuickMenuAction: (PlayerQuickAction) -> Unit,
+    onOpenPlaylists: () -> Unit,
+    onOpenSearch: () -> Unit,
+    onOpenSleepTimer: () -> Unit,
+    lyricsOpen: Boolean,
+    queueOpen: Boolean,
+    lyricsLogsOpen: Boolean,
+    onOpenLyrics: () -> Unit,
+    onOpenQueue: () -> Unit,
+    onCloseLyricsLogs: () -> Unit,
+    onOpenLyricsLogs: () -> Unit,
+    showLyricsLogsEnabled: Boolean,
+    showRevertCue: Boolean,
+    playerDetailsVerticalMenu: Boolean,
+    onMenuAnchor: (androidx.compose.ui.geometry.Rect) -> Unit,
+    onOpenMenu: () -> Unit,
+    lyrics: List<LyricLine>?,
+    lyricsSource: LyricsSource?,
+    lyricsUnavailable: Boolean,
+    syncedLyricsEnabled: Boolean,
+    showPlayerLyricsStrip: Boolean,
+    hideLyricsStatusText: Boolean,
+    hideLyricsSavedMessage: Boolean,
+    showTrackDurationInsteadOfRemaining: Boolean,
+    seekIntervalSeconds: Int,
+    seekButtonMode: SeekButtonMode,
+    hideSeekButtonLabels: Boolean,
+    betaLayout: Boolean,
+    hideVolumeBar: Boolean,
+    volume: Float,
+    onVolumeChange: (Float) -> Unit,
+    onVolumeChangeFinished: () -> Unit,
+    queue: List<Song>,
+    queueIndex: Int,
+    autoplayEnabled: Boolean,
+    repeatMode: Int,
+    onJumpTo: (Int) -> Unit,
+    onRemoveFromQueue: (Int) -> Unit,
+    onMoveInQueue: (Int, Int) -> Unit,
+    onClearQueue: () -> Unit,
+    onManageQueues: () -> Unit,
+    segments: List<ToggleSegment>,
+    artLoaded: Boolean,
+    onArtLoadedChange: (Boolean) -> Unit,
+    onCanvasRenderedChanged: (Boolean) -> Unit,
+    onCanvasFrameCaptured: (Bitmap?) -> Unit,
+    onArtErrorFallback: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = rememberHaptics()
+    val context = LocalContext.current
+    val showNerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
+    val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
+    val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
+    val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
+    val metered by AppSettings.meteredConnection.collectAsStateWithLifecycle()
+    val losslessRequested = (if (metered == true) cellularQuality else wifiQuality) == AudioQuality.LOSSLESS
+    val isLocalAudio = !song.localUri.isNullOrBlank() || !song.localPath.isNullOrBlank()
+    val racingLossless by NerdStats.racingLossless.collectAsStateWithLifecycle()
+    val stillRacing = song.videoId in racingLossless
+    val miniLyricsVisible = showPlayerLyricsStrip && (syncedLyricsEnabled || !lyrics.isNullOrEmpty())
+
+    Column(
+        modifier = modifier
+            .then(if (showStatusBar) Modifier.statusBarsPadding() else Modifier)
+            .navigationBarsPadding(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        // Slim drag handle strip at top so downward swipe dismisses the sheet without stealing vertical room.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(20.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                Modifier
+                    .width(38.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Color.White.copy(alpha = 0.30f)),
+            )
+            song.radioName?.let { radioName ->
+                Text(
+                    text = stringResource(R.string.playing_radio, radioName),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = PLAYER_GUTTER),
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(
+                    start = PLAYER_GUTTER,
+                    end = if (segments.isNotEmpty()) 16.dp else PLAYER_GUTTER,
+                    top = 4.dp,
+                    bottom = 10.dp,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Left pane (~44%): Large 1:1 album artwork (horizontal swipe skips, tap plays/pauses).
+            Box(
+                modifier = Modifier
+                    .weight(0.44f)
+                    .fillMaxHeight()
+                    .pointerInput(Unit) {
+                        var total = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { total = 0f },
+                            onDragCancel = { onSwipeOffsetChange(0f) },
+                            onDragEnd = {
+                                when {
+                                    total <= -swipeThreshold -> {
+                                        haptics.play(Haptic.SkipNext)
+                                        onNext()
+                                    }
+                                    total >= swipeThreshold -> {
+                                        haptics.play(Haptic.SkipPrevious)
+                                        onPrevious()
+                                    }
+                                }
+                                onSwipeOffsetChange(0f)
+                            },
+                            onHorizontalDrag = { _, delta ->
+                                total += delta
+                                onSwipeOffsetChange(total * 0.35f)
+                            },
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                val artShape = RoundedCornerShape(16.dp)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize(0.94f)
+                        .aspectRatio(1f, matchHeightConstraintsFirst = true)
+                        .graphicsLayer {
+                            scaleX = artScale
+                            scaleY = artScale
+                            translationX = swipeSettle
+                            shadowElevation = if (artLoaded) 12.dp.toPx() else 0f
+                            shape = artShape
+                            clip = true
+                        }
+                        .hazeSource(playerHaze)
+                        .background(Color.Black.copy(alpha = 0.18f), artShape)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onPlayPause,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (!artLoaded && !canvasRendered) {
+                        Icon(
+                            imageVector = BitChordIcons.MusicNote,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.35f),
+                            modifier = Modifier.size(44.dp),
+                        )
+                    }
+                    if (!useRemoteArtworkFallback) {
+                        localPreviewRequest?.let { previewRequest ->
+                            AsyncImage(
+                                model = previewRequest,
+                                contentDescription = null,
+                                contentScale = sleeveContentScale,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                    AsyncImage(
+                        model = artRequest,
+                        contentDescription = null,
+                        contentScale = sleeveContentScale,
+                        onState = {
+                            onArtLoadedChange(it is AsyncImagePainter.State.Success)
+                            if (it is AsyncImagePainter.State.Error) {
+                                onArtErrorFallback()
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .drawWithContent { if (artLoaded || !canvasRendered) drawContent() },
+                    )
+                    canvas?.let { clip ->
+                        CanvasArtworkPlayer(
+                            canvas = clip,
+                            isPlaying = isPlaying,
+                            onRenderedChanged = onCanvasRenderedChanged,
+                            onFrameCaptured = onCanvasFrameCaptured,
+                            refreshFrameEveryMs = meshRefreshMs,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    if (showNerdStats) {
+                        nerdStats?.describe(context)?.let { stats ->
+                            Text(
+                                text = stats,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White.copy(alpha = 0.72f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.width(20.dp))
+
+            // Right pane (~56%): Switches between controls and maximized lyrics/queue.
+            Column(
+                modifier = Modifier
+                    .weight(0.56f)
+                    .fillMaxHeight(),
+            ) {
+                val panelMode = when {
+                    queueOpen -> 1
+                    lyricsOpen -> 2
+                    else -> 0
+                }
+                Crossfade(
+                    targetState = panelMode,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    animationSpec = tween(durationMillis = 220),
+                    label = "landscapeSplitPanel",
+                ) { mode ->
+                    when (mode) {
+                        1 -> InlineQueue(
+                            queue = queue,
+                            currentIndex = queueIndex,
+                            autoplayEnabled = autoplayEnabled,
+                            repeatMode = repeatMode,
+                            onJumpTo = onJumpTo,
+                            onRemove = onRemoveFromQueue,
+                            onMove = onMoveInQueue,
+                            onClear = onClearQueue,
+                            onManageQueues = onManageQueues,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        2 -> if (lyricsLogsOpen) {
+                            Box(Modifier.fillMaxSize()) {
+                                LyricsLogConsole(Modifier.fillMaxSize().padding(top = 40.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White.copy(alpha = 0.18f))
+                                        .clickable(onClick = onCloseLyricsLogs),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Close,
+                                        contentDescription = stringResource(R.string.close),
+                                        tint = Color.White,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
+                        } else {
+                            val footerText = when {
+                                lyricsSource != null -> stringResource(R.string.lyrics_by, lyricsSource.label)
+                                !lyrics.isNullOrEmpty() && !hideLyricsSavedMessage ->
+                                    stringResource(R.string.lyrics_saved_with_download)
+                                else -> null
+                            }
+                            LyricsPanel(
+                                lines = lyrics.orEmpty(),
+                                trackKey = song.videoId,
+                                positionMs = positionMs,
+                                isPlaying = isPlaying,
+                                onSeekToLine = onSeek,
+                                lyricsUnavailable = lyricsUnavailable,
+                                footer = {
+                                    LyricsFooter(
+                                        text = footerText ?: stringResource(R.string.lyrics_choose),
+                                        showLogs = showLyricsLogsEnabled,
+                                        onOpenLogs = onOpenLyricsLogs,
+                                        onChooseLyrics = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.open(song) },
+                                    )
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                        else -> Column(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.SpaceEvenly,
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    horizontalAlignment = if (centerPlayerTrackInfo) Alignment.CenterHorizontally else Alignment.Start,
+                                ) {
+                                    var titleOverflowing by remember { mutableStateOf(false) }
+                                    MarqueeText(
+                                        text = song.title,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = Color.White,
+                                        enabled = true,
+                                        leading = if (song.isExplicit == true) {
+                                            { ExplicitBadge(color = Color.White) }
+                                        } else {
+                                            null
+                                        },
+                                        onOverflowChange = { titleOverflowing = it },
+                                        modifier = Modifier.opensPage(song.albumId, onOpenAlbum),
+                                    )
+                                    if (showPlayerArtist) {
+                                        MarqueeText(
+                                            text = song.artist,
+                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.W500),
+                                            color = Color.White.copy(alpha = 0.62f),
+                                            enabled = true,
+                                            startDelayMillis = if (titleOverflowing) MARQUEE_ARTIST_STAGGER_MS else 0L,
+                                            modifier = Modifier.opensPage(song.artistId, onOpenArtist),
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                PlayerHeatMeter(song)
+                                if (playerQuickActions.isNotEmpty()) {
+                                    Row(
+                                        modifier = Modifier
+                                            .widthIn(max = 172.dp)
+                                            .horizontalScroll(rememberScrollState()),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        playerQuickActions.forEach { action ->
+                                            val title = stringResource(
+                                                when (action) {
+                                                    PlayerQuickAction.LYRICS -> R.string.quick_action_lyrics
+                                                    PlayerQuickAction.ADD_TO_PLAYLIST -> R.string.quick_action_add_to_playlist
+                                                    PlayerQuickAction.PLAYBACK_TUNING -> R.string.quick_action_playback_tuning
+                                                    PlayerQuickAction.QUEUE -> R.string.quick_action_queue
+                                                    PlayerQuickAction.PLAYLISTS -> R.string.quick_action_playlists
+                                                    PlayerQuickAction.SEARCH -> R.string.quick_action_search
+                                                    PlayerQuickAction.ALBUM -> R.string.go_to_album
+                                                    PlayerQuickAction.ARTIST -> R.string.go_to_artist
+                                                    PlayerQuickAction.FOLDER -> R.string.go_to_folder
+                                                    PlayerQuickAction.EQUALIZER -> R.string.equalizer
+                                                    PlayerQuickAction.CHROMECAST -> R.string.chromecast
+                                                    PlayerQuickAction.SLEEP_TIMER -> R.string.sleep_timer
+                                                    PlayerQuickAction.TAG_EDITOR -> R.string.tag_editor
+                                                    PlayerQuickAction.EDIT_LYRICS -> R.string.edit_lyrics
+                                                    PlayerQuickAction.DETAILS -> R.string.details
+                                                    PlayerQuickAction.SHARE_FILE -> R.string.share_file
+                                                    PlayerQuickAction.FAVORITE -> R.string.quick_action_favorite
+                                                },
+                                            )
+                                            if (action == PlayerQuickAction.CHROMECAST) {
+                                                CastQuickActionButton(onUnavailable = { onQuickMenuAction(action) })
+                                            } else {
+                                                val actionIcon = when (action) {
+                                                    PlayerQuickAction.LYRICS, PlayerQuickAction.EDIT_LYRICS -> Icons.AutoMirrored.Rounded.Notes
+                                                    PlayerQuickAction.ADD_TO_PLAYLIST -> Icons.Rounded.PlaylistAdd
+                                                    PlayerQuickAction.PLAYBACK_TUNING -> Icons.Rounded.Speed
+                                                    PlayerQuickAction.QUEUE -> Icons.AutoMirrored.Rounded.QueueMusic
+                                                    PlayerQuickAction.PLAYLISTS -> Icons.Rounded.LibraryMusic
+                                                    PlayerQuickAction.SEARCH -> BitChordIcons.Search
+                                                    PlayerQuickAction.ALBUM -> Icons.Rounded.Album
+                                                    PlayerQuickAction.ARTIST -> Icons.Rounded.Person
+                                                    PlayerQuickAction.FOLDER -> Icons.Rounded.Folder
+                                                    PlayerQuickAction.EQUALIZER -> Icons.Rounded.GraphicEq
+                                                    PlayerQuickAction.CHROMECAST -> Icons.Rounded.Cast
+                                                    PlayerQuickAction.SLEEP_TIMER -> Icons.Rounded.Bedtime
+                                                    PlayerQuickAction.TAG_EDITOR -> Icons.Rounded.Edit
+                                                    PlayerQuickAction.DETAILS -> Icons.Rounded.Info
+                                                    PlayerQuickAction.SHARE_FILE -> Icons.Rounded.Share
+                                                    PlayerQuickAction.FAVORITE -> likeIcon
+                                                }
+                                                CircleGlyph(
+                                                    icon = actionIcon,
+                                                    contentDescription = title,
+                                                    active = when (action) {
+                                                        PlayerQuickAction.FAVORITE -> liked
+                                                        else -> false
+                                                    },
+                                                    enabled = when (action) {
+                                                        PlayerQuickAction.FAVORITE -> likeAvailable
+                                                        PlayerQuickAction.ADD_TO_PLAYLIST -> !streamedSong || signedIn
+                                                        PlayerQuickAction.FOLDER,
+                                                        PlayerQuickAction.TAG_EDITOR,
+                                                        PlayerQuickAction.SHARE_FILE -> !streamedSong
+                                                        else -> true
+                                                    },
+                                                    onDisabledClick = when (action) {
+                                                        PlayerQuickAction.FAVORITE -> likeUnavailableReason
+                                                        PlayerQuickAction.ADD_TO_PLAYLIST -> { { explain(R.string.streamed_song_no_playlist) } }
+                                                        PlayerQuickAction.FOLDER,
+                                                        PlayerQuickAction.TAG_EDITOR,
+                                                        PlayerQuickAction.SHARE_FILE -> { { explain(R.string.streamed_song_no_file) } }
+                                                        else -> null
+                                                    },
+                                                    haptic = if (action == PlayerQuickAction.FAVORITE) {
+                                                        if (liked) Haptic.ToggleOff else Haptic.ToggleOn
+                                                    } else Haptic.Tap,
+                                                    onClick = {
+                                                        when (action) {
+                                                            PlayerQuickAction.LYRICS -> onOpenLyrics()
+                                                            PlayerQuickAction.QUEUE -> onOpenQueue()
+                                                            PlayerQuickAction.ADD_TO_PLAYLIST -> onQuickAddToPlaylist()
+                                                            PlayerQuickAction.PLAYBACK_TUNING -> onQuickPlaybackTuning()
+                                                            PlayerQuickAction.PLAYLISTS -> onOpenPlaylists()
+                                                            PlayerQuickAction.SEARCH -> onOpenSearch()
+                                                            PlayerQuickAction.ALBUM -> song.albumId?.takeIf(String::isNotBlank)?.let(onOpenAlbum)
+                                                                ?: onQuickMenuAction(action)
+                                                            PlayerQuickAction.ARTIST -> song.artistId?.takeIf(String::isNotBlank)?.let(onOpenArtist)
+                                                                ?: onQuickMenuAction(action)
+                                                            PlayerQuickAction.SLEEP_TIMER -> onOpenSleepTimer()
+                                                            PlayerQuickAction.FAVORITE -> toggleLike()
+                                                            PlayerQuickAction.FOLDER,
+                                                            PlayerQuickAction.EQUALIZER,
+                                                            PlayerQuickAction.TAG_EDITOR,
+                                                            PlayerQuickAction.EDIT_LYRICS,
+                                                            PlayerQuickAction.DETAILS,
+                                                            PlayerQuickAction.SHARE_FILE -> onQuickMenuAction(action)
+                                                            PlayerQuickAction.CHROMECAST -> Unit
+                                                        }
+                                                    },
+                                                )
+                                            }
+                                        }
+                                        Spacer(Modifier.width(4.dp))
+                                    }
+                                }
+                                Box(Modifier.trackBoundsInRoot(onMenuAnchor).glassMenuAnchor()) {
+                                    CircleGlyph(
+                                        icon = when {
+                                            showRevertCue -> Icons.AutoMirrored.Rounded.Undo
+                                            playerDetailsVerticalMenu -> Icons.Rounded.MoreVert
+                                            else -> Icons.Rounded.MoreHoriz
+                                        },
+                                        contentDescription = stringResource(R.string.more),
+                                        onClick = onOpenMenu,
+                                    )
+                                }
+                            }
+
+                            if (miniLyricsVisible) {
+                                Box(
+                                    contentAlignment = Alignment.CenterStart,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(34.dp),
+                                ) {
+                                    if (!lyrics.isNullOrEmpty()) {
+                                        CurrentLyricLine(
+                                            lines = lyrics,
+                                            trackKey = song.videoId,
+                                            positionMs = positionMs,
+                                            isPlaying = isPlaying,
+                                            durationMs = durationMs,
+                                            onClick = onOpenLyrics,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                    } else if (lyricsUnavailable && !hideLyricsStatusText) {
+                                        LyricsChooseLine(
+                                            onClick = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.open(song) },
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                    } else if (!hideLyricsStatusText) {
+                                        LyricsLoadingLine(
+                                            trackKey = song.videoId,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                    }
+                                }
+                            }
+
+                            Column(Modifier.fillMaxWidth()) {
+                                ThinSlider(
+                                    value = shown,
+                                    onValueChange = onScrubChange,
+                                    onValueChangeFinished = onScrubFinished,
+                                )
+                                Box(Modifier.fillMaxWidth()) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                    ) {
+                                        Text(
+                                            text = formatTime((shown * effectiveDurationMs).toLong()),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = Color.White.copy(alpha = 0.55f),
+                                        )
+                                        Text(
+                                            text = if (showTrackDurationInsteadOfRemaining) {
+                                                formatTime(effectiveDurationMs)
+                                            } else {
+                                                "-" + formatTime(effectiveDurationMs - (shown * effectiveDurationMs).toLong())
+                                            },
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = Color.White.copy(alpha = 0.55f),
+                                        )
+                                    }
+                                    LosslessOrStats(
+                                        isLocalAudio = isLocalAudio,
+                                        isLoading = isLoading,
+                                        stillRacing = stillRacing,
+                                        losslessRequested = losslessRequested,
+                                        nerdStats = nerdStats,
+                                        modifier = Modifier
+                                            .align(Alignment.Center)
+                                            .padding(horizontal = 8.dp),
+                                    )
+                                }
+                            }
+
+                            val seekButtonsVisible = when (seekButtonMode) {
+                                SeekButtonMode.OFF -> false
+                                SeekButtonMode.ALWAYS -> true
+                                SeekButtonMode.LONG_TRACKS_ONLY -> effectiveDurationMs >= 15L * 60L * 1000L
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = if (seekButtonsVisible) Arrangement.SpaceEvenly else SkipButtonsAtToggleEnds,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (seekButtonsVisible) {
+                                    SeekTransportGlyph(
+                                        icon = Icons.Rounded.FastRewind,
+                                        contentDescription = stringResource(R.string.seek_back_seconds, seekIntervalSeconds),
+                                        label = stringResource(R.string.seek_seconds_short, seekIntervalSeconds),
+                                        showLabel = !hideSeekButtonLabels,
+                                        onClick = { onSeek((positionMs - seekIntervalSeconds * 1000L).coerceAtLeast(0L)) },
+                                    )
+                                }
+                                TransportGlyph(
+                                    icon = BitChordIcons.TransportPrevious,
+                                    contentDescription = stringResource(R.string.widget_previous),
+                                    size = 40.dp,
+                                    onClick = onPrevious,
+                                    enabled = hasPrevious || positionMs > BACK_RESTARTS_AFTER_MS,
+                                    haptic = Haptic.SkipPrevious,
+                                )
+                                if (isLoading) {
+                                    Box(Modifier.size(62.dp), contentAlignment = Alignment.Center) {
+                                        CircularProgressIndicator(
+                                            color = Color.White,
+                                            strokeWidth = 3.dp,
+                                            modifier = Modifier.size(34.dp),
+                                        )
+                                    }
+                                } else {
+                                    TransportGlyph(
+                                        icon = if (isPlaying) BitChordIcons.TransportPause else BitChordIcons.TransportPlay,
+                                        contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
+                                        size = 54.dp,
+                                        onClick = onPlayPause,
+                                        haptic = if (isPlaying) Haptic.Pause else Haptic.Resume,
+                                    )
+                                }
+                                TransportGlyph(
+                                    icon = BitChordIcons.TransportNext,
+                                    contentDescription = stringResource(R.string.widget_next),
+                                    size = 40.dp,
+                                    onClick = onNext,
+                                    enabled = hasNext,
+                                    haptic = Haptic.SkipNext,
+                                )
+                                if (seekButtonsVisible) {
+                                    SeekTransportGlyph(
+                                        icon = Icons.Rounded.FastForward,
+                                        contentDescription = stringResource(R.string.seek_forward_seconds, seekIntervalSeconds),
+                                        label = stringResource(R.string.seek_seconds_short, seekIntervalSeconds),
+                                        showLabel = !hideSeekButtonLabels,
+                                        onClick = {
+                                            val end = effectiveDurationMs.takeIf { it > 0L } ?: Long.MAX_VALUE
+                                            onSeek((positionMs + seekIntervalSeconds * 1000L).coerceAtMost(end))
+                                        },
+                                    )
+                                }
+                            }
+
+                            if (!betaLayout && !hideVolumeBar) {
+                                PlayerVolumeArea(
+                                    volume = volume,
+                                    onVolumeChange = onVolumeChange,
+                                    onVolumeChangeFinished = onVolumeChangeFinished,
+                                )
+                            }
+                        }
+                    }
+                }
+
+            }
+
+            if (segments.isNotEmpty()) {
+                Spacer(Modifier.width(12.dp))
+                PlayerToggleGroup(
+                    segments = segments,
+                    inverted = true,
+                    vertical = true,
+                )
+            }
         }
     }
 }

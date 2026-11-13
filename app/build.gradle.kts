@@ -51,8 +51,8 @@ android {
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
         targetSdk = 36
-        versionCode = 95
-        versionName = "2.7.1"
+        versionCode = 97
+        versionName = "2.8.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -286,6 +286,9 @@ dependencies {
 
     // ---- Audio tag & cover editing: Native TagLib ----
     implementation("io.github.kyant0:taglib:1.0.6")
+
+    // ---- On-device Music2Emo mood & open-unmix vocal inference ----
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
 
 
     testImplementation("junit:junit:4.13.2")

@@ -28,7 +28,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -76,10 +75,12 @@ import com.music.bitchord.data.lyrics.LyricsStrictness
 import com.music.bitchord.data.lyrics.SourceStatus
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
+import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.feature.lyrics.manager.LyricsExtensionManager
 import com.music.bitchord.feature.lyricseditor.data.LocalLyricsManager
 import com.music.bitchord.feature.lyricseditor.domain.model.LyricsEditorSource
+import com.music.bitchord.ui.components.GlassAlertDialog
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
@@ -414,15 +415,61 @@ private fun CandidatePreview(song: Song, candidate: LyricsCandidate, onDismiss: 
 
     fun text() = LyricsCatalog.serialize(candidate, wordSyncSetting, keepTranslation, keepFurigana)
 
+    var pendingOverwriteLrc by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var pendingSafLrc by remember { mutableStateOf<Pair<LocalLyricsManager.LrcSaveResult.NeedsDirectoryAccess, String>?>(null) }
+
     fun save(target: LyricsEditorSource, text: String) {
         scope.launch {
-            val ok = LocalLyricsManager.saveLyrics(context, song, target, text)
+            when (val outcome = LocalLyricsManager.saveLyricsDetailed(context, song, target, text)) {
+                is LocalLyricsManager.LrcSaveResult.Success -> {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.l10n_lyrics_saved),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    onSaved()
+                }
+                is LocalLyricsManager.LrcSaveResult.NeedsDirectoryAccess -> {
+                    if (target == LyricsEditorSource.File) {
+                        pendingSafLrc = outcome to text
+                    } else {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.l10n_lyrics_save_failed),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                is LocalLyricsManager.LrcSaveResult.Failed -> {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.l10n_lyrics_save_failed),
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
+    }
+
+    val safTreeLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { treeUri ->
+        val pending = pendingSafLrc
+        pendingSafLrc = null
+        if (treeUri != null && pending != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+            save(LyricsEditorSource.File, pending.second)
+        } else if (pending != null) {
             Toast.makeText(
                 context,
-                context.getString(if (ok) R.string.l10n_lyrics_saved else R.string.l10n_lyrics_save_failed),
+                context.getString(R.string.l10n_lyrics_save_failed),
                 Toast.LENGTH_SHORT,
             ).show()
-            if (ok) onSaved()
         }
     }
 
@@ -455,7 +502,7 @@ private fun CandidatePreview(song: Song, candidate: LyricsCandidate, onDismiss: 
         save(LyricsEditorSource.Embedded, text)
     }
 
-    AlertDialog(
+    GlassAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Column {
@@ -504,7 +551,18 @@ private fun CandidatePreview(song: Song, candidate: LyricsCandidate, onDismiss: 
                 }
                 Button(onClick = onUse, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.lyrics_use_for_song)) }
                 if (hasFile) {
-                    FilledTonalButton(onClick = { save(LyricsEditorSource.File, text()) }, modifier = Modifier.fillMaxWidth()) {
+                    FilledTonalButton(
+                        onClick = {
+                            val lyricsText = text()
+                            val existing = LocalLyricsManager.findExistingLrcFile(context, song)
+                            if (existing != null) {
+                                pendingOverwriteLrc = existing.name to lyricsText
+                            } else {
+                                save(LyricsEditorSource.File, lyricsText)
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
                         Text(stringResource(R.string.lyrics_save_lrc))
                     }
                     FilledTonalButton(onClick = ::embed, modifier = Modifier.fillMaxWidth()) {
@@ -517,6 +575,65 @@ private fun CandidatePreview(song: Song, candidate: LyricsCandidate, onDismiss: 
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.l10n_close)) }
         },
     )
+
+    pendingOverwriteLrc?.let { (fileName, lyricsText) ->
+        GlassAlertDialog(
+            onDismissRequest = { pendingOverwriteLrc = null },
+            title = { Text(stringResource(R.string.lrc_overwrite_title)) },
+            text = { Text(stringResource(R.string.lrc_overwrite_message, fileName)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingOverwriteLrc = null
+                        save(LyricsEditorSource.File, lyricsText)
+                    },
+                ) {
+                    Text(stringResource(R.string.lrc_overwrite_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingOverwriteLrc = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    pendingSafLrc?.let { (access, _) ->
+        GlassAlertDialog(
+            onDismissRequest = { pendingSafLrc = null },
+            title = { Text(stringResource(R.string.lrc_saf_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.lrc_saf_message, access.fileName))
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                        TextButton(
+                            onClick = {
+                                pendingSafLrc = null
+                                LocalMediaRepository.requestAllFilesAccess(context)
+                            },
+                        ) {
+                            Text(stringResource(R.string.lrc_saf_all_files))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        safTreeLauncher.launch(LocalLyricsManager.treeUriInitialHint(access.parentDir))
+                    },
+                ) {
+                    Text(stringResource(R.string.lrc_saf_choose_folder))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingSafLrc = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 }
 
 @Composable

@@ -47,6 +47,9 @@ fun homeSectionLabel(section: HomeSection): String = stringResource(
         HomeSection.TIME_CAPSULE -> R.string.home_time_capsule
         HomeSection.DEEP_CUTS -> R.string.home_deep_cuts
         HomeSection.TIME_OF_DAY -> R.string.home_time_of_day
+        HomeSection.FOR_YOU -> R.string.home_for_you
+        HomeSection.UPLIFTING -> R.string.home_uplifting
+        HomeSection.CALM -> R.string.home_calm
         HomeSection.COVERAGE -> R.string.home_coverage
     },
 )

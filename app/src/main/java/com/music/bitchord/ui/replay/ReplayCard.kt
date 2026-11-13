@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -102,6 +103,18 @@ fun ReplayCreditCard(
     val palette = rememberArtworkColors(artworkUrl)
     Box(
         modifier = modifier
+            .layout { measurable, constraints ->
+                val safeConstraints = if (!constraints.hasBoundedWidth && !constraints.hasBoundedHeight) {
+                    val fallbackWidth = 296.dp.roundToPx()
+                    constraints.copy(minWidth = fallbackWidth, maxWidth = fallbackWidth)
+                } else {
+                    constraints
+                }
+                val placeable = measurable.measure(safeConstraints)
+                layout(placeable.width, placeable.height) {
+                    placeable.placeRelative(0, 0)
+                }
+            }
             .aspectRatio(CARD_RATIO)
             .shadow(16.dp, CardShape, clip = false)
             .clip(CardShape)

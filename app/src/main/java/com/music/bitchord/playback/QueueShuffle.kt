@@ -60,6 +60,7 @@ object QueueShuffle {
      * one about to replace this one. [playSongs] builds that one shuffled.
      */
     fun enableForNextQueue(preserveOrder: Boolean = false) {
+        com.music.bitchord.data.stats.PlayIntent.markShuffleStart()
         original = emptyList()
         preserveNextQueueOrder = preserveOrder
         _enabled.value = true

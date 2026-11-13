@@ -262,7 +262,7 @@ enum class HeatColor { ORANGE, PINK, ARTWORK }
 /** The shelves of the Home tab, in the order the listener chose. */
 enum class HomeSection {
     MIXES, HERO, HOT, RISING, NEW_ADDITIONS, RECENTLY_PLAYED, TIME_CAPSULE, DEEP_CUTS,
-    TIME_OF_DAY, COOLING, UNPLAYED_ALBUMS, COVERAGE, STATS,
+    TIME_OF_DAY, FOR_YOU, UPLIFTING, CALM, COOLING, UNPLAYED_ALBUMS, COVERAGE, STATS,
 }
 
 /** The groups of the Library's "All" page, in the order the listener chose. */
@@ -593,6 +593,9 @@ object AppSettings {
     /** Once a song has been suggested or played this session, AutoPlay won't offer it again. */
     val dontRepeatSuggestions = MutableStateFlow(false)
 
+    /** Skips clear instrumental tracks during AutoPlay recommendations (metadata + local vocal check). */
+    val excludeInstrumentalsInAutoplay = MutableStateFlow(false)
+
     /** Drops haze blur (status bar, mini player, bottom fade, lyrics focus) for a solid-fill look. */
     val reduceDynamicBlur = MutableStateFlow(false)
 
@@ -630,6 +633,9 @@ object AppSettings {
     /** When true, hides labels in the bottom navigation bar and displays only icons. */
     val hideNavigationBarLabels = MutableStateFlow(false)
 
+    /** When true, replaces tab bar icons with the Lucide outline/filled icon set. */
+    val useLucideTabIcons = MutableStateFlow(false)
+
     /** Main navigation destinations the user wants to keep in the bottom bar. */
     val visibleMainNavigationTabs = MutableStateFlow(MainNavigationTab.entries.filterNot { it == MainNavigationTab.FOLDERS }.toSet())
     val mainNavigationTabOrder = MutableStateFlow<List<MainNavigationTab>>(MainNavigationTab.entries)
@@ -641,6 +647,10 @@ object AppSettings {
     val heatInPlayer = MutableStateFlow(false)
     /** Heat colour: the album-art theme's hue when that theme is on, otherwise a fixed red-orange. */
     val heatColor = MutableStateFlow(HeatColor.ARTWORK)
+    /** Adds short-term momentum and subtle daily jitter to Home Heat shelves so top items rotate. */
+    val homeHeatDailyMixBoost = MutableStateFlow(true)
+    /** Uses a full-screen 2-column split player in phone landscape instead of stacked compact controls. */
+    val phoneLandscapeSplitPlayer = MutableStateFlow(false)
     /** Home shelves and Library groups: order, and which are shown. */
     val homeSectionOrder = MutableStateFlow<List<HomeSection>>(HomeSection.entries)
     val hiddenHomeSections = MutableStateFlow<Set<HomeSection>>(emptySet())
@@ -750,6 +760,9 @@ object AppSettings {
 
     /** Refuses a play command while Android's music stream volume is zero. */
     val preventPlayAtZeroVolume = MutableStateFlow(false)
+
+    /** Asks for confirmation before starting playback directly on the built-in phone speaker. */
+    val warnBeforeSpeakerPlayback = MutableStateFlow(false)
 
     /** Pauses an already-playing local track when Android's music volume reaches zero. */
     val pausePlaybackAtZeroVolume = MutableStateFlow(false)
@@ -1257,6 +1270,7 @@ object AppSettings {
         lockBottomBarExpanded.value = prefs.getBoolean(KEY_LOCK_BOTTOM_BAR_EXPANDED, false)
         integrateStandaloneTab.value = prefs.getBoolean(KEY_INTEGRATE_STANDALONE_TAB, false)
         hideNavigationBarLabels.value = prefs.getBoolean(KEY_HIDE_NAVIGATION_BAR_LABELS, false)
+        useLucideTabIcons.value = prefs.getBoolean(KEY_USE_LUCIDE_TAB_ICONS, false)
         visibleLocalLibraryTabs.value = readVisibleLocalLibraryTabs()
         localLibraryTabOrder.value = readLocalLibraryTabOrder()
         visibleMainNavigationTabs.value = readVisibleMainNavigationTabs()
@@ -1269,6 +1283,9 @@ object AppSettings {
         heatColor.value = prefs.getString(KEY_HEAT_COLOR, null)
             ?.let { name -> HeatColor.entries.firstOrNull { it.name == name } }
             ?: if (prefs.getBoolean(KEY_HEAT_COLOR_THEME, true)) HeatColor.ARTWORK else HeatColor.ORANGE
+        homeHeatDailyMixBoost.value = prefs.getBoolean(KEY_HOME_HEAT_DAILY_MIX_BOOST, true)
+        phoneLandscapeSplitPlayer.value = prefs.getBoolean(KEY_PHONE_LANDSCAPE_SPLIT_PLAYER, false)
+        excludeInstrumentalsInAutoplay.value = prefs.getBoolean(KEY_EXCLUDE_INSTRUMENTALS_IN_AUTOPLAY, false)
         homeSectionOrder.value = readOrder(KEY_HOME_SECTION_ORDER, HomeSection.entries)
         hiddenHomeSections.value = readSet(KEY_HOME_SECTIONS_HIDDEN, HomeSection.entries)
         librarySectionOrder.value = readOrder(KEY_LIBRARY_SECTION_ORDER, LibrarySection.entries)
@@ -1339,6 +1356,7 @@ object AppSettings {
         replayGainPreventClipping.value = prefs.getBoolean(KEY_REPLAYGAIN_PREVENT_CLIPPING, true)
         favoriteBesideTrackMenu.value = prefs.getBoolean(KEY_FAVORITE_BESIDE_TRACK_MENU, false)
         preventPlayAtZeroVolume.value = prefs.getBoolean(KEY_PREVENT_PLAY_AT_ZERO_VOLUME, false)
+        warnBeforeSpeakerPlayback.value = prefs.getBoolean(KEY_WARN_BEFORE_SPEAKER_PLAYBACK, false)
         pausePlaybackAtZeroVolume.value = prefs.getBoolean(KEY_PAUSE_PLAYBACK_AT_ZERO_VOLUME, false)
         visiblePlayerControls.value = readVisiblePlayerControls()
         playerControlOrder.value = readPlayerControlOrder()
@@ -2043,6 +2061,11 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_HIDE_NAVIGATION_BAR_LABELS, value).apply()
     }
 
+    fun setUseLucideTabIcons(value: Boolean) {
+        useLucideTabIcons.value = value
+        prefs.edit().putBoolean(KEY_USE_LUCIDE_TAB_ICONS, value).apply()
+    }
+
     /** Keeps at least one destination available for navigation. */
     fun setMainNavigationTabVisible(tab: MainNavigationTab, visible: Boolean) {
         if (tab == MainNavigationTab.ALBUM_ARTISTS) {
@@ -2269,6 +2292,21 @@ object AppSettings {
     fun setHeatColor(value: HeatColor) {
         heatColor.value = value
         prefs.edit().putString(KEY_HEAT_COLOR, value.name).apply()
+    }
+
+    fun setHomeHeatDailyMixBoost(value: Boolean) {
+        homeHeatDailyMixBoost.value = value
+        prefs.edit().putBoolean(KEY_HOME_HEAT_DAILY_MIX_BOOST, value).apply()
+    }
+
+    fun setPhoneLandscapeSplitPlayer(value: Boolean) {
+        phoneLandscapeSplitPlayer.value = value
+        prefs.edit().putBoolean(KEY_PHONE_LANDSCAPE_SPLIT_PLAYER, value).apply()
+    }
+
+    fun setExcludeInstrumentalsInAutoplay(value: Boolean) {
+        excludeInstrumentalsInAutoplay.value = value
+        prefs.edit().putBoolean(KEY_EXCLUDE_INSTRUMENTALS_IN_AUTOPLAY, value).apply()
     }
 
     fun moveHomeSection(section: HomeSection, offset: Int) {
@@ -2530,6 +2568,11 @@ object AppSettings {
     fun setPreventPlayAtZeroVolume(value: Boolean) {
         preventPlayAtZeroVolume.value = value
         prefs.edit().putBoolean(KEY_PREVENT_PLAY_AT_ZERO_VOLUME, value).apply()
+    }
+
+    fun setWarnBeforeSpeakerPlayback(value: Boolean) {
+        warnBeforeSpeakerPlayback.value = value
+        prefs.edit().putBoolean(KEY_WARN_BEFORE_SPEAKER_PLAYBACK, value).apply()
     }
 
     fun setPausePlaybackAtZeroVolume(value: Boolean) {
@@ -3436,6 +3479,7 @@ object AppSettings {
     private const val KEY_LOCK_BOTTOM_BAR_EXPANDED = "lock_bottom_bar_expanded"
     private const val KEY_INTEGRATE_STANDALONE_TAB = "integrate_standalone_tab_when_locked"
     private const val KEY_HIDE_NAVIGATION_BAR_LABELS = "hide_navigation_bar_labels"
+    private const val KEY_USE_LUCIDE_TAB_ICONS = "use_lucide_tab_icons"
     private const val KEY_VISIBLE_MAIN_NAVIGATION_TABS = "visible_main_navigation_tabs"
     private const val KEY_MAIN_NAVIGATION_TAB_ORDER = "main_navigation_tab_order"
     private const val KEY_STARTUP_TAB = "startup_tab"
@@ -3443,6 +3487,10 @@ object AppSettings {
     private const val KEY_HEAT_METER = "heat_meter_enabled"
     private const val KEY_HEAT_COLOR_THEME = "heat_color_follows_theme"
     private const val KEY_HEAT_COLOR = "heat_color"
+    private const val KEY_HOME_HEAT_DAILY_MIX_BOOST = "home_heat_daily_mix_boost"
+    private const val KEY_PHONE_LANDSCAPE_SPLIT_PLAYER = "phone_landscape_split_player"
+    private const val KEY_EXCLUDE_INSTRUMENTALS_IN_AUTOPLAY = "exclude_instrumentals_in_autoplay"
+    private const val KEY_WARN_BEFORE_SPEAKER_PLAYBACK = "warn_before_speaker_playback"
     private const val KEY_HOME_SECTION_ORDER = "home_section_order"
     private const val KEY_HOME_SECTIONS_HIDDEN = "home_sections_hidden"
     private const val KEY_LIBRARY_SECTION_ORDER = "library_section_order"

@@ -335,6 +335,93 @@ class PlaybackService : MediaLibraryService() {
         return manager.getStreamVolume(AudioManager.STREAM_MUSIC) > 0
     }
 
+    private fun shouldWarnBeforeSpeakerPlayback(isExternalPreview: Boolean = false): Boolean {
+        val manager = audioManager ?: return false
+        val activePlayer = player
+        val alreadyPlaying = activePlayer != null && (activePlayer.isPlaying || activePlayer.playWhenReady)
+        val activeDeviceType = runCatching {
+            currentOutputDevice(manager, preferredUsbDevice())?.type
+        }.getOrNull()
+        val volume = runCatching { manager.getStreamVolume(AudioManager.STREAM_MUSIC) }.getOrDefault(0)
+        val muted = runCatching { manager.isStreamMute(AudioManager.STREAM_MUSIC) }.getOrDefault(false)
+        return shouldWarnBeforeSpeakerPlaybackDecision(
+            settingEnabled = AppSettings.warnBeforeSpeakerPlayback.value,
+            castActive = castPlayback.active,
+            isPlayingOrPlayWhenReady = alreadyPlaying,
+            volumeLevel = volume,
+            streamMuted = muted,
+            activeOutputDeviceType = activeDeviceType,
+            alreadyApprovedInSession = SpeakerWarningBus.isSessionApproved(),
+            isExternalPreview = isExternalPreview,
+        )
+    }
+
+    private fun canStartPlaybackNow(isExternalPreview: Boolean = false): Boolean {
+        if (!canStartPlaybackAtCurrentVolume()) return false
+        if (shouldWarnBeforeSpeakerPlayback(isExternalPreview = isExternalPreview)) {
+            notifySpeakerWarningBlocked(SpeakerWarningRequest(isExternalPreview = isExternalPreview))
+            return false
+        }
+        return true
+    }
+
+    private fun notifySpeakerWarningBlocked(request: SpeakerWarningRequest) {
+        if (SpeakerWarningBus.isForegroundUiActive()) {
+            SpeakerWarningBus.requestWarning(request)
+            return
+        }
+        if (!SpeakerWarningBus.requestWarning(request)) return
+        SpeakerWarningBus.dismiss()
+        Handler(Looper.getMainLooper()).post {
+            android.widget.Toast.makeText(
+                applicationContext,
+                getString(R.string.speaker_warning_blocked_bg),
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+        }
+        postSpeakerWarningNotification()
+    }
+
+    private fun postSpeakerWarningNotification() {
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.POST_NOTIFICATIONS,
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        val channelId = "speaker_playback_warning"
+        if (manager.getNotificationChannel(channelId) == null) {
+            manager.createNotificationChannel(
+                android.app.NotificationChannel(
+                    channelId,
+                    getString(R.string.speaker_warning_title),
+                    NotificationManager.IMPORTANCE_HIGH,
+                ),
+            )
+        }
+        val launchIntent = android.content.Intent(this, com.music.bitchord.MainActivity::class.java).apply {
+            flags = android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val contentIntent = android.app.PendingIntent.getActivity(
+            this,
+            0x5012,
+            launchIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = androidx.core.app.NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(R.drawable.ic_notification_logo)
+            .setContentTitle(getString(R.string.speaker_warning_title))
+            .setContentText(getString(R.string.speaker_warning_blocked_bg))
+            .setContentIntent(contentIntent)
+            .setAutoCancel(true)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .build()
+        runCatching { manager.notify(0x5012, notification) }
+    }
+
     private fun pauseLocalPlaybackIfVolumeIsZero() {
         if (!AppSettings.pausePlaybackAtZeroVolume.value || castPlayback.active) return
         val manager = audioManager ?: return
@@ -432,13 +519,21 @@ class PlaybackService : MediaLibraryService() {
 
     private val outputDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) {
+            if (addedDevices.any { isExternalWarningResetDeviceType(it.type) }) {
+                SpeakerWarningBus.resetSessionApproval()
+            }
             requestOutputReconfiguration()
             // A device that comes back at Tinque's (loud) volume while Tinque
             // is not playing goes down to the other apps'. After a moment, for
             // the route to move to it.
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ VolumeHandoff.onOutputConnected(this@PlaybackService) }, 1_200L)
         }
-        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) = requestOutputReconfiguration()
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) {
+            if (removedDevices.any { isExternalWarningResetDeviceType(it.type) }) {
+                SpeakerWarningBus.resetSessionApproval()
+            }
+            requestOutputReconfiguration()
+        }
     }
     private val systemVolumeObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
         override fun onChange(selfChange: Boolean) {
@@ -496,7 +591,7 @@ class PlaybackService : MediaLibraryService() {
             AudioManager.AUDIOFOCUS_GAIN -> {
                 if (resumeAfterAudioFocus && active.mediaItemCount > 0) {
                     resumeAfterAudioFocus = false
-                    active.play()
+                    if (canStartPlaybackNow()) active.play()
                 }
             }
             AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
@@ -696,6 +791,23 @@ class PlaybackService : MediaLibraryService() {
      * Never persisted — a fresh process means a fresh session.
      */
     private val sessionSongHistory = mutableListOf<Song>()
+    private val recentPlayedForAutoplay = mutableListOf<Song>()
+    private val skippedAutoplaySongs = mutableListOf<Song>()
+    private var lastReliableAutoplaySeed: Song? = null
+    private var lastTransitionWasQuickAutoplaySkip = false
+
+    private fun recordReliableAutoplayTrack(song: Song) {
+        recentPlayedForAutoplay.removeAll { it.videoId == song.videoId }
+        recentPlayedForAutoplay.add(0, song)
+        while (recentPlayedForAutoplay.size > 5) recentPlayedForAutoplay.removeAt(recentPlayedForAutoplay.lastIndex)
+        lastReliableAutoplaySeed = song
+    }
+
+    private fun recordSkippedAutoplayTrack(song: Song) {
+        skippedAutoplaySongs.removeAll { it.videoId == song.videoId }
+        skippedAutoplaySongs.add(song)
+        while (skippedAutoplaySongs.size > 24) skippedAutoplaySongs.removeAt(0)
+    }
 
     private var serviceLyricsJob: Job? = null
     private var serviceLyrics: List<LyricLine>? = null
@@ -946,6 +1058,13 @@ class PlaybackService : MediaLibraryService() {
                 externalAudioPopupWindow?.dismiss()
                 externalPreviewReturnState = null
             }
+            val closingSnapshot = if (
+                reason != Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED ||
+                mediaItem?.mediaId != heatLastMediaId
+            ) {
+                ListeningRecorder.currentListenSnapshot()
+            } else null
+
             // Heat: close the listen that just ended, judged by how it ended,
             // and open the one that starts. A quality swap is the same song,
             // so it neither closes nor reopens anything (onTrackStarted
@@ -959,8 +1078,45 @@ class PlaybackService : MediaLibraryService() {
                     userSkipped = reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
                     ranToEnd = ranToEnd,
                 )
+                if (closingSnapshot != null) {
+                    val (outgoingSong, playedMs) = closingSnapshot
+                    val isQuickAutoplaySkip = outgoingSong.fromAutoplay &&
+                        reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK &&
+                        playedMs < 30_000L
+                    if (isQuickAutoplaySkip) {
+                        recordSkippedAutoplayTrack(outgoingSong)
+                        lastTransitionWasQuickAutoplaySkip = true
+                    } else if (!outgoingSong.fromAutoplay || ranToEnd || playedMs >= 30_000L) {
+                        recordReliableAutoplayTrack(outgoingSong)
+                        lastTransitionWasQuickAutoplaySkip = false
+                    }
+                }
             }
-            ListeningRecorder.onTrackStarted(mediaItem?.toSong())
+            val incomingSong = mediaItem?.toSong()
+            if (incomingSong != null && !incomingSong.fromAutoplay) {
+                lastReliableAutoplaySeed = incomingSong
+                lastTransitionWasQuickAutoplaySkip = false
+            }
+            val isQualitySwap = reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED &&
+                mediaItem?.mediaId != null &&
+                mediaItem.mediaId == swappingMediaId
+            val origin = when {
+                isQualitySwap -> com.music.bitchord.data.stats.PlayOrigin.UNKNOWN
+                incomingSong != null &&
+                    reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED &&
+                    com.music.bitchord.data.stats.PlayIntent.consume(incomingSong) ->
+                    com.music.bitchord.data.stats.PlayOrigin.PICKED
+                mediaItem?.fromAutoplay == true ->
+                    com.music.bitchord.data.stats.PlayOrigin.AUTOPLAY
+                reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                    reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT ->
+                    if (QueueShuffle.enabled.value) com.music.bitchord.data.stats.PlayOrigin.SHUFFLE
+                    else com.music.bitchord.data.stats.PlayOrigin.SEQUENTIAL
+                reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK ->
+                    com.music.bitchord.data.stats.PlayOrigin.SKIPPED_TO
+                else -> com.music.bitchord.data.stats.PlayOrigin.UNKNOWN
+            }
+            ListeningRecorder.onTrackStarted(incomingSong, origin)
             heatLastMediaId = mediaItem?.mediaId
             castPlayback.onLocalTransition(mediaItem, reason)
             // A quality swap replaces the playing item, which Media3
@@ -1866,6 +2022,15 @@ class PlaybackService : MediaLibraryService() {
         if (autoplaySeed == current.videoId) return
         autoplaySeed = current.videoId
         val source = AppSettings.autoplaySource.value
+        val effectiveSeed = if (current.fromAutoplay && lastTransitionWasQuickAutoplaySkip) {
+            (lastReliableAutoplaySeed ?: current).copy(radioName = current.radioName)
+        } else {
+            current
+        }
+        val sessionSnapshot = AutoplaySessionContext(
+            recentPlayed = recentPlayedForAutoplay.toList(),
+            skippedSongs = skippedAutoplaySongs.toList(),
+        )
         autoplayLoadJob = scope.launch {
             val queueSongs = (0 until exoPlayer.mediaItemCount)
                 .map { exoPlayer.getMediaItemAt(it).toSong() }
@@ -1874,7 +2039,14 @@ class PlaybackService : MediaLibraryService() {
             } else {
                 queueSongs
             }
-            loadAutoplayTracks(existing, current, needed, source, this@PlaybackService)
+            loadAutoplayTracks(
+                existing = existing,
+                seedSong = effectiveSeed,
+                limit = needed,
+                source = source,
+                context = this@PlaybackService,
+                sessionContext = sessionSnapshot,
+            )
                 .onSuccess { resolved ->
                     val activePlayer = player ?: return@onSuccess
                     if (AppSettings.autoplaySource.value != source ||
@@ -2086,7 +2258,7 @@ class PlaybackService : MediaLibraryService() {
     private fun newSessionPlayer(target: ExoPlayer) = SessionPlayer(
         target,
         { lastPublishedSubtitle },
-        ::canStartPlaybackAtCurrentVolume,
+        { canStartPlaybackNow(isExternalPreview = false) },
         { savePlaybackState(target) },
         castPlayback,
         ::closeLocalCastServers,
@@ -2148,6 +2320,8 @@ class PlaybackService : MediaLibraryService() {
         AppSettings.audioSessionId.value = incoming.audioSessionId
         mediaSession?.player = newSessionPlayer(incoming)
 
+        outgoing.currentMediaItem?.toSong()?.let(::recordReliableAutoplayTrack)
+        lastTransitionWasQuickAutoplaySkip = false
         onTrackBecameCurrent(
             incoming.currentMediaItem,
             previousEnded = true,
@@ -2479,6 +2653,15 @@ class PlaybackService : MediaLibraryService() {
         // never counted.
         ListeningRecorder.onStopped()
         val newSong = mediaItem?.toSong()
+        if (newSong != null && com.music.bitchord.feature.homeai.LocalHomeAi.isModelInstalled(this)) {
+            val startIdx = exoPlayer.currentMediaItemIndex.coerceAtLeast(0)
+            val endIdx = minOf(exoPlayer.mediaItemCount - 1, startIdx + 8)
+            val prioritySongs = buildList {
+                add(newSong)
+                for (idx in (startIdx + 1)..endIdx) add(exoPlayer.getMediaItemAt(idx).toSong())
+            }
+            com.music.bitchord.feature.homeai.LocalHomeAi.prioritizePlaybackTracks(this, prioritySongs)
+        }
         restoreLongTrackPosition(exoPlayer, newSong)
         val durationMs = exoPlayer.duration.takeIf { it > 0 }
         if (exoPlayer.isPlaying) {
@@ -4094,6 +4277,10 @@ class PlaybackService : MediaLibraryService() {
         repeatAllStash = emptyList()
         repeatAllStashSeed = null
         sessionSongHistory.clear()
+        recentPlayedForAutoplay.clear()
+        skippedAutoplaySongs.clear()
+        lastReliableAutoplaySeed = null
+        lastTransitionWasQuickAutoplaySkip = false
         persistedQueueStart = 0
         LastPlayed.clearImmediately()
     }
@@ -4185,13 +4372,28 @@ class PlaybackService : MediaLibraryService() {
             active.shuffleModeEnabled = false
             active.setMediaItems(listOf(song.toMediaItem()), 0, 0L)
             active.prepare()
+            SpeakerWarningBus.registerExternalPreviewResumer {
+                Handler(Looper.getMainLooper()).post(::resumeExternalAudioPreviewAfterSpeakerApproval)
+            }
             if (!canStartPlaybackAtCurrentVolume()) {
                 restoreExternalPreview(active)
+                return@launch
+            }
+            if (shouldWarnBeforeSpeakerPlayback(isExternalPreview = true)) {
+                notifySpeakerWarningBlocked(SpeakerWarningRequest(isExternalPreview = true))
                 return@launch
             }
             active.play()
             updateExternalAudioPopup(active)
         }
+    }
+
+    private fun resumeExternalAudioPreviewAfterSpeakerApproval() {
+        val active = player ?: return
+        if (!isExternalPreviewPlaying(active)) return
+        if (!canStartPlaybackAtCurrentVolume()) return
+        active.play()
+        updateExternalAudioPopup(active)
     }
 
     /** Shows the optional overlay only while a file-manager preview owns the player. */
@@ -4224,7 +4426,7 @@ class PlaybackService : MediaLibraryService() {
         if (!isExternalPreviewPlaying(active)) return
         if (active.isPlaying) {
             active.pause()
-        } else if (canStartPlaybackAtCurrentVolume()) {
+        } else if (canStartPlaybackNow(isExternalPreview = true)) {
             active.play()
         }
     }
@@ -5466,6 +5668,8 @@ class PlaybackService : MediaLibraryService() {
 
 
     override fun onDestroy() {
+        SpeakerWarningBus.registerExternalPreviewResumer(null)
+        SpeakerWarningBus.resetSessionApproval()
         VolumeHandoff.update(this, false)
         runCatching { unregisterReceiver(volumeNoisyReceiver) }
         TrackGain.onGainNeeded = null

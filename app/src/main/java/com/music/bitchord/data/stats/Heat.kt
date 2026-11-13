@@ -42,8 +42,9 @@ import kotlin.math.pow
  */
 object HeatScorer {
     /** Half-lives of the two scores, in days. */
-    const val SHORT_HALF_LIFE_DAYS = 7.0
-    const val LONG_HALF_LIFE_DAYS = 30.0
+    const val SHORT_HALF_LIFE_DAYS = 3.0
+    const val LONG_HALF_LIFE_DAYS = 14.0
+    const val STEADY_RATIO = SHORT_HALF_LIFE_DAYS / LONG_HALF_LIFE_DAYS
 
     /** How quickly the meter fills: score at which it reads about 3.2 of 5. */
     private const val SCALE = 10.0
@@ -60,6 +61,27 @@ object HeatScorer {
             userSkipped && playedMs < 10_000L -> -0.5
             userSkipped -> -0.3
             else -> 0.0
+        }
+    }
+
+    /**
+     * Computes `(shortDelta, longDelta)` for a single finished listen:
+     * - Positive listens apply `(base * origin.factor + repeatBonus) * sameDayFactor` to both.
+     * - Manual skips hit short-term momentum at 100% and long-term heat at 50%.
+     */
+    fun listenScoreDeltas(
+        base: Double,
+        origin: PlayOrigin,
+        nthListenToday: Int,
+        isRecentRepeat: Boolean,
+    ): Pair<Double, Double> {
+        if (base == 0.0) return 0.0 to 0.0
+        return if (base > 0.0) {
+            val repeatBonus = if (isRecentRepeat) 0.5 else 0.0
+            val pts = (base * origin.factor + repeatBonus) * sameDayFactor(nthListenToday)
+            pts to pts
+        } else {
+            base to (base * 0.5)
         }
     }
 
@@ -82,17 +104,72 @@ object HeatScorer {
     fun level(longScore: Double): Float =
         (5.0 * (1.0 - exp(-longScore.coerceAtLeast(0.0) / SCALE))).toFloat().coerceIn(0f, 5f)
 
+    /** Normalizes shortScore onto the longScore steady-state scale. */
+    fun normalizedShort(shortScore: Double): Double =
+        shortScore.coerceAtLeast(0.0) / STEADY_RATIO
+
+    /** 0..5 equivalent of the decayed short score on the same scale as [level]. */
+    fun shortLevel(shortScore: Double): Float = level(normalizedShort(shortScore))
+
+    /** Unbounded logarithmic heat curve matching the initial slope of [level] without capping at 5.0. */
+    fun unboundedHeat(score: Double): Double =
+        5.0 * ln(1.0 + score.coerceAtLeast(0.0) / SCALE)
+
+    /** Raw unbounded log-heat gap between normalized short score and long score. */
+    fun rawDiff(shortScore: Double, longScore: Double): Double =
+        unboundedHeat(normalizedShort(shortScore)) - unboundedHeat(longScore)
+
+    /** Dampens positive novelty spikes for brand-new tracks so one-day plays don't beat real bursts. */
+    fun noveltyDamping(
+        plays: Int,
+        firstPlayedMs: Long,
+        firstCarriedOver: Boolean,
+        now: Long,
+    ): Double {
+        val ageDays = if (firstPlayedMs > 0L && !firstCarriedOver) {
+            (now - firstPlayedMs).coerceAtLeast(0L).toDouble() / DAY_MS
+        } else {
+            7.0
+        }
+        val ageFactor = ((ageDays + 1.0) / 3.0).coerceIn(0.5, 1.0)
+        val playFactor = (plays / 4.0).coerceIn(0.5, 1.0)
+        return minOf(ageFactor, playFactor)
+    }
+
+    /** MACD-style surge momentum: unbounded log difference, novelty-damped only on positive deltas. */
+    fun momentum(
+        shortScore: Double,
+        longScore: Double,
+        plays: Int = 4,
+        firstPlayedMs: Long = 0L,
+        firstCarriedOver: Boolean = false,
+        now: Long = 0L,
+    ): Float {
+        val raw = rawDiff(shortScore, longScore)
+        return if (raw > 0.0) {
+            (raw * noveltyDamping(plays, firstPlayedMs, firstCarriedOver, now)).toFloat()
+        } else {
+            raw.toFloat()
+        }
+    }
+
     /**
-     * Rising (1), steady (0) or cooling (-1): the short score scaled to the
-     * long one's steady state, against the long score.
+     * Rising (1), steady (0) or cooling (-1) from the unbounded MACD gap,
+     * requiring meaningful recent short heat (`shortScore >= 1.8`) to surge.
      */
-    fun trend(shortScore: Double, longScore: Double): Int {
-        if (longScore < 0.5) return if (shortScore > 0.5) 1 else 0
-        val steady = SHORT_HALF_LIFE_DAYS / LONG_HALF_LIFE_DAYS
-        val ratio = (shortScore / steady) / longScore
+    fun trend(
+        shortScore: Double,
+        longScore: Double,
+        plays: Int = 4,
+        firstPlayedMs: Long = 0L,
+        firstCarriedOver: Boolean = false,
+        now: Long = 0L,
+    ): Int {
+        val mom = momentum(shortScore, longScore, plays, firstPlayedMs, firstCarriedOver, now)
+        val raw = rawDiff(shortScore, longScore)
         return when {
-            ratio > 1.25 -> 1
-            ratio < 0.6 -> -1
+            shortScore >= 1.8 && mom >= 0.7f -> 1
+            raw <= -0.6 -> -1
             else -> 0
         }
     }
@@ -120,8 +197,16 @@ data class HeatInfo(
     val peak: Float,
     /** Plays heard since heat began recording — the seeded ones say nothing about how far they got. */
     val recordedPlays: Int,
-    /** Short score against the long one's steady state: above 1 and climbing, below 1 and cooling. */
-    val momentum: Float = 1f,
+    /** MACD-style surge delta: positive when rising rapidly, negative when cooling off. */
+    val momentum: Float = 0f,
+    /** Decayed short-term raw score. */
+    val shortScore: Float = 0f,
+    /** Decayed long-term raw score. */
+    val longScore: Float = 0f,
+    /** Normalized short-term level on the 0..5 scale, shown in heat details. */
+    val shortLevel: Float = 0f,
+    /** True when a track that cooled well below a high peak (>= 2.5) surges back. */
+    val isRevival: Boolean = false,
     /** Listens by time of day: morning, daytime, evening, night (see [HeatStore.slotOf]). Empty before 2.6. */
     val slots: List<Int> = emptyList(),
     /**
@@ -219,26 +304,36 @@ object HeatStore {
      * One listen has ended: [playedMs] of real playback, [userSkipped] when the
      * listener moved on by hand rather than the track running out.
      */
-    fun finishListen(song: Song, playedMs: Long, durationMs: Long, userSkipped: Boolean) {
+    fun finishListen(
+        song: Song,
+        playedMs: Long,
+        durationMs: Long,
+        userSkipped: Boolean,
+        origin: PlayOrigin = PlayOrigin.UNKNOWN,
+    ) {
         if (!ready) return
         val key = song.heatKey()
         if (key.isBlank()) return
         val now = System.currentTimeMillis()
         val length = durationMs.takeIf { it > 0 } ?: song.durationMillis()
-        var points = HeatScorer.points(playedMs, length, userSkipped)
-        if (points == 0.0) return
+        val base = HeatScorer.points(playedMs, length, userSkipped)
+        if (base == 0.0) return
         synchronized(lock) {
             val entry = entries.getOrPut(key) { HeatEntry(key = key) }
             ageTo(entry, now)
             val today = epochDay(now)
-            if (points > 0) {
+            val isRecentRepeat = base > 0 && lastFinishedKey == key && now - lastFinishedAt < REPEAT_WINDOW_MS
+            val nthToday = if (base > 0) {
                 if (entry.dayKey != today) {
                     entry.dayKey = today
                     entry.listensToday = 0
                 }
-                entry.listensToday++
-                points *= HeatScorer.sameDayFactor(entry.listensToday)
-                if (lastFinishedKey == key && now - lastFinishedAt < REPEAT_WINDOW_MS) points += 0.5
+                ++entry.listensToday
+            } else {
+                entry.listensToday
+            }
+            val (shortDelta, longDelta) = HeatScorer.listenScoreDeltas(base, origin, nthToday, isRecentRepeat)
+            if (base > 0) {
                 entry.plays++
                 if (length > 0 && playedMs >= length * 0.9) entry.fullListens++
                 if (entry.firstPlayed == 0L) entry.firstPlayed = now
@@ -246,19 +341,16 @@ object HeatStore {
                 entry.recentDays.add(today)
                 while (entry.slots.size < 4) entry.slots.add(0)
                 entry.slots[slotOf(now)]++
+                lastFinishedKey = key
+                lastFinishedAt = now
             } else {
                 entry.skips++
             }
             entry.recentDays.removeAll { it < today - 6 }
-            entry.shortScore = (entry.shortScore + points).coerceAtLeast(0.0)
-            entry.longScore = (entry.longScore + points).coerceAtLeast(0.0)
+            entry.shortScore = (entry.shortScore + shortDelta).coerceAtLeast(0.0)
+            entry.longScore = (entry.longScore + longDelta).coerceAtLeast(0.0)
             recordWeek(entry, now)
-            if (points > 0) {
-                lastFinishedKey = key
-                lastFinishedAt = now
-            }
-            // The playlist (or Favourites) this was played from warms too.
-            val base = HeatScorer.points(playedMs, length, userSkipped)
+            // The playlist (or Favourites) this was played from warms too (unweighted base).
             if (base > 0) PlaySource.creditFor(song)?.let { collection -> creditCollection(collection, base, now) }
         }
         publish()
@@ -362,10 +454,15 @@ object HeatStore {
                 val long = HeatScorer.decay(e.longScore, elapsed, HeatScorer.LONG_HALF_LIFE_DAYS)
                 val short = HeatScorer.decay(e.shortScore, elapsed, HeatScorer.SHORT_HALF_LIFE_DAYS)
                 val level = HeatScorer.level(long)
+                val shortLvl = HeatScorer.shortLevel(short)
                 val peak = maxOf(level, e.weekly.filterKeys { it >= thisWeek - 7 }.values.maxOrNull() ?: 0f)
+                val carriedOver = e.seededPlays > 0
+                val mom = HeatScorer.momentum(short, long, e.plays, e.firstPlayed, carriedOver, now)
+                val tr = HeatScorer.trend(short, long, e.plays, e.firstPlayed, carriedOver, now)
+                val revival = peak >= 2.5f && level <= peak - 1.0f && short >= 1.8 && mom >= 0.7f
                 e.key to HeatInfo(
                     level = level,
-                    trend = HeatScorer.trend(short, long),
+                    trend = tr,
                     plays = e.plays,
                     fullListens = e.fullListens,
                     skips = e.skips,
@@ -374,10 +471,13 @@ object HeatStore {
                     lastPlayed = e.lastPlayed,
                     peak = peak,
                     recordedPlays = (e.plays - e.seededPlays).coerceAtLeast(0),
-                    momentum = if (long < 0.3) (if (short > 0.3) 2f else 1f) else
-                        ((short / (HeatScorer.SHORT_HALF_LIFE_DAYS / HeatScorer.LONG_HALF_LIFE_DAYS)) / long).toFloat(),
+                    momentum = mom,
+                    shortScore = short.toFloat(),
+                    longScore = long.toFloat(),
+                    shortLevel = shortLvl,
+                    isRevival = revival,
                     slots = e.slots.toList(),
-                    firstCarriedOver = e.seededPlays > 0,
+                    firstCarriedOver = carriedOver,
                 )
             }
         }

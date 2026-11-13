@@ -37,16 +37,23 @@ import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.WbSunny
 import androidx.compose.material.icons.rounded.WbTwilight
 import androidx.compose.material.icons.rounded.Whatshot
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -82,13 +89,19 @@ import com.music.bitchord.data.stats.heatKey
 import com.music.bitchord.feature.home.data.HomeContent
 import com.music.bitchord.feature.home.data.HomeModel
 import com.music.bitchord.feature.home.data.MixKind
+import com.music.bitchord.feature.homeai.LocalHomeAi
+import com.music.bitchord.feature.homeai.Music2EmoDownloadDialog
+import com.music.bitchord.feature.homeai.Music2EmoDownloadErrorDialog
+import com.music.bitchord.feature.homeai.Music2EmoDownloadProgressDialog
 import com.music.bitchord.feature.localmusic.data.LocalFavoritesStore
 import com.music.bitchord.feature.localmusic.data.LocalPlaylistStore
 import com.music.bitchord.feature.localsongactions.data.LocalPlayStatsStore
+import com.music.bitchord.ui.components.ExpressiveShapes
 import com.music.bitchord.ui.components.HeatMeter
 import com.music.bitchord.ui.components.heatRing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.format.TextStyle
 import java.util.Locale
@@ -132,14 +145,66 @@ fun HomeScreen(
     val favoriteIds by LocalFavoritesStore.favoriteIds.collectAsStateWithLifecycle()
     val libraryEntries by com.music.bitchord.feature.library.data.LibraryEntryStore.entries.collectAsStateWithLifecycle()
     val favoritesName = stringResource(R.string.favorites)
+    val dailyMixBoost by AppSettings.homeHeatDailyMixBoost.collectAsStateWithLifecycle()
+    val offlineMode by AppSettings.offlineMode.collectAsStateWithLifecycle()
+    val allowModelDownload = remember(context, offlineMode) {
+        LocalHomeAi.isDownloadSupported(context) && !offlineMode
+    }
+    val aiCacheRevision by LocalHomeAi.cacheRevision.collectAsStateWithLifecycle()
+    val aiDownloadProgress by LocalHomeAi.downloadProgress.collectAsStateWithLifecycle()
+    val aiAnalysisProgress by LocalHomeAi.analysisProgress.collectAsStateWithLifecycle()
+    val modelInstalledState by LocalHomeAi.modelInstalled.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    var modelInstalled by remember { mutableStateOf(modelInstalledState) }
+    var modelPromptDismissed by remember { mutableStateOf(LocalHomeAi.modelDecision(context) == false) }
+    var showModelPrompt by remember { mutableStateOf(false) }
+    var downloadError by remember { mutableStateOf<String?>(null) }
+    var todayEpochDay by remember { mutableLongStateOf(java.time.LocalDate.now().toEpochDay()) }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                val nowDay = java.time.LocalDate.now().toEpochDay()
+                if (nowDay != todayEpochDay) todayEpochDay = nowDay
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(context, aiCacheRevision, allowModelDownload, modelInstalledState) {
+        modelInstalled = modelInstalledState || withContext(Dispatchers.IO) { LocalHomeAi.isModelInstalled(context) }
+        modelPromptDismissed = LocalHomeAi.modelDecision(context) == false
+    }
 
     var content by remember { mutableStateOf<HomeContent?>(null) }
-    LaunchedEffect(songs, heat, playlists, favoriteIds, playStatsRevision, libraryEntries) {
+    LaunchedEffect(
+        songs,
+        heat,
+        playlists,
+        favoriteIds,
+        playStatsRevision,
+        libraryEntries,
+        todayEpochDay,
+        dailyMixBoost,
+        aiCacheRevision,
+    ) {
         // Heat changes with every listen; gather a burst of them into one pass.
         if (content != null) delay(1_500)
+        val day = java.time.LocalDate.ofEpochDay(todayEpochDay)
         // IO: it reads play counts and past months from disk.
         content = withContext(Dispatchers.IO) {
-            HomeModel.compute(context, songs, heat, playlists, favoriteIds, favoritesName, libraryEntries)
+            HomeModel.compute(
+                context = context,
+                songs = songs,
+                heat = heat,
+                playlists = playlists,
+                favoriteIds = favoriteIds,
+                favoritesName = favoritesName,
+                libraryEntries = libraryEntries,
+                dailyMixBoost = dailyMixBoost,
+                today = day,
+            )
         }
     }
     val home = content ?: HomeContent()
@@ -178,6 +243,22 @@ fun HomeScreen(
         ),
     ) {
         item(key = "home_header") { HomeHeader() }
+        if (allowModelDownload && !modelInstalled && !modelPromptDismissed && aiDownloadProgress == null) {
+            item(key = "home_ai_opt_in") {
+                LocalAiOptInCard(
+                    onEnable = { showModelPrompt = true },
+                    onDismiss = {
+                        LocalHomeAi.setModelDecision(context, false)
+                        modelPromptDismissed = true
+                    },
+                )
+            }
+        }
+        aiAnalysisProgress?.takeIf { !it.finished && !it.lowMemory && it.total > 0 }?.let { progress ->
+            item(key = "home_ai_analysis_pill") {
+                LocalAiAnalysisBanner(progress = progress)
+            }
+        }
         if (nothingYet) {
             item(key = "home_empty") {
                 Text(
@@ -301,6 +382,24 @@ fun HomeScreen(
                     }
                     item(key = "home_time") { SongShelf(home.timeOfDay, ::songHeat) { i -> onPlay(home.timeOfDay, i) } }
                 }
+                HomeSection.FOR_YOU -> if (home.forYouSongs.size >= 4) {
+                    item(key = "home_for_you_title") {
+                        ShelfTitle(stringResource(R.string.home_for_you), stringResource(R.string.home_for_you_subtitle))
+                    }
+                    item(key = "home_for_you") { SongShelf(home.forYouSongs, ::songHeat) { i -> onPlay(home.forYouSongs, i) } }
+                }
+                HomeSection.UPLIFTING -> if (home.upliftingSongs.size >= 4) {
+                    item(key = "home_uplifting_title") {
+                        ShelfTitle(stringResource(R.string.home_uplifting), stringResource(R.string.home_uplifting_subtitle))
+                    }
+                    item(key = "home_uplifting") { SongShelf(home.upliftingSongs, ::songHeat) { i -> onPlay(home.upliftingSongs, i) } }
+                }
+                HomeSection.CALM -> if (home.calmSongs.size >= 4) {
+                    item(key = "home_calm_title") {
+                        ShelfTitle(stringResource(R.string.home_calm), stringResource(R.string.home_calm_subtitle))
+                    }
+                    item(key = "home_calm") { SongShelf(home.calmSongs, ::songHeat) { i -> onPlay(home.calmSongs, i) } }
+                }
                 HomeSection.UNPLAYED_ALBUMS -> if (home.unplayedAlbums.isNotEmpty()) {
                     item(key = "home_unplayed_title") { ShelfTitle(stringResource(R.string.home_unplayed_albums)) }
                     item(key = "home_unplayed") {
@@ -325,6 +424,181 @@ fun HomeScreen(
     }
     if (editLayout) {
         com.music.bitchord.ui.components.HomeLayoutSheet(onDismiss = { editLayout = false })
+    }
+    if (showModelPrompt) {
+        Music2EmoDownloadDialog(
+            dismissLabelRes = R.string.home_ai_not_now,
+            onConfirm = {
+                showModelPrompt = false
+                LocalHomeAi.setModelDecision(context, true)
+                modelPromptDismissed = false
+                scope.launch {
+                    try {
+                        LocalHomeAi.downloadModels(context)
+                        modelInstalled = withContext(Dispatchers.IO) { LocalHomeAi.isModelInstalled(context) }
+                    } catch (e: Exception) {
+                        downloadError = e.localizedMessage ?: "Download failed"
+                    }
+                }
+            },
+            onDismiss = {
+                showModelPrompt = false
+                LocalHomeAi.setModelDecision(context, false)
+                modelPromptDismissed = true
+            },
+        )
+    }
+    aiDownloadProgress?.let { dp ->
+        Music2EmoDownloadProgressDialog(progress = dp)
+    }
+    downloadError?.let { err ->
+        Music2EmoDownloadErrorDialog(
+            error = err,
+            onDismiss = { downloadError = null },
+        )
+    }
+}
+
+@Composable
+private fun LocalAiOptInCard(
+    onEnable: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        tonalElevation = 2.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(46.dp)
+                        .clip(com.music.bitchord.ui.components.PolygonShape(ExpressiveShapes.cookie))
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.AutoAwesome,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.home_ai_card_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = stringResource(R.string.home_ai_card_subtitle),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.82f),
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text(stringResource(R.string.home_ai_not_now))
+                }
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = onEnable,
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Text(stringResource(R.string.home_ai_download_action))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalAiAnalysisBanner(
+    progress: LocalHomeAi.AnalysisProgress,
+) {
+    val total = progress.total.coerceAtLeast(1)
+    val completed = progress.completed.coerceIn(0, total)
+    val fraction = (completed.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+    val percent = (fraction * 100f).toInt().coerceIn(0, 100)
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        tonalElevation = 2.dp,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(com.music.bitchord.ui.components.PolygonShape(ExpressiveShapes.cookie))
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        trackColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.24f),
+                    )
+                }
+                Text(
+                    text = stringResource(R.string.home_ai_analysis_progress, completed, progress.total),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                ) {
+                    Text(
+                        text = "$percent%",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
+            }
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(CircleShape),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.14f),
+            )
+        }
     }
 }
 
@@ -414,6 +688,9 @@ private fun mixHue(kind: MixKind): Float = when (kind) {
     MixKind.NEW -> 168f
     MixKind.DEEP_CUTS -> 38f
     MixKind.TIME -> 268f
+    MixKind.FOR_YOU -> 295f
+    MixKind.UPLIFTING -> 46f
+    MixKind.CALM -> 188f
     MixKind.UNPLAYED -> 335f
 }
 
@@ -460,6 +737,9 @@ private fun MixCard(mix: com.music.bitchord.feature.home.data.HomeMix, slot: Int
         MixKind.NEW -> R.string.mix_new to R.string.mix_new_desc
         MixKind.DEEP_CUTS -> R.string.mix_deep_cuts to R.string.mix_deep_cuts_desc
         MixKind.TIME -> slotTitle(slot) to R.string.mix_time_desc
+        MixKind.FOR_YOU -> R.string.home_for_you to R.string.mix_for_you_desc
+        MixKind.UPLIFTING -> R.string.home_uplifting to R.string.mix_uplifting_desc
+        MixKind.CALM -> R.string.home_calm to R.string.mix_calm_desc
         MixKind.UNPLAYED -> R.string.mix_unplayed to R.string.mix_unplayed_desc
     }
     // Four different sleeves where there are four; repeated where there are fewer.

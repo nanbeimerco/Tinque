@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.components
 
+import android.os.SystemClock
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Size
@@ -27,9 +28,11 @@ import androidx.compose.material3.SwipeToDismissBoxState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.layout.onSizeChanged
@@ -65,6 +68,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
@@ -312,17 +316,28 @@ fun SongRow(
     showFavoriteMark: Boolean = false,
 ) {
     val haptics = rememberHaptics()
+    val latestOnSwipe by rememberUpdatedState(onSwipeToQueue)
     val swipeStateHolder = remember { mutableStateOf<SwipeToDismissBoxState?>(null) }
     var boxWidth by remember { mutableFloatStateOf(0f) }
+    var triggeredInGesture by remember { mutableStateOf(false) }
+    var lastTriggerUptimeMs by remember { mutableLongStateOf(0L) }
 
     val swipeState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
-            if (value != SwipeToDismissBoxValue.Settled && onSwipeToQueue != null) {
+            val callback = latestOnSwipe
+            if (value != SwipeToDismissBoxValue.Settled && callback != null && boxWidth > 0f) {
                 val offset = try { swipeStateHolder.value?.requireOffset() ?: 0f } catch (e: Exception) { 0f }
-                // Only queue if the physical drag reached half the box width, ignoring short accidental flings.
-                if (abs(offset) >= boxWidth * 0.45f) {
+                val now = SystemClock.uptimeMillis()
+                // Only queue if the physical drag reached 45% of the box width, ignoring short accidental flings
+                // and duplicate callbacks while springing back or recomposing.
+                if (abs(offset) >= boxWidth * 0.45f &&
+                    !triggeredInGesture &&
+                    now - lastTriggerUptimeMs >= 500L
+                ) {
+                    triggeredInGesture = true
+                    lastTriggerUptimeMs = now
                     haptics.play(Haptic.Select)
-                    onSwipeToQueue()
+                    callback()
                 }
             }
             false // never actually dismiss; snap back
@@ -359,6 +374,7 @@ fun SongRow(
     LaunchedEffect(swipeState, boxWidth) {
         if (boxWidth <= 0f) return@LaunchedEffect
         val armAt = boxWidth * 0.45f
+        val resetAt = boxWidth * 0.1f
         var armed = false
         snapshotFlow { try { swipeState.requireOffset() } catch (e: Exception) { 0f } }
             .collect { offset ->
@@ -373,13 +389,19 @@ fun SongRow(
                     // queue, and that must not buzz the same gesture twice.
                     armed && travelled < armAt * 0.8f -> armed = false
                 }
+                if (triggeredInGesture &&
+                    swipeState.currentValue == SwipeToDismissBoxValue.Settled &&
+                    travelled < resetAt
+                ) {
+                    triggeredInGesture = false
+                }
             }
     }
 
     SwipeToDismissBox(
         state = swipeState,
         modifier = modifier.onSizeChanged { boxWidth = it.width.toFloat() },
-        backgroundContent = { QueueSwipeBackground(swipeState) },
+        backgroundContent = { QueueSwipeBackground(swipeState, boxWidth) },
     ) {
         SongRowContent(
             debounce = debounce,
@@ -403,46 +425,62 @@ fun SongRow(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun QueueSwipeBackground(swipeState: SwipeToDismissBoxState) {
+private fun QueueSwipeBackground(
+    swipeState: SwipeToDismissBoxState,
+    boxWidth: Float,
+) {
     val playNext by AppSettings.swipeToPlayNext.collectAsStateWithLifecycle()
+    val offset = try { swipeState.requireOffset() } catch (e: Exception) { 0f }
+    val armed = boxWidth > 0f && abs(offset) >= boxWidth * 0.45f
+    val tintAlpha = if (armed) 0.30f else 0.16f
     Row(
         modifier = Modifier
             .fillMaxSize()
             .drawWithContent {
-                val offset = try { swipeState.requireOffset() } catch (e: Exception) { 0f }
-                if (offset > 0f) {
-                    clipRect(left = 0f, top = 0f, right = offset, bottom = size.height) {
+                val drawOffset = try { swipeState.requireOffset() } catch (e: Exception) { 0f }
+                if (drawOffset > 0f) {
+                    clipRect(left = 0f, top = 0f, right = drawOffset, bottom = size.height) {
                         this@drawWithContent.drawContent()
                     }
-                } else if (offset < 0f) {
-                    clipRect(left = size.width + offset, top = 0f, right = size.width, bottom = size.height) {
+                } else if (drawOffset < 0f) {
+                    clipRect(left = size.width + drawOffset, top = 0f, right = size.width, bottom = size.height) {
                         this@drawWithContent.drawContent()
                     }
                 }
             }
-            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = tintAlpha))
             .padding(horizontal = PAGE_GUTTER + 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        QueueSwipeLabel(playNext)
-        QueueSwipeLabel(playNext)
+        QueueSwipeLabel(playNext = playNext, armed = armed)
+        QueueSwipeLabel(playNext = playNext, armed = armed)
     }
 }
 
 @Composable
-private fun QueueSwipeLabel(playNext: Boolean) {
+private fun QueueSwipeLabel(
+    playNext: Boolean,
+    armed: Boolean,
+) {
+    val labelRes = when {
+        playNext && armed -> R.string.swipe_release_to_play_next
+        playNext -> R.string.play_next
+        armed -> R.string.swipe_release_to_queue
+        else -> R.string.queue
+    }
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
             if (playNext) Icons.Rounded.PlaylistPlay else Icons.Rounded.PlaylistAdd,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(if (armed) 22.dp else 20.dp),
         )
         Spacer(Modifier.width(6.dp))
         Text(
-            text = stringResource(if (playNext) R.string.play_next else R.string.queue),
+            text = stringResource(labelRes),
             style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (armed) FontWeight.SemiBold else FontWeight.Medium,
             color = MaterialTheme.colorScheme.primary,
         )
     }

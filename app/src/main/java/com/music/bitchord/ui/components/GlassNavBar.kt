@@ -154,6 +154,7 @@ fun GlassNavBar(
     val indicatorColor = if (useGlass) glassPill else MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
     val haptics = rememberHaptics()
 
+    val currentSelectedIndex by rememberUpdatedState(selectedIndex)
     val currentOnTabSelected by rememberUpdatedState(onTabSelected)
     val standaloneIndex = tabs.lastIndex
 
@@ -230,24 +231,24 @@ fun GlassNavBar(
             // The inline circle: the 25dp glyph and 10dp around it.
             inlineBarHeight = 45.dp,
         ),
-        contentKey = remember(selectedIndex, tabs, contentColor, artworkColor, isArtworkTheme, hideNavigationBarLabels, shouldIntegrate) {
-            listOf(selectedIndex, tabs, contentColor, artworkColor, isArtworkTheme, hideNavigationBarLabels, shouldIntegrate)
+        contentKey = remember(tabs, contentColor, artworkColor, isArtworkTheme, hideNavigationBarLabels, shouldIntegrate) {
+            listOf(tabs, contentColor, artworkColor, isArtworkTheme, hideNavigationBarLabels, shouldIntegrate)
         },
         splitStandalone = shouldIntegrate,
     ) {
         tabs.forEachIndexed { index, tab ->
-            val isSelected = index == selectedIndex
-            val defaultTint = if (isSelected) selectedColor else unselectedColor
             val onClick = {
-                if (!isSelected) haptics.play(Haptic.Select)
+                if (index != currentSelectedIndex) haptics.play(Haptic.Select)
                 currentOnTabSelected(index)
             }
             if (index == standaloneIndex && !shouldIntegrate) {
                 standaloneTab(
                     key = index,
                     icon = {
+                        val isSelected = index == currentSelectedIndex
+                        val defaultTint = if (isSelected) selectedColor else unselectedColor
                         Icon(
-                            imageVector = tab.icon,
+                            imageVector = if (isSelected) tab.selectedIcon ?: tab.icon else tab.icon,
                             contentDescription = tab.label,
                             tint = defaultTint,
                             modifier = Modifier.size(25.dp),
@@ -260,10 +261,12 @@ fun GlassNavBar(
                 tab(
                     key = index,
                     icon = {
+                        val isSelected = index == currentSelectedIndex
+                        val defaultTint = if (isSelected) selectedColor else unselectedColor
                         val currentTint = androidx.compose.material3.LocalContentColor.current
                         val tint = if (currentTint.alpha > 0f) currentTint else defaultTint
                         Icon(
-                            imageVector = tab.icon,
+                            imageVector = if (isSelected) tab.selectedIcon ?: tab.icon else tab.icon,
                             contentDescription = tab.label,
                             tint = tint,
                             modifier = Modifier.size(25.dp),
@@ -271,6 +274,8 @@ fun GlassNavBar(
                     },
                     title = {
                         if (!hideNavigationBarLabels) {
+                            val isSelected = index == currentSelectedIndex
+                            val defaultTint = if (isSelected) selectedColor else unselectedColor
                             val currentTint = androidx.compose.material3.LocalContentColor.current
                             val tint = if (currentTint.alpha > 0f) currentTint else defaultTint
                             Text(
@@ -292,8 +297,10 @@ fun GlassNavBar(
                     standaloneTab(
                         key = index,
                         icon = {
+                            val isSelected = index == currentSelectedIndex
+                            val defaultTint = if (isSelected) selectedColor else unselectedColor
                             Icon(
-                                imageVector = tab.icon,
+                                imageVector = if (isSelected) tab.selectedIcon ?: tab.icon else tab.icon,
                                 contentDescription = tab.label,
                                 tint = defaultTint,
                                 modifier = Modifier.size(25.dp),

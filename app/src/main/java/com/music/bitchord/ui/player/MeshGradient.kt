@@ -231,7 +231,8 @@ fun rememberArtworkColors(imageUrl: String?, canvasFrame: Bitmap? = null): MeshP
             .build()
         val result = SingletonImageLoader.get(context).execute(request)
         val bitmap = (result as? SuccessResult)?.image?.toBitmap() ?: return@LaunchedEffect
-        palette = MeshPalette(paletteOf(bitmap))
+        val colors = withContext(Dispatchers.Default) { paletteOf(bitmap) }
+        palette = MeshPalette(colors)
     }
 
     LaunchedEffect(canvasFrame) {

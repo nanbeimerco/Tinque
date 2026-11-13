@@ -113,6 +113,8 @@ import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.sortedByAlbumTrackOrder
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.feature.artistimage.model.ArtistEntry
 import com.music.bitchord.feature.artistimage.model.ArtistImage
 import com.music.bitchord.feature.artistimage.model.ArtistSort
@@ -160,7 +162,6 @@ import com.music.bitchord.R
 import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.data.model.isSameTrackAs
-import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.LibraryViewType
 import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.data.settings.LocalMusicSort
@@ -184,7 +185,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
-import com.music.bitchord.ui.icons.BitChordIcons
 import android.widget.Toast
 import androidx.compose.ui.platform.LocalContext
 import java.util.Locale
@@ -613,6 +613,7 @@ fun LocalMusicScreen(
 
     Column(modifier = modifier.fillMaxSize()) {
         // ── Tab row ──────────────────────────────────────────────────────────
+        val useLucideTabIcons by AppSettings.useLucideTabIcons.collectAsStateWithLifecycle()
         val selectedTabIndex = displayedLocalTabs.indexOf(selectedTab).coerceAtLeast(0)
         if (showTabRow) {
             ScrollableTabRow(
@@ -632,19 +633,62 @@ fun LocalMusicScreen(
                 modifier = Modifier.padding(top = barHeight + 4.dp),
             ) {
                 displayedLocalTabs.forEach { tab ->
+                    val tabSelected = selectedTab == tab
                     val (icon, label) = when (tab) {
-                        LOCAL_TAB_SONGS -> Icons.Rounded.MusicNote to stringResource(R.string.songs)
-                        LOCAL_TAB_ALBUMS -> Icons.Rounded.Album to stringResource(R.string.albums)
-                        LOCAL_TAB_ARTISTS -> Icons.Rounded.Person to stringResource(R.string.artists)
-                        LOCAL_TAB_FOLDERS -> Icons.Rounded.Folder to stringResource(R.string.folders)
-                        LOCAL_TAB_PLAYLISTS -> Icons.AutoMirrored.Rounded.QueueMusic to stringResource(R.string.playlists)
-                        LOCAL_TAB_ALBUM_ARTISTS -> Icons.Rounded.Person to stringResource(R.string.album_artists)
-                        else -> Icons.Rounded.MusicNote to stringResource(R.string.songs)
+                        LOCAL_TAB_SONGS -> (
+                            if (useLucideTabIcons) {
+                                if (tabSelected) BitChordIcons.TabSongsFilled else BitChordIcons.TabSongsOutline
+                            } else {
+                                Icons.Rounded.MusicNote
+                            }
+                        ) to stringResource(R.string.songs)
+                        LOCAL_TAB_ALBUMS -> (
+                            if (useLucideTabIcons) {
+                                if (tabSelected) BitChordIcons.TabAlbumsFilled else BitChordIcons.TabAlbumsOutline
+                            } else {
+                                Icons.Rounded.Album
+                            }
+                        ) to stringResource(R.string.albums)
+                        LOCAL_TAB_ARTISTS -> (
+                            if (useLucideTabIcons) {
+                                if (tabSelected) BitChordIcons.TabArtistsFilled else BitChordIcons.TabArtistsOutline
+                            } else {
+                                Icons.Rounded.Person
+                            }
+                        ) to stringResource(R.string.artists)
+                        LOCAL_TAB_FOLDERS -> (
+                            if (useLucideTabIcons) {
+                                if (tabSelected) BitChordIcons.TabFoldersFilled else BitChordIcons.TabFoldersOutline
+                            } else {
+                                Icons.Rounded.Folder
+                            }
+                        ) to stringResource(R.string.folders)
+                        LOCAL_TAB_PLAYLISTS -> (
+                            if (useLucideTabIcons) {
+                                if (tabSelected) BitChordIcons.TabPlaylistsFilled else BitChordIcons.TabPlaylistsOutline
+                            } else {
+                                Icons.AutoMirrored.Rounded.QueueMusic
+                            }
+                        ) to stringResource(R.string.playlists)
+                        LOCAL_TAB_ALBUM_ARTISTS -> (
+                            if (useLucideTabIcons) {
+                                if (tabSelected) BitChordIcons.TabAlbumArtistsFilled else BitChordIcons.TabAlbumArtistsOutline
+                            } else {
+                                Icons.Rounded.Person
+                            }
+                        ) to stringResource(R.string.album_artists)
+                        else -> (
+                            if (useLucideTabIcons) {
+                                if (tabSelected) BitChordIcons.TabSongsFilled else BitChordIcons.TabSongsOutline
+                            } else {
+                                Icons.Rounded.MusicNote
+                            }
+                        ) to stringResource(R.string.songs)
                     }
                     LocalTab(
                         icon = icon,
                         label = label,
-                        selected = selectedTab == tab,
+                        selected = tabSelected,
                         onClick = {
                             selectedTab = tab
                             leaveDrillDown()
@@ -1380,7 +1424,10 @@ private fun SongsTab(
                     )
                     }
                 }
-                itemsIndexed(songs) { index, song ->
+                itemsIndexed(
+                    items = songs,
+                    key = { _, song -> "grid_${song.localUri ?: song.videoId}" },
+                ) { index, song ->
                     SongGridCard(
                         modifier = Modifier.animateItem(),
                         song = song,
@@ -1432,7 +1479,10 @@ private fun SongsTab(
                     )
                     }
                 }
-                itemsIndexed(songs) { index, song ->
+                itemsIndexed(
+                    items = songs,
+                    key = { _, song -> song.localUri ?: song.videoId },
+                ) { index, song ->
                     SongRow(
                         song = song,
                         selected = song.videoId in selectedIds,

@@ -65,6 +65,7 @@ object ListeningRecorder {
     private var heatSong: Song? = null
     private var heatPlayed: Long = 0L
     private var heatDuration: Long = 0L
+    private var heatOrigin: PlayOrigin = PlayOrigin.UNKNOWN
 
     /**
      * The player moved off the current track. [userSkipped] when the listener
@@ -75,11 +76,16 @@ object ListeningRecorder {
     fun onTransition(userSkipped: Boolean, ranToEnd: Boolean) {
         val song = heatSong ?: return
         val played = if (ranToEnd && heatDuration > 0) maxOf(heatPlayed, heatDuration) else heatPlayed
-        HeatStore.finishListen(song, played, heatDuration, userSkipped && !ranToEnd)
+        HeatStore.finishListen(song, played, heatDuration, userSkipped && !ranToEnd, origin = heatOrigin)
         heatSong = null
         heatPlayed = 0L
         heatDuration = 0L
+        heatOrigin = PlayOrigin.UNKNOWN
     }
+
+    @Synchronized
+    fun currentListenSnapshot(): Pair<Song, Long>? =
+        heatSong?.let { it to heatPlayed }
 
     /**
      * The player arrived on [song]. Opening the listen here rather than on its
@@ -87,21 +93,23 @@ object ListeningRecorder {
      * sampler has ticked once — still count against it.
      */
     @Synchronized
-    fun onTrackStarted(song: Song?) {
+    fun onTrackStarted(song: Song?, origin: PlayOrigin = PlayOrigin.UNKNOWN) {
         if (song == null || song.videoId == heatSong?.videoId) return
-        heatSong?.let { HeatStore.finishListen(it, heatPlayed, heatDuration, userSkipped = false) }
+        heatSong?.let { HeatStore.finishListen(it, heatPlayed, heatDuration, userSkipped = false, origin = heatOrigin) }
         heatSong = song
         heatPlayed = 0L
         heatDuration = song.durationMillis()
+        heatOrigin = origin
     }
 
     @Synchronized
     fun onSample(song: Song, durationMs: Long) {
         val now = System.currentTimeMillis()
         if (heatSong?.videoId != song.videoId) {
-            heatSong?.let { HeatStore.finishListen(it, heatPlayed, heatDuration, userSkipped = false) }
+            heatSong?.let { HeatStore.finishListen(it, heatPlayed, heatDuration, userSkipped = false, origin = heatOrigin) }
             heatSong = song
             heatPlayed = 0L
+            heatOrigin = PlayOrigin.UNKNOWN
         }
         heatDuration = durationMs.takeIf { it > 0 } ?: song.durationMillis()
         if (song.videoId != currentId) {

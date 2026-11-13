@@ -1,11 +1,13 @@
 package com.music.bitchord.ui.icons
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathBuilder
+import androidx.compose.ui.graphics.vector.group
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
@@ -709,5 +711,364 @@ object BitChordIcons {
                 moveTo(9.5f, 17.5f); lineTo(19.5f, 17.5f)
             }
         }.build()
+    }
+
+    // ---- Lucide Tab Bar Icons (optional M3 replacement: outline idle + filled selected) ----
+    // Scaled by LUCIDE_TAB_SCALE inside the 24x24 box so optical bounds match Material 3 (~18-20dp)
+    // without touching the 25dp/18dp layout geometry of navigation bars.
+
+    private const val LUCIDE_TAB_SCALE = 0.90f
+
+    private fun lucideTabIcon(name: String, block: ImageVector.Builder.() -> Unit): ImageVector =
+        ImageVector.Builder(
+            name = name,
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            group(
+                scaleX = LUCIDE_TAB_SCALE,
+                scaleY = LUCIDE_TAB_SCALE,
+                pivotX = 12f,
+                pivotY = 12f,
+            ) {
+                block()
+            }
+        }.build()
+
+    private fun PathBuilder.circleSubpath(cx: Float, cy: Float, r: Float, clockwise: Boolean = true) {
+        moveTo(cx - r, cy)
+        arcToRelative(r, r, 0f, isMoreThanHalf = true, isPositiveArc = clockwise, dx1 = r * 2f, dy1 = 0f)
+        arcToRelative(r, r, 0f, isMoreThanHalf = true, isPositiveArc = clockwise, dx1 = -r * 2f, dy1 = 0f)
+        close()
+    }
+
+    private fun PathBuilder.roundRectSubpath(x: Float, y: Float, w: Float, h: Float, r: Float) {
+        moveTo(x + r, y)
+        lineTo(x + w - r, y)
+        arcToRelative(r, r, 0f, isMoreThanHalf = false, isPositiveArc = true, dx1 = r, dy1 = r)
+        lineTo(x + w, y + h - r)
+        arcToRelative(r, r, 0f, isMoreThanHalf = false, isPositiveArc = true, dx1 = -r, dy1 = r)
+        lineTo(x + r, y + h)
+        arcToRelative(r, r, 0f, isMoreThanHalf = false, isPositiveArc = true, dx1 = -r, dy1 = -r)
+        lineTo(x, y + r)
+        arcToRelative(r, r, 0f, isMoreThanHalf = false, isPositiveArc = true, dx1 = r, dy1 = -r)
+        close()
+    }
+
+    private fun ImageVector.Builder.lucideStroke(draw: PathBuilder.() -> Unit) {
+        path(
+            stroke = stroke,
+            strokeLineWidth = STROKE,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round,
+            pathBuilder = draw,
+        )
+    }
+
+    private fun ImageVector.Builder.lucideFillAndStroke(draw: PathBuilder.() -> Unit) {
+        path(
+            fill = stroke,
+            stroke = stroke,
+            strokeLineWidth = STROKE,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round,
+            pathBuilder = draw,
+        )
+    }
+
+    /** ① Home: birdhouse (outline) */
+    val TabHomeOutline: ImageVector by lazy {
+        lucideTabIcon("bc_tab_home_outline") {
+            lucideStroke {
+                moveTo(12f, 18f); lineTo(12f, 22f)
+                moveTo(17f, 18f); lineTo(18.956f, 6.532f)
+                moveTo(3f, 8f); lineTo(10.82f, 2.385f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2.36f, 0f)
+                lineTo(21f, 8f)
+                moveTo(4f, 18f); lineTo(20f, 18f)
+                moveTo(7f, 18f); lineTo(5.044f, 6.532f)
+                circleSubpath(12f, 10f, 2f)
+            }
+        }
+    }
+
+    /** ① Home: birdhouse (filled + transparent entrance hole cutout + roof/base/stand strokes) */
+    val TabHomeFilled: ImageVector by lazy {
+        lucideTabIcon("bc_tab_home_filled") {
+            path(fill = stroke, pathFillType = PathFillType.EvenOdd) {
+                moveTo(4.4f, 7.1f)
+                lineTo(12f, 2.05f)
+                lineTo(19.6f, 7.1f)
+                lineTo(18.08f, 18f)
+                lineTo(5.92f, 18f)
+                close()
+                circleSubpath(12f, 10f, 2.1f)
+            }
+            lucideStroke {
+                moveTo(12f, 18f); lineTo(12f, 22f)
+                moveTo(3f, 8f); lineTo(10.82f, 2.385f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2.36f, 0f)
+                lineTo(21f, 8f)
+                moveTo(4f, 18f); lineTo(20f, 18f)
+            }
+        }
+    }
+
+    /** ② Library: gallery-vertical-end (outline) */
+    val TabLibraryOutline: ImageVector by lazy {
+        lucideTabIcon("bc_tab_library_outline") {
+            lucideStroke {
+                moveTo(7f, 2f); lineTo(17f, 2f)
+                moveTo(5f, 6f); lineTo(19f, 6f)
+                roundRectSubpath(3f, 10f, 18f, 12f, 2f)
+            }
+        }
+    }
+
+    /** ② Library: gallery-vertical-end (filled card with 2.2 stroke + top stacked lines) */
+    val TabLibraryFilled: ImageVector by lazy {
+        lucideTabIcon("bc_tab_library_filled") {
+            lucideFillAndStroke {
+                roundRectSubpath(3f, 10f, 18f, 12f, 2f)
+            }
+            lucideStroke {
+                moveTo(7f, 2f); lineTo(17f, 2f)
+                moveTo(5f, 6f); lineTo(19f, 6f)
+            }
+        }
+    }
+
+    /** ③ Songs: music (outline) */
+    val TabSongsOutline: ImageVector by lazy {
+        lucideTabIcon("bc_tab_songs_outline") {
+            lucideStroke {
+                moveTo(9f, 18f); lineTo(9f, 5f); lineTo(21f, 3f); lineTo(21f, 16f)
+                circleSubpath(6f, 18f, 3f)
+                circleSubpath(18f, 16f, 3f)
+            }
+        }
+    }
+
+    /** ③ Songs: music (filled note heads retaining 2.2 stroke so stems connect seamlessly) */
+    val TabSongsFilled: ImageVector by lazy {
+        lucideTabIcon("bc_tab_songs_filled") {
+            lucideFillAndStroke {
+                circleSubpath(6f, 18f, 3f)
+                circleSubpath(18f, 16f, 3f)
+            }
+            lucideStroke {
+                moveTo(9f, 18f); lineTo(9f, 5f); lineTo(21f, 3f); lineTo(21f, 16f)
+            }
+        }
+    }
+
+    /** ④ Albums: disc-3 (outline) */
+    val TabAlbumsOutline: ImageVector by lazy {
+        lucideTabIcon("bc_tab_albums_outline") {
+            lucideStroke {
+                circleSubpath(12f, 12f, 10f)
+                circleSubpath(12f, 12f, 2f)
+                moveTo(6f, 12f); curveTo(6f, 10.3f, 6.7f, 8.8f, 7.8f, 7.8f)
+                moveTo(18f, 12f); curveTo(18f, 13.7f, 17.3f, 15.2f, 16.2f, 16.2f)
+            }
+        }
+    }
+
+    /** ④ Albums: disc-3 (expanded +1.1 outer silhouette + true transparent spindle hole & highlight arcs) */
+    val TabAlbumsFilled: ImageVector by lazy {
+        lucideTabIcon("bc_tab_albums_filled") {
+            path(fill = stroke, pathFillType = PathFillType.EvenOdd) {
+                circleSubpath(12f, 12f, 11.1f)
+                circleSubpath(12f, 12f, 2.1f)
+                // Top-left 45deg rounded capsule groove (radius 6 +/- 0.9)
+                moveTo(5.1f, 12f)
+                arcToRelative(6.9f, 6.9f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2.021f, -4.879f)
+                arcToRelative(0.9f, 0.9f, 0f, isMoreThanHalf = false, isPositiveArc = true, 1.273f, 1.273f)
+                arcToRelative(5.1f, 5.1f, 0f, isMoreThanHalf = false, isPositiveArc = false, -1.494f, 3.606f)
+                arcToRelative(0.9f, 0.9f, 0f, isMoreThanHalf = false, isPositiveArc = true, -1.8f, 0f)
+                close()
+                // Bottom-right 45deg rounded capsule groove (radius 6 +/- 0.9)
+                moveTo(18.9f, 12f)
+                arcToRelative(6.9f, 6.9f, 0f, isMoreThanHalf = false, isPositiveArc = true, -2.021f, 4.879f)
+                arcToRelative(0.9f, 0.9f, 0f, isMoreThanHalf = false, isPositiveArc = true, -1.273f, -1.273f)
+                arcToRelative(5.1f, 5.1f, 0f, isMoreThanHalf = false, isPositiveArc = false, 1.494f, -3.606f)
+                arcToRelative(0.9f, 0.9f, 0f, isMoreThanHalf = false, isPositiveArc = true, 1.8f, 0f)
+                close()
+            }
+        }
+    }
+
+    /** ⑤ Artists: user-round (outline) */
+    val TabArtistsOutline: ImageVector by lazy {
+        lucideTabIcon("bc_tab_artists_outline") {
+            lucideStroke {
+                circleSubpath(12f, 8f, 5f)
+                moveTo(20f, 21f)
+                arcToRelative(8f, 8f, 0f, isMoreThanHalf = false, isPositiveArc = false, -16f, 0f)
+            }
+        }
+    }
+
+    /** ⑤ Artists: user-round (shoulder expanded +1.1 & carved by r=7.5 head gap + filled head on top) */
+    val TabArtistsFilled: ImageVector by lazy {
+        lucideTabIcon("bc_tab_artists_filled") {
+            // Lower shoulder contour clipped cleanly by Circle(12, 8, r = 7.5)
+            path(fill = stroke) {
+                moveTo(17.122f, 13.478f)
+                arcTo(9.1f, 9.1f, 0f, isMoreThanHalf = false, isPositiveArc = true, 21.1f, 21f)
+                arcTo(1.1f, 1.1f, 0f, isMoreThanHalf = false, isPositiveArc = true, 20f, 22.1f)
+                lineTo(4f, 22.1f)
+                arcTo(1.1f, 1.1f, 0f, isMoreThanHalf = false, isPositiveArc = true, 2.9f, 21f)
+                arcTo(9.1f, 9.1f, 0f, isMoreThanHalf = false, isPositiveArc = true, 6.878f, 13.478f)
+                arcTo(7.5f, 7.5f, 0f, isMoreThanHalf = false, isPositiveArc = false, 17.122f, 13.478f)
+                close()
+            }
+            // Head rendered on top
+            lucideFillAndStroke {
+                circleSubpath(12f, 8f, 5f)
+            }
+        }
+    }
+
+    /** ⑥ Album Artists: users (outline) */
+    val TabAlbumArtistsOutline: ImageVector by lazy {
+        lucideTabIcon("bc_tab_album_artists_outline") {
+            lucideStroke {
+                moveTo(16f, 21f); lineTo(16f, 19f)
+                arcToRelative(4f, 4f, 0f, isMoreThanHalf = false, isPositiveArc = false, -4f, -4f)
+                lineTo(6f, 15f)
+                arcToRelative(4f, 4f, 0f, isMoreThanHalf = false, isPositiveArc = false, -4f, 4f)
+                lineTo(2f, 21f)
+                moveTo(16f, 3.128f)
+                arcToRelative(4f, 4f, 0f, isMoreThanHalf = false, isPositiveArc = true, 0f, 7.744f)
+                moveTo(22f, 21f); lineTo(22f, 19f)
+                arcToRelative(4f, 4f, 0f, isMoreThanHalf = false, isPositiveArc = false, -3f, -3.87f)
+                circleSubpath(9f, 7f, 4f)
+            }
+        }
+    }
+
+    /** ⑥ Album Artists: users (front person filled with 2.2 stroke, back person outline only) */
+    val TabAlbumArtistsFilled: ImageVector by lazy {
+        lucideTabIcon("bc_tab_album_artists_filled") {
+            lucideStroke {
+                moveTo(16f, 3.128f)
+                arcToRelative(4f, 4f, 0f, isMoreThanHalf = false, isPositiveArc = true, 0f, 7.744f)
+                moveTo(22f, 21f); lineTo(22f, 19f)
+                arcToRelative(4f, 4f, 0f, isMoreThanHalf = false, isPositiveArc = false, -3f, -3.87f)
+            }
+            lucideFillAndStroke {
+                circleSubpath(9f, 7f, 4f)
+                moveTo(16f, 21f); lineTo(16f, 19f)
+                arcToRelative(4f, 4f, 0f, isMoreThanHalf = false, isPositiveArc = false, -4f, -4f)
+                lineTo(6f, 15f)
+                arcToRelative(4f, 4f, 0f, isMoreThanHalf = false, isPositiveArc = false, -4f, 4f)
+                lineTo(2f, 21f)
+                close()
+            }
+        }
+    }
+
+    /** ⑦ Folders: folder-closed (outline) */
+    val TabFoldersOutline: ImageVector by lazy {
+        lucideTabIcon("bc_tab_folders_outline") {
+            lucideStroke {
+                moveTo(20f, 20f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = false, 2f, -2f)
+                lineTo(22f, 8f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = false, -2f, -2f)
+                lineTo(12.1f, 6f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = true, -1.69f, -0.9f)
+                lineTo(9.6f, 3.9f)
+                arcTo(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = false, 7.93f, 3f)
+                lineTo(4f, 3f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = false, -2f, 2f)
+                lineTo(2f, 18f)
+                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = false, 2f, 2f)
+                close()
+                moveTo(2f, 10f); lineTo(22f, 10f)
+            }
+        }
+    }
+
+    /** ⑦ Folders: folder-closed (+1.1 outer contour split by true transparent y=10 gap) */
+    val TabFoldersFilled: ImageVector by lazy {
+        lucideTabIcon("bc_tab_folders_filled") {
+            path(fill = stroke) {
+                // Upper lid above transparent divider (y <= 9.1)
+                moveTo(0.9f, 9.1f)
+                lineTo(0.9f, 5f)
+                arcTo(3.1f, 3.1f, 0f, isMoreThanHalf = false, isPositiveArc = true, 4f, 1.9f)
+                lineTo(7.93f, 1.9f)
+                arcTo(3.1f, 3.1f, 0f, isMoreThanHalf = false, isPositiveArc = true, 10.51f, 3.285f)
+                lineTo(11.32f, 4.485f)
+                arcTo(0.9f, 0.9f, 0f, isMoreThanHalf = false, isPositiveArc = false, 12.1f, 4.9f)
+                lineTo(20f, 4.9f)
+                arcTo(3.1f, 3.1f, 0f, isMoreThanHalf = false, isPositiveArc = true, 23.1f, 8f)
+                lineTo(23.1f, 9.1f)
+                close()
+                // Lower folder body below transparent divider (y >= 10.9)
+                moveTo(0.9f, 10.9f)
+                lineTo(23.1f, 10.9f)
+                lineTo(23.1f, 18f)
+                arcTo(3.1f, 3.1f, 0f, isMoreThanHalf = false, isPositiveArc = true, 20f, 21.1f)
+                lineTo(4f, 21.1f)
+                arcTo(3.1f, 3.1f, 0f, isMoreThanHalf = false, isPositiveArc = true, 0.9f, 18f)
+                close()
+            }
+        }
+    }
+
+    /** ⑧ Search: search (outline) */
+    val TabSearchOutline: ImageVector by lazy {
+        lucideTabIcon("bc_tab_search_outline") {
+            lucideStroke {
+                circleSubpath(11f, 11f, 8f)
+                moveTo(21f, 21f); lineTo(16.66f, 16.66f)
+            }
+        }
+    }
+
+    /** ⑧ Search: search (subtle 20% lens fill + 2.2 outer ring & handle) */
+    val TabSearchFilled: ImageVector by lazy {
+        lucideTabIcon("bc_tab_search_filled") {
+            path(fill = stroke, fillAlpha = 0.2f) {
+                circleSubpath(11f, 11f, 8f)
+            }
+            lucideStroke {
+                circleSubpath(11f, 11f, 8f)
+                moveTo(21f, 21f); lineTo(16.66f, 16.66f)
+            }
+        }
+    }
+
+    /** ⑨ Playlists: list-music (outline) */
+    val TabPlaylistsOutline: ImageVector by lazy {
+        lucideTabIcon("bc_tab_playlists_outline") {
+            lucideStroke {
+                moveTo(16f, 5f); lineTo(3f, 5f)
+                moveTo(11f, 12f); lineTo(3f, 12f)
+                moveTo(11f, 19f); lineTo(3f, 19f)
+                moveTo(21f, 16f); lineTo(21f, 5f)
+                circleSubpath(18f, 16f, 3f)
+            }
+        }
+    }
+
+    /** ⑨ Playlists: list-music (filled note head retaining 2.2 stroke + list bars & stem) */
+    val TabPlaylistsFilled: ImageVector by lazy {
+        lucideTabIcon("bc_tab_playlists_filled") {
+            lucideFillAndStroke {
+                circleSubpath(18f, 16f, 3f)
+            }
+            lucideStroke {
+                moveTo(16f, 5f); lineTo(3f, 5f)
+                moveTo(11f, 12f); lineTo(3f, 12f)
+                moveTo(11f, 19f); lineTo(3f, 19f)
+                moveTo(21f, 16f); lineTo(21f, 5f)
+            }
+        }
     }
 }

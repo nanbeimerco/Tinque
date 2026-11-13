@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -168,6 +170,10 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val density = androidx.compose.ui.platform.LocalDensity.current
     val stretch = remember(density) { MenuStretch(scope, with(density) { PopupMotion.STRETCH.toPx() }) }
+    val safeDrawing = WindowInsets.safeDrawing
+    val minTopPx = with(density) { topInset.roundToPx() }
+    val safeTopInset = safeDrawing.getTop(density)
+    val safeBottomInset = safeDrawing.getBottom(density)
 
     // One clock drives the whole open (see PopupMotion); a close plays it back.
     LaunchedEffect(request) {
@@ -186,6 +192,7 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
             clock.snapTo(from)
             clock.animateTo(0f, tween(from.toInt().coerceAtLeast(1), easing = LinearEasing))
             shown = null
+            controller.motionAnchor = null
             controller.visible = false
         }
     }
@@ -213,25 +220,30 @@ fun GlassMenuHost(controller: GlassMenuController, glassBackdrop: Boolean, modif
                 .layout { measurable, constraints ->
                     val margin = MENU_MARGIN.roundToPx()
                     val gap = MENU_GAP.roundToPx()
-                    val top = topInset.roundToPx()
+                    val topBound = maxOf(minTopPx, safeTopInset + margin)
+                    val bottomBound = (constraints.maxHeight - maxOf(margin, safeBottomInset + margin)).coerceAtLeast(topBound)
                     val maxW = (constraints.maxWidth - margin * 2).coerceAtLeast(0)
                     frame.minWidth = if (menu.wide) maxW else MENU_MIN_WIDTH.roundToPx().coerceAtMost(maxW)
                     frame.maxWidth = if (menu.wide) maxW else MENU_MAX_WIDTH.roundToPx().coerceAtMost(maxW)
-                    frame.maxHeight = (constraints.maxHeight - top - margin * 2).coerceAtLeast(0)
+                    frame.maxHeight = (bottomBound - topBound).coerceAtLeast(0)
                     // The full menu's size, once its rows have been measured.
                     val w = if (menuSize.width > 0) menuSize.width else frame.minWidth
                     val h = menuSize.height.coerceAtLeast(1)
-                    // Right edge on the button's right edge. The first row sits on
-                    // the button (the menu spans it), held inside the screen. A wide
-                    // one spans the screen and sits above its anchor if it fits.
+                    // Right edge on the button's right edge. Vertically, smoothly pivot from
+                    // downward at top anchors -> balanced centered mid-screen -> upward below.
                     val x = if (menu.wide) margin else (anchor.right.toInt() - w).coerceIn(margin, (constraints.maxWidth - w - margin).coerceAtLeast(margin))
-                    val y = if (menu.wide) {
-                        val below = anchor.bottom.toInt() + gap
-                        val above = anchor.top.toInt() - gap - h
-                        if (above >= top) above else below
-                    } else {
-                        anchor.center.y.toInt() - PopupMotion.ACROSS_LIFT.roundToPx()
-                    }.coerceIn(top, (constraints.maxHeight - h - margin).coerceAtLeast(top))
+                    val y = GlassMenuPlacement.verticalPositionPx(
+                        wide = menu.wide,
+                        anchorTop = anchor.top.toInt(),
+                        anchorBottom = anchor.bottom.toInt(),
+                        anchorCenterY = anchor.center.y.toInt(),
+                        menuHeight = h,
+                        containerHeight = constraints.maxHeight,
+                        topBound = topBound,
+                        bottomBound = bottomBound,
+                        gap = gap,
+                        acrossLift = PopupMotion.ACROSS_LIFT.roundToPx(),
+                    ).y
 
                     val f = PopupMotion.frame(clock.value, controller.motionReduced)
                     val start = PopupMotion.START_SIZE.toPx()
@@ -337,6 +349,52 @@ internal class MenuLens(val warp: () -> Float) {
 internal val LocalMenuLens = staticCompositionLocalOf<MenuLens?> { null }
 
 private val topInset = 24.dp
+
+internal data class VerticalPlacementResult(
+    val y: Int,
+    val pivot: Float,
+)
+
+/**
+ * Pure placement calculator for vertical popup anchoring and safe-area clamping.
+ */
+internal object GlassMenuPlacement {
+    fun verticalPositionPx(
+        wide: Boolean,
+        anchorTop: Int,
+        anchorBottom: Int,
+        anchorCenterY: Int,
+        menuHeight: Int,
+        containerHeight: Int,
+        topBound: Int,
+        bottomBound: Int,
+        gap: Int,
+        acrossLift: Int,
+    ): VerticalPlacementResult {
+        val h = menuHeight.coerceAtLeast(1)
+        val effectiveTop = topBound.coerceIn(0, containerHeight)
+        val effectiveBottom = bottomBound.coerceIn(effectiveTop, containerHeight)
+        val maxY = (effectiveBottom - h).coerceAtLeast(effectiveTop)
+        if (wide) {
+            val below = anchorBottom + gap
+            val above = anchorTop - gap - h
+            val fitsAbove = above >= effectiveTop
+            return VerticalPlacementResult(
+                y = (if (fitsAbove) above else below).coerceIn(effectiveTop, maxY),
+                pivot = if (fitsAbove) 1f else 0f,
+            )
+        }
+        val span = (effectiveBottom - effectiveTop).coerceAtLeast(1)
+        val anchorFrac = ((anchorCenterY - effectiveTop).toFloat() / span.toFloat()).coerceIn(0f, 1f)
+        val pivot = PopupMotion.smooth(0.14f, 0.76f, anchorFrac)
+        val anchorInset = minOf(acrossLift, h / 2)
+        val yTopAnchor = anchorCenterY - anchorInset
+        val yBottomAnchor = anchorCenterY + anchorInset - h
+        val rawY = PopupMotion.lerp(yTopAnchor.toFloat(), yBottomAnchor.toFloat(), pivot)
+        val y = kotlin.math.round(rawY).toInt().coerceIn(effectiveTop, maxY)
+        return VerticalPlacementResult(y = y, pivot = pivot)
+    }
+}
 
 @Composable
 private fun Modifier.glassMenuSurface(glassBackdrop: Boolean, shape: androidx.compose.foundation.shape.CornerBasedShape = MENU_SHAPE): Modifier {

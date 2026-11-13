@@ -1083,13 +1083,11 @@ private fun TabGroup(
 
                                 var activeTab = touchedTab
                                 val tabChanged = activeTab != currentSelectedTabIndex
-                                if (tabChanged) {
-                                    haptics.play(Haptic.Select)
-                                    scope.tabs[activeTab].onClick()
-                                } else {
-                                    haptics.play(Haptic.Tick)
-                                }
+                                haptics.play(Haptic.Tick)
 
+                                // Move only the visual lens on press; defer switching pages
+                                // until release so sliding across tabs never flashes an
+                                // intermediate tab on screen.
                                 if (currentSelectedTabIndex < 0 || morph.fold > 0f) {
                                     pill.snapTo(activeTab)
                                 } else {
@@ -1099,6 +1097,7 @@ private fun TabGroup(
                                 val pointerId = down.id
                                 val touchSlop = viewConfiguration.touchSlop
                                 var isHolding = false
+                                var committed = false
 
                                 while (true) {
                                     val event = withTimeoutOrNull(180L) {
@@ -1122,12 +1121,17 @@ private fun TabGroup(
                                     val change = event.changes.firstOrNull { it.id == pointerId } ?: break
 
                                     if (!change.pressed) {
+                                        committed = true
                                         if (isHolding) {
                                             pill.release(activeTab)
                                             if (activeTab != currentSelectedTabIndex) {
+                                                haptics.play(Haptic.Select)
                                                 scope.tabs[activeTab].onClick()
                                             }
-                                        } else if (!tabChanged) {
+                                        } else if (tabChanged) {
+                                            haptics.play(Haptic.Select)
+                                            scope.tabs[activeTab].onClick()
+                                        } else {
                                             // A plain tap on the tab that is already
                                             // selected still goes to the app: it closes
                                             // whatever is open over the tab (settings,
@@ -1168,6 +1172,14 @@ private fun TabGroup(
                                             haptics.play(Haptic.Tick)
                                         }
                                         change.consume()
+                                    }
+                                }
+
+                                if (!committed) {
+                                    if (isHolding) {
+                                        pill.release(currentSelectedTabIndex)
+                                    } else if (tabChanged && morph.fold <= 0f) {
+                                        pill.animateTo(currentSelectedTabIndex)
                                     }
                                 }
                             }

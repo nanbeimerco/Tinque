@@ -107,6 +107,7 @@ import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ScreenRotation
 import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.SurroundSound
@@ -222,8 +223,14 @@ import com.music.bitchord.feature.localmusic.data.MusicoletBackupImporter
 import com.music.bitchord.feature.localmusic.data.MusicoletImportException
 import com.music.bitchord.feature.localmusic.data.MusicoletImportFailure
 import com.music.bitchord.feature.localmusic.data.PreparedMusicoletBackup
+import com.music.bitchord.feature.homeai.LocalHomeAi
+import com.music.bitchord.feature.homeai.Music2EmoDownloadDialog
+import com.music.bitchord.feature.homeai.Music2EmoDownloadErrorDialog
+import com.music.bitchord.feature.homeai.Music2EmoDownloadProgressDialog
 import com.music.bitchord.ui.player.fullBleedArtworkAvailable
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -254,6 +261,7 @@ private fun motionAndNavSearchEntries(): List<SettingsSearchEntry> {
     val lockBottomBarExpanded by AppSettings.lockBottomBarExpanded.collectAsStateWithLifecycle()
     val integrateStandaloneTab by AppSettings.integrateStandaloneTab.collectAsStateWithLifecycle()
     val hideNavBarLabels by AppSettings.hideNavigationBarLabels.collectAsStateWithLifecycle()
+    val useLucideTabIcons by AppSettings.useLucideTabIcons.collectAsStateWithLifecycle()
     val legacyMeshGradient by AppSettings.legacyMeshGradient.collectAsStateWithLifecycle()
     return listOf(
         SettingsSearchEntry(stringResource(R.string.reduce_animation), stringResource(R.string.reduce_animation_subtitle), listOf("animation", "reduce", "アニメーション"), reduceAnimation) { AppSettings.setReduceAnimation(!reduceAnimation) },
@@ -262,7 +270,21 @@ private fun motionAndNavSearchEntries(): List<SettingsSearchEntry> {
         SettingsSearchEntry(stringResource(R.string.lock_bottom_bar_expanded), stringResource(R.string.lock_bottom_bar_expanded_subtitle), listOf("bottom bar", "floating", "expanded", "固定", "ボトムバー", "展開"), lockBottomBarExpanded) { AppSettings.setLockBottomBarExpanded(!lockBottomBarExpanded) },
         SettingsSearchEntry(stringResource(R.string.integrate_standalone_tab), stringResource(R.string.integrate_standalone_tab_subtitle), listOf("bottom bar", "floating", "tab", "integrate", "一体化", "統合", "タブ"), integrateStandaloneTab) { AppSettings.setIntegrateStandaloneTab(!integrateStandaloneTab) },
         SettingsSearchEntry(stringResource(R.string.hide_nav_bar_labels), stringResource(R.string.hide_nav_bar_labels_subtitle), listOf("navigation", "nav bar", "label", "ラベル", "ナビゲーション"), hideNavBarLabels) { AppSettings.setHideNavigationBarLabels(!hideNavBarLabels) },
+        SettingsSearchEntry(stringResource(R.string.use_lucide_tab_icons), stringResource(R.string.use_lucide_tab_icons_subtitle), listOf("lucide", "tab", "icon", "アイコン", "タブバー", "ナビゲーション"), useLucideTabIcons) { AppSettings.setUseLucideTabIcons(!useLucideTabIcons) },
         SettingsSearchEntry(stringResource(R.string.legacy_mesh_gradient), stringResource(R.string.legacy_mesh_gradient_subtitle), listOf("theme", "gradient", "テーマ", "グラデーション"), legacyMeshGradient) { AppSettings.setLegacyMeshGradient(!legacyMeshGradient) },
+    )
+}
+
+@Composable
+private fun autoplayExtraSearchEntries(): List<SettingsSearchEntry> {
+    val excludeInstrumentals by AppSettings.excludeInstrumentalsInAutoplay.collectAsStateWithLifecycle()
+    return listOf(
+        SettingsSearchEntry(
+            stringResource(R.string.exclude_instrumentals_autoplay),
+            stringResource(R.string.exclude_instrumentals_autoplay_subtitle),
+            listOf("autoplay", "instrumental", "vocal", "karaoke", "オフボーカル", "インスト", "オートプレイ"),
+            excludeInstrumentals,
+        ) { AppSettings.setExcludeInstrumentalsInAutoplay(!excludeInstrumentals) },
     )
 }
 
@@ -347,6 +369,7 @@ fun SettingsScreen(
     val lockBottomBarExpanded by AppSettings.lockBottomBarExpanded.collectAsStateWithLifecycle()
     val integrateStandaloneTab by AppSettings.integrateStandaloneTab.collectAsStateWithLifecycle()
     val hideNavBarLabels by AppSettings.hideNavigationBarLabels.collectAsStateWithLifecycle()
+    val useLucideTabIcons by AppSettings.useLucideTabIcons.collectAsStateWithLifecycle()
     val visibleMainTabs by AppSettings.visibleMainNavigationTabs.collectAsStateWithLifecycle()
     val mainTabOrder by AppSettings.mainNavigationTabOrder.collectAsStateWithLifecycle()
     val localTabs by AppSettings.visibleLocalLibraryTabs.collectAsStateWithLifecycle()
@@ -375,6 +398,7 @@ fun SettingsScreen(
     val orientationMode by AppSettings.screenOrientationMode.collectAsStateWithLifecycle()
     val landscapePlayerLayout by AppSettings.landscapePlayerLayout.collectAsStateWithLifecycle()
     val portraitPlayerLayout by AppSettings.portraitPlayerLayout.collectAsStateWithLifecycle()
+    val phoneLandscapeSplitPlayer by AppSettings.phoneLandscapeSplitPlayer.collectAsStateWithLifecycle()
     val favoriteUsesStar by AppSettings.favoriteUsesStar.collectAsStateWithLifecycle()
     val persistentLocalArtwork by AppSettings.persistentLocalArtwork.collectAsStateWithLifecycle()
     val resamplerCutoffHz by AppSettings.resamplerCutoffHz.collectAsStateWithLifecycle()
@@ -403,10 +427,12 @@ fun SettingsScreen(
     val popupExternalAudioPlayer by AppSettings.popupExternalAudioPlayer.collectAsStateWithLifecycle()
     val preventPlayAtZeroVolume by AppSettings.preventPlayAtZeroVolume.collectAsStateWithLifecycle()
     val pausePlaybackAtZeroVolume by AppSettings.pausePlaybackAtZeroVolume.collectAsStateWithLifecycle()
+    val warnBeforeSpeakerPlayback by AppSettings.warnBeforeSpeakerPlayback.collectAsStateWithLifecycle()
     val useLibraryIconForPlaylistControl by AppSettings.useLibraryIconForPlaylistControl.collectAsStateWithLifecycle()
     val visiblePlayerControls by AppSettings.visiblePlayerControls.collectAsStateWithLifecycle()
     val playerControlOrder by AppSettings.playerControlOrder.collectAsStateWithLifecycle()
     val hidePlayerArtist by AppSettings.hidePlayerArtist.collectAsStateWithLifecycle()
+    val homeHeatDailyMixBoost by AppSettings.homeHeatDailyMixBoost.collectAsStateWithLifecycle()
     val hideUnknownPlayerArtist by AppSettings.hideUnknownPlayerArtist.collectAsStateWithLifecycle()
     val centerPlayerTrackInfo by AppSettings.centerPlayerTrackInfo.collectAsStateWithLifecycle()
     val playerDetailsVerticalMenu by AppSettings.playerDetailsVerticalMenu.collectAsStateWithLifecycle()
@@ -623,6 +649,7 @@ fun SettingsScreen(
         SettingsSearchEntry(stringResource(R.string.player_playlist_library_icon), stringResource(R.string.player_playlist_library_icon_subtitle), listOf("playlist", "library", "プレイリスト", "ライブラリ", "icon"), useLibraryIconForPlaylistControl) { AppSettings.setUseLibraryIconForPlaylistControl(!useLibraryIconForPlaylistControl) },
         SettingsSearchEntry(stringResource(R.string.prevent_play_at_zero_volume), stringResource(R.string.prevent_play_at_zero_volume_subtitle), listOf("volume", "音量", "zero", "0"), preventPlayAtZeroVolume) { AppSettings.setPreventPlayAtZeroVolume(!preventPlayAtZeroVolume) },
         SettingsSearchEntry(stringResource(R.string.pause_playback_at_zero_volume), stringResource(R.string.pause_playback_at_zero_volume_subtitle), listOf("volume", "音量", "zero", "0", "pause", "一時停止"), pausePlaybackAtZeroVolume) { AppSettings.setPausePlaybackAtZeroVolume(!pausePlaybackAtZeroVolume) },
+        SettingsSearchEntry(stringResource(R.string.warn_before_speaker_playback), stringResource(R.string.warn_before_speaker_playback_subtitle), listOf("speaker", "warning", "alert", "スピーカー", "確認", "内蔵スピーカー"), warnBeforeSpeakerPlayback) { AppSettings.setWarnBeforeSpeakerPlayback(!warnBeforeSpeakerPlayback) },
         SettingsSearchEntry(stringResource(R.string.bit_perfect_playback), stringResource(R.string.bit_perfect_playback_subtitle), listOf("bitperfect", "bit-perfect", "bit perfect", "USB DAC", "PCM", "ビットパーフェクト", "音質"), bitPerfectPlayback) { AppSettings.setBitPerfectPlayback(!bitPerfectPlayback) },
         SettingsSearchEntry(stringResource(R.string.preload_album_art), stringResource(R.string.preload_album_art_subtitle), listOf("artwork", "album art", "preload", "先読み", "アルバムアート"), preloadAlbumArtOnStartup) { AppSettings.setPreloadAlbumArtOnStartup(!preloadAlbumArtOnStartup) },
         SettingsSearchEntry(stringResource(R.string.persistent_local_artwork), stringResource(R.string.persistent_local_artwork_subtitle), listOf("artwork", "album art", "storage", "画像", "ストレージ"), persistentLocalArtwork) { AppSettings.setPersistentLocalArtwork(!persistentLocalArtwork) },
@@ -630,6 +657,12 @@ fun SettingsScreen(
         SettingsSearchEntry(stringResource(R.string.blur_unfocused_lyrics), stringResource(R.string.blur_unfocused_lyrics_subtitle), listOf("lyrics", "歌詞", "blur", "ぼかし"), lyricsBlur) { AppSettings.setLyricsBlur(!lyricsBlur) },
         SettingsSearchEntry(stringResource(R.string.lyrics_manual_for_local_title), stringResource(R.string.lyrics_manual_for_local_subtitle), listOf("lyrics", "歌詞", "local", "ローカル", "自動", "選ぶ", "manual"), lyricsManualForLocal) { AppSettings.setLyricsManualForLocal(!lyricsManualForLocal) },
         SettingsSearchEntry(stringResource(R.string.auto_embed_lyrics), stringResource(R.string.auto_embed_lyrics_subtitle), listOf("lyrics", "歌詞", "embed", "埋め込み"), autoEmbedLyrics) { AppSettings.setAutoEmbedLyrics(!autoEmbedLyrics) },
+        SettingsSearchEntry(
+            stringResource(R.string.phone_landscape_split_player),
+            stringResource(R.string.phone_landscape_split_player_subtitle),
+            listOf("landscape", "split", "phone", "player", "横向き", "分割", "プレイヤー", "アルバムアート"),
+            phoneLandscapeSplitPlayer,
+        ) { AppSettings.setPhoneLandscapeSplitPlayer(!phoneLandscapeSplitPlayer) },
         SettingsSearchEntry(stringResource(R.string.full_screen_cover_art), stringResource(R.string.full_screen_cover_art_subtitle), listOf("artwork", "cover", "full screen", "アート", "全画面"), fullBleedArtwork) { AppSettings.setFullBleedArtwork(!fullBleedArtwork) },
         SettingsSearchEntry(stringResource(R.string.keep_original_artwork_aspect_ratio), stringResource(R.string.keep_original_artwork_aspect_ratio_subtitle), listOf("artwork", "cover", "aspect ratio", "crop", "縦長", "横長", "比率", "トリミング"), keepOriginalArtworkAspectRatio) { AppSettings.setKeepOriginalArtworkAspectRatio(!keepOriginalArtworkAspectRatio) },
         SettingsSearchEntry(stringResource(R.string.keep_artwork_full_size_paused), stringResource(R.string.keep_artwork_full_size_paused_subtitle), listOf("artwork", "cover", "paused", "停止中", "アート"), keepArtworkFullSizeWhenPaused) { AppSettings.setKeepArtworkFullSizeWhenPaused(!keepArtworkFullSizeWhenPaused) },
@@ -653,7 +686,7 @@ fun SettingsScreen(
         ) { AppSettings.setMiniPlayerPreviousButton(!miniPlayerPreviousButton) },
         SettingsSearchEntry(stringResource(R.string.filter_non_music_audio), stringResource(R.string.filter_non_music_audio_subtitle), listOf("filter", "audio", "music", "音楽", "フィルター"), filterNonMusicAudio) { AppSettings.setFilterNonMusicAudio(!filterNonMusicAudio) },
         SettingsSearchEntry(stringResource(R.string.playlist_song_artwork), stringResource(R.string.playlist_song_artwork_subtitle), listOf("playlist", "artwork", "プレイリスト", "アルバムアート"), showPlaylistSongArtwork) { AppSettings.setShowPlaylistSongArtwork(!showPlaylistSongArtwork) },
-    ) + motionAndNavSearchEntries() + listOf(
+    ) + motionAndNavSearchEntries() + autoplayExtraSearchEntries() + listOf(
         SettingsSearchEntry(
             stringResource(R.string.artwork_tap_opens_lyrics),
             stringResource(R.string.artwork_tap_opens_lyrics_subtitle),
@@ -744,6 +777,12 @@ fun SettingsScreen(
             listOf("repeat", "suggestions", "同じ曲", "繰り返し", "おすすめ"),
             dontRepeatSuggestions,
         ) { AppSettings.setDontRepeatSuggestions(!dontRepeatSuggestions) },
+        SettingsSearchEntry(
+            stringResource(R.string.home_heat_daily_mix_boost),
+            stringResource(R.string.home_heat_daily_mix_boost_subtitle),
+            listOf("heat", "home", "mix", "daily", "rotation", "ヒート", "ホーム", "ミックス", "日替わり"),
+            homeHeatDailyMixBoost,
+        ) { AppSettings.setHomeHeatDailyMixBoost(!homeHeatDailyMixBoost) },
         SettingsSearchEntry(
             stringResource(R.string.stop_music_on_close),
             stringResource(R.string.stop_music_on_close_subtitle),
@@ -1945,6 +1984,23 @@ fun SettingsScreen(
             )
             RowDivider()
             SettingsRow(
+                icon = Icons.Rounded.VolumeUp,
+                title = stringResource(R.string.warn_before_speaker_playback),
+                subtitle = stringResource(R.string.warn_before_speaker_playback_subtitle),
+                trailing = {
+                    Switch(
+                        checked = warnBeforeSpeakerPlayback,
+                        onCheckedChange = AppSettings::setWarnBeforeSpeakerPlayback,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setWarnBeforeSpeakerPlayback(!warnBeforeSpeakerPlayback) },
+            )
+            RowDivider()
+            SettingsRow(
                 icon = Icons.Rounded.Person,
                 title = stringResource(R.string.hide_player_artist),
                 subtitle = stringResource(R.string.hide_player_artist_subtitle),
@@ -2711,8 +2767,42 @@ fun SettingsScreen(
                 },
                 onClick = { AppSettings.setHideNavigationBarLabels(!hideNavBarLabels) },
             )
+            RowDivider()
+            SettingsRow(
+                icon = if (useLucideTabIcons) BitChordIcons.TabHomeFilled else Icons.Rounded.AutoAwesome,
+                title = stringResource(R.string.use_lucide_tab_icons),
+                subtitle = stringResource(R.string.use_lucide_tab_icons_subtitle),
+                trailing = {
+                    Switch(
+                        checked = useLucideTabIcons,
+                        onCheckedChange = AppSettings::setUseLucideTabIcons,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setUseLucideTabIcons(!useLucideTabIcons) },
+            )
         }
         if (shows(SettingsCategory.PLAYER)) SettingsGroup(header = stringResource(R.string.settings_category_player)) {
+            SettingsRow(
+                icon = Icons.Rounded.ViewStream,
+                title = stringResource(R.string.phone_landscape_split_player),
+                subtitle = stringResource(R.string.phone_landscape_split_player_subtitle),
+                trailing = {
+                    Switch(
+                        checked = phoneLandscapeSplitPlayer,
+                        onCheckedChange = AppSettings::setPhoneLandscapeSplitPlayer,
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = MaterialTheme.colorScheme.primary,
+                            checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    )
+                },
+                onClick = { AppSettings.setPhoneLandscapeSplitPlayer(!phoneLandscapeSplitPlayer) },
+            )
+            RowDivider()
             // Only on a window large enough to have the choice: a phone has
             // one layout whatever this says.
             if (windowHeight != Dp.Unspecified &&
@@ -3215,19 +3305,35 @@ fun SettingsScreen(
                     MainNavigationTab.FOLDERS -> R.string.folders
                     MainNavigationTab.HOME -> R.string.home
                 }
-                val icon = when (tab) {
-                    MainNavigationTab.SONGS -> Icons.Rounded.MusicNote
-                    MainNavigationTab.ALBUMS -> Icons.Rounded.Album
-                    MainNavigationTab.ARTISTS -> Icons.Rounded.Person
-                    MainNavigationTab.LIBRARY -> Icons.Rounded.LibraryMusic
-                    MainNavigationTab.SEARCH -> BitChordIcons.Search
-                    MainNavigationTab.ALBUM_ARTISTS -> Icons.Rounded.Person
-                    MainNavigationTab.FOLDERS -> Icons.Rounded.Folder
-                    MainNavigationTab.HOME -> Icons.Rounded.Home
-                }
                 val checked = if (tab == MainNavigationTab.ALBUM_ARTISTS) {
                     com.music.bitchord.data.settings.LocalLibraryTab.ALBUM_ARTISTS in localTabs
                 } else tab in visibleMainTabs
+                val icon = when (tab) {
+                    MainNavigationTab.SONGS -> if (useLucideTabIcons) {
+                        if (checked) BitChordIcons.TabSongsFilled else BitChordIcons.TabSongsOutline
+                    } else Icons.Rounded.MusicNote
+                    MainNavigationTab.ALBUMS -> if (useLucideTabIcons) {
+                        if (checked) BitChordIcons.TabAlbumsFilled else BitChordIcons.TabAlbumsOutline
+                    } else Icons.Rounded.Album
+                    MainNavigationTab.ARTISTS -> if (useLucideTabIcons) {
+                        if (checked) BitChordIcons.TabArtistsFilled else BitChordIcons.TabArtistsOutline
+                    } else Icons.Rounded.Person
+                    MainNavigationTab.LIBRARY -> if (useLucideTabIcons) {
+                        if (checked) BitChordIcons.TabLibraryFilled else BitChordIcons.TabLibraryOutline
+                    } else Icons.Rounded.LibraryMusic
+                    MainNavigationTab.SEARCH -> if (useLucideTabIcons) {
+                        if (checked) BitChordIcons.TabSearchFilled else BitChordIcons.TabSearchOutline
+                    } else BitChordIcons.Search
+                    MainNavigationTab.ALBUM_ARTISTS -> if (useLucideTabIcons) {
+                        if (checked) BitChordIcons.TabAlbumArtistsFilled else BitChordIcons.TabAlbumArtistsOutline
+                    } else Icons.Rounded.Person
+                    MainNavigationTab.FOLDERS -> if (useLucideTabIcons) {
+                        if (checked) BitChordIcons.TabFoldersFilled else BitChordIcons.TabFoldersOutline
+                    } else Icons.Rounded.Folder
+                    MainNavigationTab.HOME -> if (useLucideTabIcons) {
+                        if (checked) BitChordIcons.TabHomeFilled else BitChordIcons.TabHomeOutline
+                    } else Icons.Rounded.Home
+                }
                 val visibleMainCount = visibleMainTabs.size + if (
                     com.music.bitchord.data.settings.LocalLibraryTab.ALBUM_ARTISTS in localTabs
                 ) 1 else 0
@@ -3352,12 +3458,26 @@ fun SettingsScreen(
                     LocalLibraryTab.PLAYLISTS -> R.string.playlists
                     LocalLibraryTab.ALBUM_ARTISTS -> R.string.album_artists
                 }
+                val tabChecked = tab in localTabs
                 val tabIcon = when (tab) {
-                    LocalLibraryTab.SONGS -> Icons.Rounded.MusicNote
-                    LocalLibraryTab.ALBUMS -> Icons.Rounded.Album
-                    LocalLibraryTab.ARTISTS, LocalLibraryTab.ALBUM_ARTISTS -> Icons.Rounded.Person
-                    LocalLibraryTab.FOLDERS -> Icons.Rounded.Folder
-                    LocalLibraryTab.PLAYLISTS -> Icons.Rounded.PlaylistPlay
+                    LocalLibraryTab.SONGS -> if (useLucideTabIcons) {
+                        if (tabChecked) BitChordIcons.TabSongsFilled else BitChordIcons.TabSongsOutline
+                    } else Icons.Rounded.MusicNote
+                    LocalLibraryTab.ALBUMS -> if (useLucideTabIcons) {
+                        if (tabChecked) BitChordIcons.TabAlbumsFilled else BitChordIcons.TabAlbumsOutline
+                    } else Icons.Rounded.Album
+                    LocalLibraryTab.ARTISTS -> if (useLucideTabIcons) {
+                        if (tabChecked) BitChordIcons.TabArtistsFilled else BitChordIcons.TabArtistsOutline
+                    } else Icons.Rounded.Person
+                    LocalLibraryTab.ALBUM_ARTISTS -> if (useLucideTabIcons) {
+                        if (tabChecked) BitChordIcons.TabAlbumArtistsFilled else BitChordIcons.TabAlbumArtistsOutline
+                    } else Icons.Rounded.Person
+                    LocalLibraryTab.FOLDERS -> if (useLucideTabIcons) {
+                        if (tabChecked) BitChordIcons.TabFoldersFilled else BitChordIcons.TabFoldersOutline
+                    } else Icons.Rounded.Folder
+                    LocalLibraryTab.PLAYLISTS -> if (useLucideTabIcons) {
+                        if (tabChecked) BitChordIcons.TabPlaylistsFilled else BitChordIcons.TabPlaylistsOutline
+                    } else Icons.Rounded.PlaylistPlay
                 }
                 val visible = tab in localTabs
                 SettingsRow(
@@ -3719,6 +3839,7 @@ fun SettingsScreen(
                     },
                     onClick = { AppSettings.setDontRepeatSuggestions(!dontRepeatSuggestions) },
                 )
+                ExcludeInstrumentalsSettingRow()
             }
             RowDivider()
             SettingsRow(
@@ -5350,6 +5471,7 @@ private fun HeatSettingsRows() {
         }
         RowDivider()
         val heatInPlayer by AppSettings.heatInPlayer.collectAsStateWithLifecycle()
+        val homeHeatDailyMixBoost by AppSettings.homeHeatDailyMixBoost.collectAsStateWithLifecycle()
         SettingsRow(
             icon = Icons.Rounded.Waves,
             title = stringResource(R.string.heat_in_player),
@@ -5365,6 +5487,23 @@ private fun HeatSettingsRows() {
                 )
             },
             onClick = { AppSettings.setHeatInPlayer(!heatInPlayer) },
+        )
+        RowDivider()
+        SettingsRow(
+            icon = Icons.Rounded.Shuffle,
+            title = stringResource(R.string.home_heat_daily_mix_boost),
+            subtitle = stringResource(R.string.home_heat_daily_mix_boost_subtitle),
+            trailing = {
+                Switch(
+                    checked = homeHeatDailyMixBoost,
+                    onCheckedChange = AppSettings::setHomeHeatDailyMixBoost,
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                        checkedBorderColor = MaterialTheme.colorScheme.primary,
+                    ),
+                )
+            },
+            onClick = { AppSettings.setHomeHeatDailyMixBoost(!homeHeatDailyMixBoost) },
         )
     }
     RowDivider()
@@ -5389,6 +5528,138 @@ private fun HeatSettingsRows() {
             dismissButton = {
                 TextButton(onClick = { confirmHeatReset = false }) { Text(stringResource(R.string.cancel)) }
             },
+        )
+    }
+    RowDivider()
+    Music2EmoSettingsRow()
+}
+
+@Composable
+private fun ExcludeInstrumentalsSettingRow() {
+    val excludeInstrumentals by AppSettings.excludeInstrumentalsInAutoplay.collectAsStateWithLifecycle()
+    RowDivider()
+    SettingsRow(
+        icon = Icons.Rounded.MusicOff,
+        title = stringResource(R.string.exclude_instrumentals_autoplay),
+        subtitle = stringResource(R.string.exclude_instrumentals_autoplay_subtitle),
+        trailing = {
+            Switch(
+                checked = excludeInstrumentals,
+                onCheckedChange = AppSettings::setExcludeInstrumentalsInAutoplay,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        },
+        onClick = { AppSettings.setExcludeInstrumentalsInAutoplay(!excludeInstrumentals) },
+    )
+}
+
+@Composable
+private fun Music2EmoSettingsRow() {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    val offlineMode by AppSettings.offlineMode.collectAsStateWithLifecycle()
+    val cacheRevision by LocalHomeAi.cacheRevision.collectAsStateWithLifecycle()
+    val downloadProgress by LocalHomeAi.downloadProgress.collectAsStateWithLifecycle()
+    val analysisProgress by LocalHomeAi.analysisProgress.collectAsStateWithLifecycle()
+    val downloadSupported = remember(context) { LocalHomeAi.isDownloadSupported(context) }
+    var modelInstalled by remember { mutableStateOf(false) }
+    var showDownloadConfirm by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var downloadError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(context, cacheRevision) {
+        modelInstalled = withContext(Dispatchers.IO) { LocalHomeAi.isModelInstalled(context) }
+    }
+
+    val subtitle = when {
+        downloadProgress != null -> {
+            val dp = downloadProgress!!
+            stringResource(
+                R.string.home_ai_download_progress,
+                dp.bytes / (1024f * 1024f),
+                dp.totalBytes.coerceAtLeast(1L) / (1024f * 1024f),
+            )
+        }
+        modelInstalled && analysisProgress != null && !analysisProgress!!.finished && analysisProgress!!.total > 0 -> {
+            val ap = analysisProgress!!
+            stringResource(R.string.home_ai_analysis_progress, ap.completed, ap.total)
+        }
+        modelInstalled -> stringResource(R.string.home_ai_settings_installed)
+        !downloadSupported -> stringResource(R.string.home_ai_settings_nointernet)
+        offlineMode -> stringResource(R.string.home_ai_settings_offline_mode)
+        else -> stringResource(R.string.home_ai_settings_not_installed)
+    }
+
+    SettingsRow(
+        icon = Icons.Rounded.AutoAwesome,
+        title = stringResource(R.string.home_ai_settings_title),
+        subtitle = subtitle,
+        enabled = modelInstalled || (downloadSupported && !offlineMode),
+        onClick = {
+            if (modelInstalled) {
+                showDeleteConfirm = true
+            } else if (downloadSupported && !offlineMode) {
+                showDownloadConfirm = true
+            }
+        },
+    )
+
+    if (showDownloadConfirm) {
+        Music2EmoDownloadDialog(
+            dismissLabelRes = R.string.cancel,
+            onConfirm = {
+                showDownloadConfirm = false
+                LocalHomeAi.setModelDecision(context, true)
+                scope.launch {
+                    try {
+                        LocalHomeAi.downloadModels(context)
+                        modelInstalled = withContext(Dispatchers.IO) { LocalHomeAi.isModelInstalled(context) }
+                    } catch (e: Exception) {
+                        downloadError = e.localizedMessage ?: "Download failed"
+                    }
+                }
+            },
+            onDismiss = { showDownloadConfirm = false },
+        )
+    }
+
+    if (showDeleteConfirm) {
+        GlassAlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text(stringResource(R.string.home_ai_delete_model_title)) },
+            text = { Text(stringResource(R.string.home_ai_delete_model_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        scope.launch {
+                            LocalHomeAi.deleteModels(context)
+                            modelInstalled = false
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.home_ai_delete_model_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    downloadProgress?.let { dp ->
+        Music2EmoDownloadProgressDialog(progress = dp)
+    }
+
+    downloadError?.let { err ->
+        Music2EmoDownloadErrorDialog(
+            error = err,
+            onDismiss = { downloadError = null },
         )
     }
 }

@@ -44,6 +44,8 @@ class LyricsEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _saveResult = MutableSharedFlow<Boolean>()
     val saveResult: SharedFlow<Boolean> = _saveResult.asSharedFlow()
+    private val _saveOutcome = MutableSharedFlow<LocalLyricsManager.LrcSaveResult>()
+    val saveOutcome: SharedFlow<LocalLyricsManager.LrcSaveResult> = _saveOutcome.asSharedFlow()
 
     private val _toastMessage = MutableSharedFlow<String>()
     val toastMessage: SharedFlow<String> = _toastMessage.asSharedFlow()
@@ -235,19 +237,21 @@ class LyricsEditorViewModel(app: Application) : AndroidViewModel(app) {
             val currentSource = _selectedSource.value
             val lyricsToSave = _currentText.value
 
-            val success = LocalLyricsManager.saveLyrics(
+            val outcome = LocalLyricsManager.saveLyricsDetailed(
                 context = getApplication(),
                 song = song,
                 source = currentSource,
                 lyricsText = lyricsToSave,
             )
 
+            val success = outcome == LocalLyricsManager.LrcSaveResult.Success
             if (success) {
                 originalLyricsMap[currentSource] = lyricsToSave
             }
 
             _isSaving.value = false
             _saveResult.emit(success)
+            _saveOutcome.emit(outcome)
         }
     }
 }

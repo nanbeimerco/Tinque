@@ -20,7 +20,8 @@ import kotlinx.coroutines.flow.asStateFlow
 val EmptyHeatInfo = HeatInfo(
     level = 0f, trend = 0, plays = 0, fullListens = 0, skips = 0,
     listensThisWeek = 0, firstPlayed = 0L, lastPlayed = 0L,
-    peak = 0f, recordedPlays = 0,
+    peak = 0f, recordedPlays = 0, momentum = 0f,
+    shortScore = 0f, longScore = 0f, shortLevel = 0f, isRevival = false,
 )
 
 /**

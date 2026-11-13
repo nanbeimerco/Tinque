@@ -57,18 +57,80 @@ object LocalLyricsManager {
         }
     }
 
+    sealed interface LrcSaveResult {
+        data object Success : LrcSaveResult
+        data class NeedsDirectoryAccess(
+            val parentDir: File,
+            val fileName: String,
+        ) : LrcSaveResult
+        data object Failed : LrcSaveResult
+    }
+
+    /** Returns an existing sidecar `.lrc` / `.LRC` file for [song], if one is present on disk. */
+    fun findExistingLrcFile(context: Context, song: Song): File? {
+        val filePath = resolveFilePath(context, song) ?: return null
+        val audioFile = File(filePath)
+        val parentDir = audioFile.parentFile ?: return null
+        val baseName = audioFile.nameWithoutExtension
+        val lower = File(parentDir, "$baseName.lrc")
+        if (lower.exists() && lower.isFile) return lower
+        val upper = File(parentDir, "$baseName.LRC")
+        if (upper.exists() && upper.isFile) return upper
+        val targetName = "$baseName.lrc"
+        return parentDir.listFiles()?.firstOrNull {
+            it.isFile && it.name.equals(targetName, ignoreCase = true)
+        }
+    }
+
+    /** Builds a best-effort initial document URI hint for [androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree]. */
+    fun treeUriInitialHint(parentDir: File): android.net.Uri? = runCatching {
+        val canonical = runCatching { parentDir.canonicalPath }.getOrDefault(parentDir.absolutePath)
+        val primaryRoot = runCatching {
+            android.os.Environment.getExternalStorageDirectory().canonicalPath
+        }.getOrElse {
+            android.os.Environment.getExternalStorageDirectory().absolutePath
+        }
+        val normalizedCanonical = canonical.replace('\\', '/').trimEnd('/')
+        val normalizedPrimary = primaryRoot.replace('\\', '/').trimEnd('/')
+        val docId = when {
+            normalizedCanonical == normalizedPrimary -> "primary:"
+            normalizedCanonical.startsWith("$normalizedPrimary/") ->
+                "primary:${normalizedCanonical.removePrefix("$normalizedPrimary/").trimStart('/')}"
+            normalizedCanonical.startsWith("/storage/") -> {
+                val rest = normalizedCanonical.removePrefix("/storage/")
+                val volume = rest.substringBefore('/')
+                val relative = rest.substringAfter('/', "")
+                if (volume.isNotBlank() && volume != "emulated") "$volume:$relative" else null
+            }
+            else -> null
+        } ?: return@runCatching null
+        android.provider.DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents",
+            docId,
+        )
+    }.getOrNull()
+
+    suspend fun saveLyricsDetailed(
+        context: Context,
+        song: Song,
+        source: LyricsEditorSource,
+        lyricsText: String,
+    ): LrcSaveResult = withContext(Dispatchers.IO) {
+        when (source) {
+            LyricsEditorSource.Embedded ->
+                if (saveEmbeddedLyrics(context, song, lyricsText)) LrcSaveResult.Success else LrcSaveResult.Failed
+            LyricsEditorSource.File -> saveFileLyricsResult(context, song, lyricsText)
+            LyricsEditorSource.Downloaded ->
+                if (saveDownloadedLyrics(song, lyricsText)) LrcSaveResult.Success else LrcSaveResult.Failed
+        }
+    }
+
     suspend fun saveLyrics(
         context: Context,
         song: Song,
         source: LyricsEditorSource,
         lyricsText: String,
-    ): Boolean = withContext(Dispatchers.IO) {
-        when (source) {
-            LyricsEditorSource.Embedded -> saveEmbeddedLyrics(context, song, lyricsText)
-            LyricsEditorSource.File -> saveFileLyrics(context, song, lyricsText)
-            LyricsEditorSource.Downloaded -> saveDownloadedLyrics(song, lyricsText)
-        }
-    }
+    ): Boolean = saveLyricsDetailed(context, song, source, lyricsText) == LrcSaveResult.Success
 
     /**
      * Automatically writes online lyrics into a local music file's metadata tags without user prompts.
@@ -466,26 +528,183 @@ object LocalLyricsManager {
     }
 
     private fun readFileLyrics(context: Context, song: Song): String {
-        val filePath = resolveFilePath(context, song) ?: return ""
-        val audioFile = File(filePath)
-        val lrcFile = File(audioFile.parentFile ?: return "", "${audioFile.nameWithoutExtension}.lrc")
-        return if (lrcFile.exists() && lrcFile.isFile) {
-            runCatching { lrcFile.readText() }.getOrDefault("")
-        } else ""
+        val lrcFile = findExistingLrcFile(context, song) ?: return ""
+        return runCatching { lrcFile.readText() }.getOrDefault("")
     }
 
-    private fun saveFileLyrics(context: Context, song: Song, lyricsText: String): Boolean {
-        val filePath = resolveFilePath(context, song) ?: return false
+    private fun saveFileLyrics(context: Context, song: Song, lyricsText: String): Boolean =
+        saveFileLyricsResult(context, song, lyricsText) == LrcSaveResult.Success
+
+    private fun saveFileLyricsResult(
+        context: Context,
+        song: Song,
+        lyricsText: String,
+    ): LrcSaveResult {
+        val filePath = resolveFilePath(context, song) ?: return LrcSaveResult.Failed
         val audioFile = File(filePath)
-        val lrcFile = File(audioFile.parentFile ?: return false, "${audioFile.nameWithoutExtension}.lrc")
-        return runCatching {
-            if (lyricsText.isBlank()) {
-                if (lrcFile.exists()) lrcFile.delete() else true
-            } else {
-                lrcFile.writeText(lyricsText.trim())
+        val parentDir = audioFile.parentFile ?: return LrcSaveResult.Failed
+        val targetFile = findExistingLrcFile(context, song)
+            ?: File(parentDir, "${audioFile.nameWithoutExtension}.lrc")
+
+        val directSucceeded = if (lyricsText.isBlank()) {
+            if (!targetFile.exists()) true else runCatching { targetFile.delete() }.getOrDefault(false)
+        } else {
+            runCatching {
+                java.io.FileOutputStream(targetFile, false).use { out ->
+                    out.write(lyricsText.trim().toByteArray(Charsets.UTF_8))
+                    out.flush()
+                    runCatching { out.fd.sync() }
+                }
                 true
+            }.getOrDefault(false)
+        }
+        if (directSucceeded) return LrcSaveResult.Success
+
+        val persistedTree = findMatchingPersistedTreeUri(context, parentDir)
+        if (persistedTree != null && writeLrcViaTreeUri(context, persistedTree, parentDir, targetFile.name, lyricsText)) {
+            return LrcSaveResult.Success
+        }
+
+        return LrcSaveResult.NeedsDirectoryAccess(
+            parentDir = parentDir,
+            fileName = targetFile.name,
+        )
+    }
+
+    private fun findMatchingPersistedTreeUri(context: Context, parentDir: File): android.net.Uri? {
+        return context.contentResolver.persistedUriPermissions
+            .asSequence()
+            .filter { it.isWritePermission && android.provider.DocumentsContract.isTreeUri(it.uri) }
+            .firstOrNull { relativePathInsideTree(it.uri, parentDir) != null }
+            ?.uri
+    }
+
+    private fun treeDocumentPath(docId: String): String? {
+        val volume = docId.substringBefore(':', "")
+        if (volume.isBlank()) return null
+        val relative = docId.substringAfter(':', "").trim('/')
+        val base = if (volume.equals("primary", ignoreCase = true)) {
+            runCatching { android.os.Environment.getExternalStorageDirectory().canonicalPath }
+                .getOrElse { android.os.Environment.getExternalStorageDirectory().absolutePath }
+        } else {
+            "/storage/$volume"
+        }
+        val raw = if (relative.isEmpty()) base else File(base, relative).path
+        return runCatching { File(raw).canonicalPath }.getOrDefault(raw)
+            .replace('\\', '/')
+            .trimEnd('/')
+    }
+
+    private fun relativePathInsideTree(treeUri: android.net.Uri, parentDir: File): String? {
+        val docId = runCatching {
+            android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+        }.getOrNull() ?: return null
+        val treePath = treeDocumentPath(docId) ?: return null
+        val candidates = listOfNotNull(
+            runCatching { parentDir.canonicalPath }.getOrNull(),
+            parentDir.absolutePath,
+        ).map { it.replace('\\', '/').trimEnd('/') }.distinct()
+        for (parentPath in candidates) {
+            if (parentPath == treePath) return ""
+            if (parentPath.startsWith("$treePath/")) {
+                return parentPath.removePrefix("$treePath/").trim('/')
             }
-        }.getOrDefault(false)
+        }
+        return null
+    }
+
+    private fun writeLrcViaTreeUri(
+        context: Context,
+        treeUri: android.net.Uri,
+        parentDir: File,
+        fileName: String,
+        lyricsText: String,
+    ): Boolean = runCatching {
+        val relativeSubDirs = relativePathInsideTree(treeUri, parentDir) ?: return@runCatching false
+        val resolver = context.contentResolver
+        var currentDirDocId = android.provider.DocumentsContract.getTreeDocumentId(treeUri)
+        for (segment in relativeSubDirs.split('/').filter { it.isNotBlank() }) {
+            currentDirDocId = findChildDocument(
+                resolver = resolver,
+                treeUri = treeUri,
+                parentDocId = currentDirDocId,
+                displayName = segment,
+                requireDirectory = true,
+                ignoreCase = false,
+            ) ?: return@runCatching false
+        }
+
+        val existingDocId = findChildDocument(
+            resolver = resolver,
+            treeUri = treeUri,
+            parentDocId = currentDirDocId,
+            displayName = fileName,
+            requireDirectory = false,
+            ignoreCase = true,
+        )
+
+        if (lyricsText.isBlank()) {
+            if (existingDocId == null) return@runCatching true
+            val existingUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, existingDocId)
+            return@runCatching android.provider.DocumentsContract.deleteDocument(resolver, existingUri)
+        }
+
+        val targetUri = if (existingDocId != null) {
+            android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, existingDocId)
+        } else {
+            val parentDirUri = android.provider.DocumentsContract.buildDocumentUriUsingTree(treeUri, currentDirDocId)
+            android.provider.DocumentsContract.createDocument(
+                resolver,
+                parentDirUri,
+                "application/octet-stream",
+                fileName,
+            ) ?: return@runCatching false
+        }
+
+        val bytes = lyricsText.trim().toByteArray(Charsets.UTF_8)
+        val pfd = runCatching { resolver.openFileDescriptor(targetUri, "wt") }.getOrNull()
+            ?: resolver.openFileDescriptor(targetUri, "w")
+            ?: return@runCatching false
+        pfd.use { descriptor ->
+            java.io.FileOutputStream(descriptor.fileDescriptor).use { out ->
+                runCatching { out.channel.truncate(0L) }
+                out.write(bytes)
+                out.flush()
+            }
+        }
+        true
+    }.getOrDefault(false)
+
+    private fun findChildDocument(
+        resolver: android.content.ContentResolver,
+        treeUri: android.net.Uri,
+        parentDocId: String,
+        displayName: String,
+        requireDirectory: Boolean,
+        ignoreCase: Boolean,
+    ): String? {
+        val childrenUri = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentDocId)
+        val projection = arrayOf(
+            android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE,
+        )
+        resolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+            val idCol = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+            val nameCol = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+            val mimeCol = cursor.getColumnIndex(android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE)
+            while (cursor.moveToNext()) {
+                if (idCol < 0 || nameCol < 0) continue
+                val name = cursor.getString(nameCol) ?: continue
+                val mime = if (mimeCol >= 0) cursor.getString(mimeCol) else null
+                val isDir = mime == android.provider.DocumentsContract.Document.MIME_TYPE_DIR
+                if (requireDirectory != isDir) continue
+                if (name.equals(displayName, ignoreCase = ignoreCase)) {
+                    return cursor.getString(idCol)
+                }
+            }
+        }
+        return null
     }
 
     private fun readDownloadedLyrics(context: Context, song: Song): String {

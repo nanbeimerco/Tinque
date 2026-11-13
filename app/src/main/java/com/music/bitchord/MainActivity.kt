@@ -68,6 +68,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.foundation.layout.windowInsetsTopHeight
@@ -228,6 +229,7 @@ import com.music.bitchord.playback.toggleAutoplay
 import com.music.bitchord.playback.upgradeQuality
 import com.music.bitchord.download.DownloadSession
 import com.music.bitchord.download.DownloadStore
+import com.music.bitchord.data.stats.heatKey
 import com.music.bitchord.download.DownloadTarget
 import com.music.bitchord.download.Downloads
 import com.music.bitchord.ui.components.BrowseActionsSheet
@@ -270,6 +272,7 @@ import com.music.bitchord.ui.components.topBarContentPadding
 import com.music.bitchord.ui.components.AppLanguageDialog
 import com.music.bitchord.ui.components.LyricsSourcesDialog
 import com.music.bitchord.ui.icons.BitChordIcons
+import androidx.compose.ui.zIndex
 import androidx.media3.common.Player
 import com.music.bitchord.data.YtMusicRepository
 import com.music.bitchord.data.innertube.InnertubeParser
@@ -599,8 +602,9 @@ private fun BitChordApp(
     val hideFloatingCollectionControls by AppSettings.hideFloatingCollectionControls.collectAsStateWithLifecycle()
     val collectionBackHandlers = remember { mutableStateMapOf<String, () -> Unit>() }
     var localCollectionArtwork by remember { mutableStateOf<Pair<Int, ArtworkPalette>?>(null) }
-    val onLocalArtworkPaletteChanged: (ArtworkPalette?) -> Unit = remember(selectedTab) {
-        { palette -> localCollectionArtwork = palette?.let { selectedTab to it } }
+    val currentSelectedTabForPalette by rememberUpdatedState(selectedTab)
+    val onLocalArtworkPaletteChanged: (ArtworkPalette?) -> Unit = remember {
+        { palette -> localCollectionArtwork = palette?.let { currentSelectedTabForPalette to it } }
     }
     val visibleMainNavigationTabs by AppSettings.visibleMainNavigationTabs.collectAsStateWithLifecycle()
     val visibleLocalLibraryTabs by AppSettings.visibleLocalLibraryTabs.collectAsStateWithLifecycle()
@@ -634,8 +638,9 @@ private fun BitChordApp(
     // the bottom inset the mini player was holding handed back to the page.
     val landscapePlayerLayout by AppSettings.landscapePlayerLayout.collectAsStateWithLifecycle()
     val portraitPlayerLayout by AppSettings.portraitPlayerLayout.collectAsStateWithLifecycle()
+    val phoneLandscapeSplitPlayer by AppSettings.phoneLandscapeSplitPlayer.collectAsStateWithLifecycle()
     val playerLayout = com.music.bitchord.ui.player.playerLayoutFor(
-        windowWidth, windowHeight, landscapePlayerLayout, portraitPlayerLayout,
+        windowWidth, windowHeight, landscapePlayerLayout, portraitPlayerLayout, phoneLandscapeSplitPlayer,
     )
     val playerDocked = playerLayout == com.music.bitchord.ui.player.PlayerLayout.DOCKED
     /**
@@ -953,6 +958,11 @@ private fun BitChordApp(
     com.music.bitchord.ui.components.HeatDetailsHost()
     val heatClockPlaying = player.isPlaying
     val heatPagesMayMove = playerDocked || !showNowPlaying
+    com.music.bitchord.ui.components.SpeakerWarningHost(
+        root = true,
+        active = heatPagesMayMove,
+        onConfirmPlay = { controller?.play() },
+    )
     SideEffect {
         com.music.bitchord.ui.components.HeatClock.playing = heatClockPlaying
         com.music.bitchord.ui.components.HeatClock.pagesMayMove = heatPagesMayMove
@@ -972,6 +982,31 @@ private fun BitChordApp(
             com.music.bitchord.data.stats.HeatStore.seedOnce(counts)
         }
     }
+    // Keep Music2Emo mood analysis running from the app root regardless of active tab or screen.
+    val localHomeAiModelInstalled by com.music.bitchord.feature.homeai.LocalHomeAi.modelInstalled.collectAsStateWithLifecycle()
+    val localHomeAiCacheRevision by com.music.bitchord.feature.homeai.LocalHomeAi.cacheRevision.collectAsStateWithLifecycle()
+    val offlineModeForHomeAi by AppSettings.offlineMode.collectAsStateWithLifecycle()
+    LaunchedEffect(context, localHomeAiCacheRevision, offlineModeForHomeAi) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.music.bitchord.feature.homeai.LocalHomeAi.isModelInstalled(context)
+        }
+    }
+    LaunchedEffect(localHomeAiModelInstalled, localSongs) {
+        if (!localHomeAiModelInstalled || localSongs.isEmpty()) return@LaunchedEffect
+        val songsNow = localSongs
+        val prioritized = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val heatNow = com.music.bitchord.data.stats.HeatStore.info.value
+            val favoriteNow = com.music.bitchord.feature.localmusic.data.LocalFavoritesStore.favoriteIds.value
+            val statsMap = com.music.bitchord.feature.localsongactions.data.LocalPlayStatsStore.exportStats(context)
+            songsNow.sortedWith(
+                compareByDescending<Song> { heatNow[it.heatKey()]?.level ?: heatNow[it.videoId]?.level ?: 0f }
+                    .thenByDescending { if (it.videoId in favoriteNow) 1 else 0 }
+                    .thenByDescending { statsMap[it.videoId]?.playedCount ?: 0 }
+                    .thenByDescending { it.localDateAddedSeconds ?: 0L },
+            )
+        }
+        com.music.bitchord.feature.homeai.LocalHomeAi.requestAnalysis(context, prioritized)
+    }
     // The lyrics catalog, opened from the player (its lyrics footer, its ⋮ menu).
     val catalogSong by com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.song.collectAsStateWithLifecycle()
     catalogSong?.let { target ->
@@ -982,12 +1017,14 @@ private fun BitChordApp(
                 decorFitsSystemWindows = false,
             ),
         ) {
-            com.music.bitchord.ui.components.NoDialogDim()
-            com.music.bitchord.feature.lyricscatalog.LyricsCatalogScreen(
-                song = target,
-                onDismiss = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.close() },
-                onApplied = { viewModel.reloadLyrics(it) },
-            )
+            com.music.bitchord.ui.components.GlassWindowScope {
+                com.music.bitchord.ui.components.NoDialogDim()
+                com.music.bitchord.feature.lyricscatalog.LyricsCatalogScreen(
+                    song = target,
+                    onDismiss = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.close() },
+                    onApplied = { viewModel.reloadLyrics(it) },
+                )
+            }
         }
     }
     // A folder's songs open in the tag editor together (its own, with its subfolders').
@@ -1103,17 +1140,31 @@ private fun BitChordApp(
     val libraryLabel = stringResource(R.string.library)
     val searchLabel = stringResource(R.string.search)
     val homeLabel = stringResource(R.string.home)
-    val allTabs = remember(songsLabel, albumsLabel, artistsLabel, albumArtistsLabel, foldersLabel, libraryLabel, searchLabel, homeLabel) {
-        listOf(
-            BottomTab(songsLabel, Icons.Rounded.MusicNote),
-            BottomTab(albumsLabel, Icons.Rounded.Album),
-            BottomTab(artistsLabel, Icons.Rounded.Person),
-            BottomTab(libraryLabel, Icons.Rounded.LibraryMusic),
-            BottomTab(searchLabel, BitChordIcons.Search),
-            BottomTab(albumArtistsLabel, Icons.Rounded.Person),
-            BottomTab(foldersLabel, Icons.Rounded.Folder),
-            BottomTab(homeLabel, Icons.Rounded.Home),
-        )
+    val useLucideTabIcons by AppSettings.useLucideTabIcons.collectAsStateWithLifecycle()
+    val allTabs = remember(songsLabel, albumsLabel, artistsLabel, albumArtistsLabel, foldersLabel, libraryLabel, searchLabel, homeLabel, useLucideTabIcons) {
+        if (useLucideTabIcons) {
+            listOf(
+                BottomTab(songsLabel, BitChordIcons.TabSongsOutline, BitChordIcons.TabSongsFilled),
+                BottomTab(albumsLabel, BitChordIcons.TabAlbumsOutline, BitChordIcons.TabAlbumsFilled),
+                BottomTab(artistsLabel, BitChordIcons.TabArtistsOutline, BitChordIcons.TabArtistsFilled),
+                BottomTab(libraryLabel, BitChordIcons.TabLibraryOutline, BitChordIcons.TabLibraryFilled),
+                BottomTab(searchLabel, BitChordIcons.TabSearchOutline, BitChordIcons.TabSearchFilled),
+                BottomTab(albumArtistsLabel, BitChordIcons.TabAlbumArtistsOutline, BitChordIcons.TabAlbumArtistsFilled),
+                BottomTab(foldersLabel, BitChordIcons.TabFoldersOutline, BitChordIcons.TabFoldersFilled),
+                BottomTab(homeLabel, BitChordIcons.TabHomeOutline, BitChordIcons.TabHomeFilled),
+            )
+        } else {
+            listOf(
+                BottomTab(songsLabel, Icons.Rounded.MusicNote),
+                BottomTab(albumsLabel, Icons.Rounded.Album),
+                BottomTab(artistsLabel, Icons.Rounded.Person),
+                BottomTab(libraryLabel, Icons.Rounded.LibraryMusic),
+                BottomTab(searchLabel, BitChordIcons.Search),
+                BottomTab(albumArtistsLabel, Icons.Rounded.Person),
+                BottomTab(foldersLabel, Icons.Rounded.Folder),
+                BottomTab(homeLabel, Icons.Rounded.Home),
+            )
+        }
     }
     val tabs = remember(allTabs, visibleTabIndices) {
         visibleTabIndices.mapNotNull(allTabs::getOrNull)
@@ -1122,6 +1173,7 @@ private fun BitChordApp(
     val play: (List<Song>, Int) -> Unit = { songs, index ->
         // Takes up (or clears) the playlist a screen said this queue comes from.
         com.music.bitchord.data.stats.PlaySource.queueStarted()
+        com.music.bitchord.data.stats.PlayIntent.queueStarting(songs.getOrNull(index))
         playJob?.cancel()
         playRequestGeneration++
         activeRadioSeed = null
@@ -1272,6 +1324,11 @@ private fun BitChordApp(
             }
         }
     }
+    var queueFeedbackToast by remember { mutableStateOf<Toast?>(null) }
+    val showQueueFeedback: (String) -> Unit = { message ->
+        queueFeedbackToast?.cancel()
+        queueFeedbackToast = Toast.makeText(context, message, Toast.LENGTH_SHORT).also { it.show() }
+    }
     val addToQueue: (Song) -> Unit = { song ->
         scope.launch {
             // The end of what the user queued, not the end of the queue: a song
@@ -1279,6 +1336,7 @@ private fun BitChordApp(
             controller?.let {
                 val queued = song.copy(radioName = it.currentMediaItem?.toSong()?.radioName)
                 it.addMediaItem(it.autoplaySectionStart(), queued.toMediaItem())
+                showQueueFeedback(context.getString(R.string.added_to_queue_named, song.title))
             }
         }
     }
@@ -1290,6 +1348,7 @@ private fun BitChordApp(
                     (it.currentMediaItemIndex + 1).coerceAtMost(it.mediaItemCount),
                     queued.toMediaItem(),
                 )
+                showQueueFeedback(context.getString(R.string.playing_next_named, song.title))
             }
         }
     }
@@ -1940,12 +1999,18 @@ private fun BitChordApp(
         }
         com.music.bitchord.ui.components.GlassWindowScope(menus = playerGlassMenus) {
         com.music.bitchord.ui.components.HeatDetailsHost(root = false)
+        com.music.bitchord.ui.components.SpeakerWarningHost(
+            root = false,
+            active = showNowPlaying && !playerDocked,
+            onConfirmPlay = { controller?.play() },
+        )
         NowPlayingScreen(
             song = displayedSong,
             onMenuAnchor = { playerMenuAnchor = it },
             playerHaze = playerHazeState,
             windowWidth = windowWidth,
             twoColumnLayout = playerLayout == com.music.bitchord.ui.player.PlayerLayout.TWO_COLUMN,
+            landscapeSplitLayout = playerLayout == com.music.bitchord.ui.player.PlayerLayout.LANDSCAPE_SPLIT,
             isPlaying = player.isPlaying,
             isLoading = player.isLoading,
             positionMs = player.position.positionMs,
@@ -2321,12 +2386,14 @@ private fun BitChordApp(
                     // playlist, filter…) while another one is showing, so coming
                     // back to a tab lands where it was left.
                     pageStateHolder.SaveableStateProvider(key) {
-                    val onCollectionNavigationChanged: (Boolean, (() -> Unit)?) -> Unit = { isOpen, backHandler ->
-                        val routeKey = key.toString()
-                        if (isOpen && backHandler != null) {
-                            collectionBackHandlers[routeKey] = backHandler
-                        } else {
-                            collectionBackHandlers.remove(routeKey)
+                    val onCollectionNavigationChanged: (Boolean, (() -> Unit)?) -> Unit = remember(key) {
+                        { isOpen, backHandler ->
+                            val routeKey = key.toString()
+                            if (isOpen && backHandler != null) {
+                                collectionBackHandlers[routeKey] = backHandler
+                            } else {
+                                collectionBackHandlers.remove(routeKey)
+                            }
                         }
                     }
                     val live = detailStack.lastOrNull()?.takeIf {
@@ -2958,47 +3025,49 @@ private fun BitChordApp(
                 ) { key ->
                     if (key == TAB_KEY) {
                         // Every tab opened so far stays built, side by side: a tab
-                        // switch shows another one instead of building its page
-                        // from nothing. The ones not showing are neither laid out
-                        // nor drawn, and Back does not reach them.
+                        // switch crossfades cleanly instead of building a page
+                        // from nothing or flashing 100% for one frame before fade.
                         val tabsHere = (keptTabs + selectedTab).distinct()
                             .filter { it == selectedTab || it in visibleTabIndices }
-                        SideEffect { if (selectedTab !in keptTabs) keptTabs.add(selectedTab) }
-                        // Tab switch: the arriving tab only fades in (no sideways
-                        // motion). The tab left behind is parked at once, as before.
-                        var lastShownTab by remember { mutableIntStateOf(selectedTab) }
-                        val tabDirection = remember(selectedTab) {
-                            val from = visibleTabIndices.indexOf(lastShownTab)
-                            val to = visibleTabIndices.indexOf(selectedTab)
-                            if (from < 0 || to < 0 || from == to) 0 else if (to > from) 1 else -1
+                        val initialMountedTab = remember { selectedTab }
+                        LaunchedEffect(selectedTab) {
+                            if (selectedTab !in keptTabs) keptTabs.add(selectedTab)
                         }
-                        SideEffect { lastShownTab = selectedTab }
                         Box(Modifier.fillMaxSize()) {
                             tabsHere.forEach { tab ->
                                 androidx.compose.runtime.key(tab) {
                                     val showing = tab == selectedTab
-                                    val arrival = remember { androidx.compose.animation.core.Animatable(1f) }
-                                    LaunchedEffect(showing) {
-                                        if (showing && tabDirection != 0 && !reducePlayerMotion) {
-                                            arrival.snapTo(0f)
-                                            arrival.animateTo(
-                                                1f,
+                                    val tabAlpha = remember {
+                                        androidx.compose.animation.core.Animatable(
+                                            if (tab == initialMountedTab) 1f else 0f,
+                                        )
+                                    }
+                                    LaunchedEffect(showing, reducePlayerMotion) {
+                                        val target = if (showing) 1f else 0f
+                                        if (reducePlayerMotion) {
+                                            tabAlpha.snapTo(target)
+                                        } else if (tabAlpha.value != target) {
+                                            tabAlpha.animateTo(
+                                                target,
                                                 androidx.compose.animation.core.tween(
-                                                    200,
-                                                    easing = androidx.compose.animation.core.LinearOutSlowInEasing,
+                                                    durationMillis = 180,
+                                                    easing = androidx.compose.animation.core.FastOutSlowInEasing,
                                                 ),
                                             )
-                                        } else {
-                                            arrival.snapTo(1f)
                                         }
                                     }
+                                    val visibleInLayout = showing || tabAlpha.value > 0.001f
                                     Box(
                                         Modifier
                                             .fillMaxSize()
-                                            .shownOrParked(showing)
+                                            .then(
+                                                if (showing) Modifier.zIndex(1f)
+                                                else Modifier,
+                                            )
+                                            .shownOrParked(visibleInLayout)
                                             .graphicsLayer {
-                                                val t = arrival.value
-                                                if (t < 1f) alpha = t
+                                                val a = tabAlpha.value
+                                                if (a < 1f) alpha = a
                                             },
                                     ) {
                                         if (showing) {

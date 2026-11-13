@@ -328,7 +328,53 @@ fun HeatDetails(info: HeatInfo, hue: Float, modifier: Modifier = Modifier, song:
                 color = content.copy(alpha = 0.7f),
             )
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
+        val statusRes = when {
+            info.isRevival -> R.string.heat_status_revival
+            info.trend > 0 && info.momentum >= 1.5f -> R.string.heat_status_surging
+            info.trend > 0 -> R.string.heat_status_rising
+            info.trend < 0 -> R.string.heat_status_cooling
+            else -> R.string.heat_status_steady
+        }
+        val activeStatus = info.isRevival || info.trend > 0
+        val statusColor = when {
+            activeStatus -> Color.hsl(hue, 0.78f, 0.56f)
+            info.trend < 0 -> MaterialTheme.colorScheme.secondary
+            else -> content.copy(alpha = 0.72f)
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                text = stringResource(statusRes),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (activeStatus) FontWeight.Bold else FontWeight.Medium,
+                color = if (activeStatus) statusColor else content.copy(alpha = 0.85f),
+                maxLines = 1,
+                modifier = Modifier
+                    .background(
+                        if (activeStatus) statusColor.copy(alpha = 0.16f) else content.copy(alpha = 0.08f),
+                        RoundedCornerShape(10.dp),
+                    )
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+            val shortText = if (info.plays == 0 && info.shortLevel <= 0f) {
+                "—"
+            } else {
+                one(info.shortLevel)
+            }
+            Text(
+                text = stringResource(R.string.heat_short_label, shortText),
+                style = MaterialTheme.typography.labelMedium,
+                color = content.copy(alpha = 0.78f),
+                maxLines = 1,
+                modifier = Modifier
+                    .background(content.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
         val dash = "—"
         val cells = listOf(
             stringResource(R.string.heat_plays) to info.plays.toString(),

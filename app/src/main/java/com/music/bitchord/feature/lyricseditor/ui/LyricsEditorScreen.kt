@@ -48,6 +48,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -71,9 +72,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.R
+import com.music.bitchord.feature.lyricseditor.data.LocalLyricsManager
 import com.music.bitchord.feature.lyricseditor.domain.model.LyricsEditorSource
+import com.music.bitchord.ui.components.GlassAlertDialog
 import com.music.bitchord.feature.lyricseditor.ui.components.LyricsDownloadDialog
 import com.music.bitchord.feature.lyricseditor.ui.components.LyricsDownloadSheet
 import com.music.bitchord.feature.lyricseditor.ui.components.LyricsEditorBottomBar
@@ -156,7 +160,28 @@ fun LyricsEditorScreen(
         }
     }
 
-    fun handleSave() {
+    var pendingOverwriteFileName by remember { mutableStateOf<String?>(null) }
+    var pendingSafAccess by remember { mutableStateOf<LocalLyricsManager.LrcSaveResult.NeedsDirectoryAccess?>(null) }
+
+    val safTreeLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { treeUri ->
+        val access = pendingSafAccess
+        pendingSafAccess = null
+        if (treeUri != null) {
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(
+                    treeUri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                )
+            }
+            viewModel.saveLyrics(song)
+        } else if (access != null) {
+            Toast.makeText(context, context.getString(R.string.l10n_lyrics_save_failed), Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun handleSave(skipOverwritePrompt: Boolean = false) {
         if (selectedSource == LyricsEditorSource.Embedded && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val uriStr = song.localUri ?: song.videoId
             val uri = if (uriStr.startsWith("content://")) Uri.parse(uriStr) else null
@@ -180,6 +205,13 @@ fun LyricsEditorScreen(
                 }
             }
         }
+        if (selectedSource == LyricsEditorSource.File && !skipOverwritePrompt) {
+            val existingFile = LocalLyricsManager.findExistingLrcFile(context, song)
+            if (existingFile != null) {
+                pendingOverwriteFileName = existingFile.name
+                return
+            }
+        }
         viewModel.saveLyrics(song)
     }
 
@@ -198,11 +230,18 @@ fun LyricsEditorScreen(
     }
 
     LaunchedEffect(Unit) {
-        viewModel.saveResult.collect { success ->
-            val message = if (success) context.getString(R.string.l10n_lyrics_saved) else context.getString(R.string.l10n_lyrics_save_failed)
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-            if (success) {
-                onLyricsSaved?.invoke()
+        viewModel.saveOutcome.collect { outcome ->
+            when (outcome) {
+                is LocalLyricsManager.LrcSaveResult.Success -> {
+                    Toast.makeText(context, context.getString(R.string.l10n_lyrics_saved), Toast.LENGTH_SHORT).show()
+                    onLyricsSaved?.invoke()
+                }
+                is LocalLyricsManager.LrcSaveResult.NeedsDirectoryAccess -> {
+                    pendingSafAccess = outcome
+                }
+                is LocalLyricsManager.LrcSaveResult.Failed -> {
+                    Toast.makeText(context, context.getString(R.string.l10n_lyrics_save_failed), Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
@@ -214,6 +253,65 @@ fun LyricsEditorScreen(
     }
 
     val isFileSource = selectedSource == LyricsEditorSource.File
+
+    pendingOverwriteFileName?.let { fileName ->
+        GlassAlertDialog(
+            onDismissRequest = { pendingOverwriteFileName = null },
+            title = { Text(stringResource(R.string.lrc_overwrite_title)) },
+            text = { Text(stringResource(R.string.lrc_overwrite_message, fileName)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingOverwriteFileName = null
+                        handleSave(skipOverwritePrompt = true)
+                    },
+                ) {
+                    Text(stringResource(R.string.lrc_overwrite_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingOverwriteFileName = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    pendingSafAccess?.let { access ->
+        GlassAlertDialog(
+            onDismissRequest = { pendingSafAccess = null },
+            title = { Text(stringResource(R.string.lrc_saf_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.lrc_saf_message, access.fileName))
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        TextButton(
+                            onClick = {
+                                pendingSafAccess = null
+                                LocalMediaRepository.requestAllFilesAccess(context)
+                            },
+                        ) {
+                            Text(stringResource(R.string.lrc_saf_all_files))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        safTreeLauncher.launch(LocalLyricsManager.treeUriInitialHint(access.parentDir))
+                    },
+                ) {
+                    Text(stringResource(R.string.lrc_saf_choose_folder))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingSafAccess = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 
     Scaffold(
         topBar = {

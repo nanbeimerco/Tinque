@@ -623,6 +623,10 @@ object ListeningStats {
                 }
 
             val busiest = days.entries.maxByOrNull { it.value }
+            val dailyMap = days.toMap()
+            val monthlyMap = dailyMap.entries
+                .groupingBy { it.key.substringBeforeLast('-') }
+                .fold(0L) { acc, e -> acc + e.value }
             return ReplaySummary(
                 period = period,
                 label = period.label(today),
@@ -639,6 +643,8 @@ object ListeningStats {
                 distinctArtists = artists.size,
                 distinctAlbums = albums.size,
                 since = earliest,
+                dailyMs = dailyMap,
+                monthlyMs = monthlyMap,
             )
         }
     }
@@ -851,6 +857,8 @@ data class ReplaySummary(
     val distinctAlbums: Int,
     /** The earliest month with anything in it, `YYYY-MM`. */
     val since: String?,
+    val dailyMs: Map<String, Long> = emptyMap(),
+    val monthlyMs: Map<String, Long> = emptyMap(),
 ) {
     val minutes: Long get() = totalMs / 60_000
     val hours: Long get() = totalMs / 3_600_000

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
@@ -34,7 +35,18 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.feature.localmusic.domain.model.LocalMusicTab
+import com.music.bitchord.ui.icons.BitChordIcons
+
+private data class LocalNavTabSpec(
+    val tab: LocalMusicTab,
+    val title: String,
+    val m3Icon: ImageVector,
+    val lucideOutline: ImageVector,
+    val lucideFilled: ImageVector,
+)
 
 /**
  * Tab bar for navigating between local music collections:
@@ -46,13 +58,14 @@ fun LocalNavigationTabs(
     onTabSelected: (LocalMusicTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val useLucideTabIcons by AppSettings.useLucideTabIcons.collectAsStateWithLifecycle()
     val tabs = remember {
         listOf(
-            Triple(LocalMusicTab.TRACKS, "Tracks", Icons.Rounded.MusicNote),
-            Triple(LocalMusicTab.ALBUMS, "Albums", Icons.Rounded.Album),
-            Triple(LocalMusicTab.ARTISTS, "Artists", Icons.Rounded.Person),
-            Triple(LocalMusicTab.FOLDERS, "Folders", Icons.Rounded.Folder),
-            Triple(LocalMusicTab.PLAYLISTS, "Playlists", Icons.AutoMirrored.Rounded.QueueMusic),
+            LocalNavTabSpec(LocalMusicTab.TRACKS, "Tracks", Icons.Rounded.MusicNote, BitChordIcons.TabSongsOutline, BitChordIcons.TabSongsFilled),
+            LocalNavTabSpec(LocalMusicTab.ALBUMS, "Albums", Icons.Rounded.Album, BitChordIcons.TabAlbumsOutline, BitChordIcons.TabAlbumsFilled),
+            LocalNavTabSpec(LocalMusicTab.ARTISTS, "Artists", Icons.Rounded.Person, BitChordIcons.TabArtistsOutline, BitChordIcons.TabArtistsFilled),
+            LocalNavTabSpec(LocalMusicTab.FOLDERS, "Folders", Icons.Rounded.Folder, BitChordIcons.TabFoldersOutline, BitChordIcons.TabFoldersFilled),
+            LocalNavTabSpec(LocalMusicTab.PLAYLISTS, "Playlists", Icons.AutoMirrored.Rounded.QueueMusic, BitChordIcons.TabPlaylistsOutline, BitChordIcons.TabPlaylistsFilled),
         )
     }
 
@@ -73,8 +86,15 @@ fun LocalNavigationTabs(
             }
         },
     ) {
-        tabs.forEach { (tab, title, icon) ->
+        tabs.forEach { spec ->
+            val tab = spec.tab
+            val title = spec.title
             val isSelected = selectedTab == tab
+            val icon = when {
+                useLucideTabIcons && isSelected -> spec.lucideFilled
+                useLucideTabIcons -> spec.lucideOutline
+                else -> spec.m3Icon
+            }
             val textColor by animateColorAsState(
                 targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 label = "tab_text_color",
@@ -100,7 +120,9 @@ fun LocalNavigationTabs(
                         imageVector = icon,
                         contentDescription = title,
                         tint = iconColor,
-                        modifier = Modifier.padding(end = 6.dp),
+                        modifier = Modifier
+                            .padding(end = 6.dp)
+                            .size(18.dp),
                     )
                     Text(
                         text = title,
