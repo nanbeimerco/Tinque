@@ -68,13 +68,17 @@ fun librarySectionLabel(section: LibrarySection): String = stringResource(
 
 /** Home's shelves: order and visibility, edited from the Home tab itself. */
 @Composable
-fun HomeLayoutSheet(onDismiss: () -> Unit) {
+fun HomeLayoutSheet(
+    onDismiss: () -> Unit,
+    sectionStatus: (@Composable (HomeSection) -> String?) = { null },
+) {
     val order by AppSettings.homeSectionOrder.collectAsStateWithLifecycle()
     val hidden by AppSettings.hiddenHomeSections.collectAsStateWithLifecycle()
     SectionOrderSheet(
         title = stringResource(R.string.home_layout),
         items = order,
         label = { homeSectionLabel(it) },
+        subtitle = sectionStatus,
         isShown = { it !in hidden },
         onShownChange = AppSettings::setHomeSectionVisible,
         onMove = AppSettings::moveHomeSection,
@@ -105,6 +109,7 @@ private fun <T> SectionOrderSheet(
     title: String,
     items: List<T>,
     label: @Composable (T) -> String,
+    subtitle: (@Composable (T) -> String?) = { null },
     isShown: (T) -> Boolean,
     onShownChange: (T, Boolean) -> Unit,
     onMove: (T, Int) -> Unit,
@@ -124,6 +129,7 @@ private fun <T> SectionOrderSheet(
             }
             Spacer(Modifier.height(8.dp))
             items.forEachIndexed { index, item ->
+                val statusText = subtitle(item)?.takeIf { it.isNotBlank() }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -133,12 +139,21 @@ private fun <T> SectionOrderSheet(
                         onCheckedChange = { onShownChange(item, it) },
                         modifier = Modifier.padding(end = 12.dp),
                     )
-                    Text(
-                        text = label(item),
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 2,
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = label(item),
+                            style = MaterialTheme.typography.bodyLarge,
+                            maxLines = 2,
+                        )
+                        if (statusText != null) {
+                            Text(
+                                text = statusText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                            )
+                        }
+                    }
                     IconButton(onClick = { onMove(item, -1) }, enabled = index > 0) {
                         Icon(Icons.Rounded.KeyboardArrowUp, contentDescription = stringResource(R.string.selection_move_up))
                     }

@@ -1,0 +1,10 @@
+{
+  "id": "lrcapi",
+  "name": "LrcAPI (Apple / KuGou)",
+  "version": "2.1.0",
+  "description": "Apple Music TTML音節同期・KuGou/NetEase同期LRC対応 (api.lrc.cx)",
+  "author": "Tinque",
+  "entrypoint": "index.js",
+  "wordSynced": true,
+  "defaultPriority": 2
+}

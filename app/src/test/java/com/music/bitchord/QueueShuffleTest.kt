@@ -11,13 +11,11 @@ import org.junit.Test
  */
 class QueueShuffleTest {
 
-    /** Runs the moves the way [androidx.media3.common.Player] would. */
+    /** Runs the permutation computed by [QueueShuffle.restoreOrder] on [current] from [from]. */
     private fun applied(current: List<String>, from: Int, target: List<String>): List<String> {
-        val ids = current.toMutableList()
-        QueueShuffle.moves(current, from, target).forEach { (at, to) ->
-            ids.add(to, ids.removeAt(at))
-        }
-        return ids
+        val upcoming = current.drop(from)
+        val order = QueueShuffle.restoreOrder(upcoming, target)
+        return current.take(from) + order.map { upcoming[it] }
     }
 
     @Test
@@ -39,9 +37,9 @@ class QueueShuffleTest {
     }
 
     @Test
-    fun `an order already in place costs no moves`() {
-        val queue = listOf("a", "b", "c", "d")
-        assertTrue(QueueShuffle.moves(queue, from = 1, target = listOf("b", "c", "d")).isEmpty())
+    fun `an order already in place returns the identity permutation`() {
+        val upcoming = listOf("b", "c", "d")
+        assertEquals(listOf(0, 1, 2), QueueShuffle.restoreOrder(upcoming, upcoming))
     }
 
     @Test
@@ -83,5 +81,13 @@ class QueueShuffleTest {
             assertEquals(original.sorted(), shuffled.sorted())
             assertEquals(original, applied(shuffled, from, original.drop(from)))
         }
+    }
+
+    @Test
+    fun `avoidIdentityShuffle rotates identity permutations of length two or more`() {
+        assertEquals(emptyList<Int>(), QueueShuffle.avoidIdentityShuffle(emptyList(), emptyList()))
+        assertEquals(listOf(0), QueueShuffle.avoidIdentityShuffle(listOf(0), listOf(0)))
+        assertEquals(listOf(1, 0), QueueShuffle.avoidIdentityShuffle(listOf(0, 1), listOf(0, 1)))
+        assertEquals(listOf(2, 0, 1), QueueShuffle.avoidIdentityShuffle(listOf(0, 1, 2), listOf(2, 0, 1)))
     }
 }

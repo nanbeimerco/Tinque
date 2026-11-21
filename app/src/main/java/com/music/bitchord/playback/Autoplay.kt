@@ -24,6 +24,8 @@ import com.music.bitchord.feature.homeai.LocalHomeAi
 import com.music.bitchord.feature.lyricseditor.data.LocalLyricsManager
 import com.music.bitchord.playback.smart.VocalDetector
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -31,6 +33,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.hypot
@@ -42,8 +45,8 @@ import kotlin.random.Random
 /** Most AutoPlay-suggested tracks kept queued ahead of the current one at once. */
 const val MAX_QUEUED_AUTOPLAY = 10
 
-private const val MAX_VOCAL_PROBES_PER_BATCH = 6
-private const val VOCAL_PROBE_TIMEOUT_MS = 2_000L
+private const val MAX_VOCAL_PROBES_PER_BATCH = 10
+private const val VOCAL_PROBE_TIMEOUT_MS = 5_000L
 private const val MAX_ANALYZED_EMBEDDINGS_LOADED = 200
 private const val SHORT_REPEAT_WINDOW_MS = 6 * 3600_000L
 private const val MOOD_SIGMA = 0.28
@@ -69,6 +72,7 @@ internal data class AutoplayScoringInput(
     val excludeInstrumentals: Boolean = false,
     val seedIsInstrumental: Boolean = false,
     val instrumentalKeys: Set<String> = emptySet(),
+    val excludedFolders: Set<String> = emptySet(),
     val nowMs: Long = System.currentTimeMillis(),
     val limit: Int = MAX_QUEUED_AUTOPLAY,
     val jitterFor: (Song) -> Double = { Random.nextDouble(0.0, 0.9) },
@@ -134,6 +138,7 @@ suspend fun loadAutoplayTracks(
     context: Context? = null,
     excludeInstrumentals: Boolean = AppSettings.excludeInstrumentalsInAutoplay.value,
     sessionContext: AutoplaySessionContext = AutoplaySessionContext(),
+    excludedFolders: Set<String> = AppSettings.recommendationExcludedFolders.value,
 ): Result<List<Song>> {
     if (source == AutoplaySource.OFF) return Result.success(emptyList())
 
@@ -188,6 +193,7 @@ suspend fun loadAutoplayTracks(
         }
         AutoplaySource.DEVICE -> {
             val library = appContext?.let { DeviceLibraryCache.songs(it) }.orEmpty()
+                .filterNot { AppSettings.isSongPathExcludedFromRecommendations(it.localPath, excludedFolders) }
             val featuresByKey = appContext?.let {
                 LocalHomeAi.cachedFeaturesByVideoId(it, library + seedSong + sessionContext.recentPlayed)
             }.orEmpty()
@@ -213,6 +219,7 @@ suspend fun loadAutoplayTracks(
                     excludeInstrumentals = excludeInstrumentals,
                     seedIsInstrumental = seedIsInstrumental,
                     instrumentalKeys = tier1InstrumentalKeys,
+                    excludedFolders = excludedFolders,
                     limit = limit,
                 )
             )
@@ -231,7 +238,7 @@ suspend fun loadAutoplayTracks(
 }
 
 /** Checks Tier-1 metadata/cached lyrics/genre and cached [VocalDetector] before any audio decode. */
-private fun isTier1OrCachedInstrumental(context: Context?, song: Song): Boolean {
+internal fun isTier1OrCachedInstrumental(context: Context?, song: Song): Boolean {
     val memCachedLyrics = lyricsCacheText(song)
     val cachedHints = LOCAL_TAG_CACHE[song.heatKey()]
     if (isMetadataOrCachedInstrumental(song, cachedLyrics = memCachedLyrics ?: cachedHints?.sidecarLyrics, genre = cachedHints?.genre)) {
@@ -256,12 +263,32 @@ private suspend fun isSongInstrumentalNow(
     }
     VocalDetector.cached(context, song)?.let { return it.isInstrumental }
     if (!allowVocalProbe) return false
-    val probed = withContext(Dispatchers.IO) {
-        withTimeoutOrNull(VOCAL_PROBE_TIMEOUT_MS) {
-            VocalDetector.classifyStandalone(context, song)
+    return runVocalProbeWithGate(context, song)?.isInstrumental == true
+}
+
+private suspend fun runVocalProbeWithGate(
+    context: Context,
+    song: Song,
+): VocalDetector.VocalResult? = withContext(Dispatchers.IO) {
+    com.music.bitchord.playback.smart.PlaybackAnalysisGate.beginInteractiveProbe()
+    try {
+        val result = withTimeoutOrNull(VOCAL_PROBE_TIMEOUT_MS) {
+            val timedOut = AtomicBoolean(false)
+            val completionHook = coroutineContext[Job]?.invokeOnCompletion { cause ->
+                if (cause != null) timedOut.set(true)
+            }
+            try {
+                VocalDetector.classifyStandalone(context, song) {
+                    timedOut.get() || !isActive
+                }
+            } finally {
+                completionHook?.dispose()
+            }
         }
+        result ?: VocalDetector.cached(context, song)
+    } finally {
+        com.music.bitchord.playback.smart.PlaybackAnalysisGate.endInteractiveProbe()
     }
-    return probed?.isInstrumental == true
 }
 
 /**
@@ -303,11 +330,7 @@ private suspend fun resolveShortlistWithVocalProbe(
 
         val vocal = VocalDetector.cached(context, cand) ?: if (probesUsed < MAX_VOCAL_PROBES_PER_BATCH) {
             probesUsed++
-            withContext(Dispatchers.IO) {
-                withTimeoutOrNull(VOCAL_PROBE_TIMEOUT_MS) {
-                    VocalDetector.classifyStandalone(context, cand)
-                }
-            }
+            runVocalProbeWithGate(context, cand)
         } else null
 
         if (vocal?.isInstrumental == true) continue
@@ -439,7 +462,11 @@ internal fun rankDeviceCandidates(seed: Song, library: List<Song>): List<Song> =
  * artist weight, and interleaves cooled high-peak revival tracks as a 10–20% serendipity budget.
  */
 internal fun rankAutoplayCandidates(input: AutoplayScoringInput): List<Song> {
-    val basePool = input.candidates.filter { it.videoId != input.seed.videoId && !it.isExternalPreview }
+    val basePool = input.candidates.filter { song ->
+        song.videoId != input.seed.videoId &&
+            !song.isExternalPreview &&
+            !AppSettings.isSongPathExcludedFromRecommendations(song.localPath, input.excludedFolders)
+    }
     if (basePool.isEmpty()) return emptyList()
 
     val afterInstrumentalFilter = filterInstrumentalCandidates(

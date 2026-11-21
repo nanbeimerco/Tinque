@@ -21,10 +21,14 @@
 -keep class com.dokar.quickjs.** { *; }
 
 # ---- Native and crypto --------------------------------------------------------
-# TagLib and QuickJS are called from JNI, which R8 cannot see; the native side
-# also builds TagLib's result objects by class name.
+# TagLib, QuickJS, and ONNX Runtime are called from JNI, which R8 cannot see;
+# the native side constructs result/tensor objects (e.g. ai.onnxruntime.TensorInfo)
+# reflectively by class name and method signature.
 -keep class com.kyant.taglib.** { *; }
+-keep class ai.onnxruntime.** { *; }
 -keep class org.bouncycastle.** { *; }
+-keep class com.atilika.kuromoji.** { *; }
+-dontwarn com.atilika.kuromoji.**
 -keepclasseswithmembernames,includedescriptorclasses class * { native <methods>; }
 
 # ---- Named only in the manifest's meta-data ---------------------------------

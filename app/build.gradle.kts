@@ -51,8 +51,8 @@ android {
         // Haze falls back to a translucent scrim below that.
         minSdk = 26
         targetSdk = 36
-        versionCode = 97
-        versionName = "2.8.1"
+        versionCode = 107
+        versionName = "2.9.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -152,7 +152,13 @@ android {
     }
     packaging {
         resources {
-            excludes += "/META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+            excludes += listOf(
+                "/META-INF/versions/9/OSGI-INF/MANIFEST.MF",
+                "META-INF/CONTRIBUTORS.md",
+                "META-INF/LICENSE.md",
+                "META-INF/NOTICE.md",
+                "META-INF/DEPENDENCIES",
+            )
         }
     }
     compileOptions {
@@ -289,9 +295,12 @@ dependencies {
 
     // ---- On-device Music2Emo mood & open-unmix vocal inference ----
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.28.0")
+    // ---- On-device Japanese G2P morphological tokenizer for CTC lyrics alignment ----
+    implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
 
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
     // A real HTTP server for the addon tests. The addon protocol is entirely
     // "what does this app send, and what does it do with what comes back", and
     // a hand-rolled fake of the client would be a test of the fake. Pinned to

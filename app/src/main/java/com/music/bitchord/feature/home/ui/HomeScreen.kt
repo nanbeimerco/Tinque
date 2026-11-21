@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -134,6 +135,8 @@ fun HomeScreen(
     /** Pull down to rescan the device for music (the Folders tab's refresh). */
     isRefreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
+    songsLoaded: Boolean = true,
+    listState: LazyListState = rememberLazyListState(),
 ) {
     val context = LocalContext.current.applicationContext
     val heatOn by AppSettings.heatMeterEnabled.collectAsStateWithLifecycle()
@@ -146,6 +149,9 @@ fun HomeScreen(
     val libraryEntries by com.music.bitchord.feature.library.data.LibraryEntryStore.entries.collectAsStateWithLifecycle()
     val favoritesName = stringResource(R.string.favorites)
     val dailyMixBoost by AppSettings.homeHeatDailyMixBoost.collectAsStateWithLifecycle()
+    val excludeInstMixes by AppSettings.excludeInstrumentalsInHomeMixes.collectAsStateWithLifecycle()
+    val excludeInstAiShelves by AppSettings.excludeInstrumentalsInHomeAiShelves.collectAsStateWithLifecycle()
+    val excludedRecFolders by AppSettings.recommendationExcludedFolders.collectAsStateWithLifecycle()
     val offlineMode by AppSettings.offlineMode.collectAsStateWithLifecycle()
     val allowModelDownload = remember(context, offlineMode) {
         LocalHomeAi.isDownloadSupported(context) && !offlineMode
@@ -177,9 +183,15 @@ fun HomeScreen(
         modelPromptDismissed = LocalHomeAi.modelDecision(context) == false
     }
 
-    var content by remember { mutableStateOf<HomeContent?>(null) }
+    var content by remember { mutableStateOf(HomeModel.latestContent()) }
+    var computedWithSongs by remember { mutableStateOf(HomeModel.latestHadSongs()) }
+    var lastFilterKey by remember { mutableStateOf<Any?>(null) }
+    val currentFilterKey = remember(dailyMixBoost, excludeInstMixes, excludeInstAiShelves, excludedRecFolders) {
+        Pair(dailyMixBoost, Triple(excludeInstMixes, excludeInstAiShelves, excludedRecFolders))
+    }
     LaunchedEffect(
         songs,
+        songsLoaded,
         heat,
         playlists,
         favoriteIds,
@@ -187,13 +199,23 @@ fun HomeScreen(
         libraryEntries,
         todayEpochDay,
         dailyMixBoost,
+        excludeInstMixes,
+        excludeInstAiShelves,
+        excludedRecFolders,
         aiCacheRevision,
     ) {
-        // Heat changes with every listen; gather a burst of them into one pass.
-        if (content != null) delay(1_500)
+        // Hold off on the initial pass while local MediaStore loading is still in progress
+        // unless we already have a warm snapshot from earlier in this process.
+        if (!songsLoaded && content == null) return@LaunchedEffect
+        val upgradingFromEmpty = content != null && !computedWithSongs && songs.isNotEmpty()
+        val filterSettingsChanged = lastFilterKey != null && lastFilterKey != currentFilterKey
+        // Heat changes with every listen; gather a burst of them into one pass,
+        // but never stall the initial population or explicit filter setting toggles.
+        if (content != null && !upgradingFromEmpty && !filterSettingsChanged) delay(1_500)
+        lastFilterKey = currentFilterKey
         val day = java.time.LocalDate.ofEpochDay(todayEpochDay)
         // IO: it reads play counts and past months from disk.
-        content = withContext(Dispatchers.IO) {
+        val computed = withContext(Dispatchers.IO) {
             HomeModel.compute(
                 context = context,
                 songs = songs,
@@ -204,17 +226,30 @@ fun HomeScreen(
                 libraryEntries = libraryEntries,
                 dailyMixBoost = dailyMixBoost,
                 today = day,
+                excludeInstrumentalsInMixes = excludeInstMixes,
+                excludeInstrumentalsInAiShelves = excludeInstAiShelves,
+                excludedFolders = excludedRecFolders,
             )
         }
+        content = computed
+        computedWithSongs = songs.isNotEmpty()
     }
     val home = content ?: HomeContent()
     fun songHeat(song: Song): Float? = if (heatOn) heat[song.heatKey()]?.level ?: 0f else null
 
-    val newCards = remember(songs) { newAdditions(songs) }
+    val newCards = remember(songs, excludedRecFolders) {
+        val eligibleSongs = if (excludedRecFolders.isEmpty()) {
+            songs
+        } else {
+            songs.filterNot { AppSettings.isSongPathExcludedFromRecommendations(it.localPath, excludedRecFolders) }
+        }
+        newAdditions(eligibleSongs)
+    }
     val sections = order.filter { it !in hidden }
     var editLayout by remember { mutableStateOf(false) }
     var heatTab by rememberSaveable { mutableStateOf(0) }
-    val nothingYet = content != null && home.heatSongs.isEmpty() && home.recent.isEmpty() && home.mixes.isEmpty()
+    val contentReady = content != null && (songsLoaded || computedWithSongs || songs.isNotEmpty())
+    val nothingYet = contentReady && home.heatSongs.isEmpty() && home.recent.isEmpty() && home.mixes.isEmpty()
 
     val pullState = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
     androidx.compose.material3.pulltorefresh.PullToRefreshBox(
@@ -235,7 +270,7 @@ fun HomeScreen(
         },
     ) {
     LazyColumn(
-        state = rememberLazyListState(),
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             top = contentPadding.calculateTopPadding(),
@@ -243,6 +278,21 @@ fun HomeScreen(
         ),
     ) {
         item(key = "home_header") { HomeHeader() }
+        if (!contentReady) {
+            item(key = "home_loading") {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 64.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(28.dp),
+                        strokeWidth = 2.6.dp,
+                    )
+                }
+            }
+        } else {
         if (allowModelDownload && !modelInstalled && !modelPromptDismissed && aiDownloadProgress == null) {
             item(key = "home_ai_opt_in") {
                 LocalAiOptInCard(
@@ -382,19 +432,19 @@ fun HomeScreen(
                     }
                     item(key = "home_time") { SongShelf(home.timeOfDay, ::songHeat) { i -> onPlay(home.timeOfDay, i) } }
                 }
-                HomeSection.FOR_YOU -> if (home.forYouSongs.size >= 4) {
+                HomeSection.FOR_YOU -> if (home.forYouSongs.size >= 2) {
                     item(key = "home_for_you_title") {
                         ShelfTitle(stringResource(R.string.home_for_you), stringResource(R.string.home_for_you_subtitle))
                     }
                     item(key = "home_for_you") { SongShelf(home.forYouSongs, ::songHeat) { i -> onPlay(home.forYouSongs, i) } }
                 }
-                HomeSection.UPLIFTING -> if (home.upliftingSongs.size >= 4) {
+                HomeSection.UPLIFTING -> if (home.upliftingSongs.size >= 2) {
                     item(key = "home_uplifting_title") {
                         ShelfTitle(stringResource(R.string.home_uplifting), stringResource(R.string.home_uplifting_subtitle))
                     }
                     item(key = "home_uplifting") { SongShelf(home.upliftingSongs, ::songHeat) { i -> onPlay(home.upliftingSongs, i) } }
                 }
-                HomeSection.CALM -> if (home.calmSongs.size >= 4) {
+                HomeSection.CALM -> if (home.calmSongs.size >= 2) {
                     item(key = "home_calm_title") {
                         ShelfTitle(stringResource(R.string.home_calm), stringResource(R.string.home_calm_subtitle))
                     }
@@ -420,10 +470,73 @@ fun HomeScreen(
         item(key = "home_edit_layout") {
             com.music.bitchord.ui.components.EditLayoutButton(onClick = { editLayout = true })
         }
+        }
     }
     }
     if (editLayout) {
-        com.music.bitchord.ui.components.HomeLayoutSheet(onDismiss = { editLayout = false })
+        com.music.bitchord.ui.components.HomeLayoutSheet(
+            onDismiss = { editLayout = false },
+            sectionStatus = { section ->
+                if (section in hidden) return@HomeLayoutSheet null
+                val shown = when (section) {
+                    HomeSection.MIXES -> home.mixes.any { heatOn || it.kind !in HEAT_MIXES }
+                    HomeSection.HERO -> heatOn && home.hero != null
+                    HomeSection.HOT -> heatOn
+                    HomeSection.RISING -> heatOn && home.rising.isNotEmpty()
+                    HomeSection.COOLING -> heatOn && home.cooling.isNotEmpty()
+                    HomeSection.NEW_ADDITIONS -> newCards.isNotEmpty()
+                    HomeSection.RECENTLY_PLAYED -> home.recent.isNotEmpty()
+                    HomeSection.TIME_CAPSULE -> home.capsule != null
+                    HomeSection.DEEP_CUTS -> heatOn && home.deepCuts.isNotEmpty()
+                    HomeSection.TIME_OF_DAY -> heatOn && home.timeOfDay.size >= 4
+                    HomeSection.FOR_YOU -> home.forYouSongs.size >= 2
+                    HomeSection.UPLIFTING -> home.upliftingSongs.size >= 2
+                    HomeSection.CALM -> home.calmSongs.size >= 2
+                    HomeSection.UNPLAYED_ALBUMS -> home.unplayedAlbums.isNotEmpty()
+                    HomeSection.COVERAGE -> home.coverage != null
+                    HomeSection.STATS -> home.week.isNotEmpty()
+                }
+                if (shown) return@HomeLayoutSheet null
+                when (section) {
+                    HomeSection.HOT,
+                    HomeSection.HERO,
+                    HomeSection.RISING,
+                    HomeSection.COOLING,
+                    HomeSection.DEEP_CUTS -> if (!heatOn) {
+                        stringResource(R.string.home_section_status_heat_off)
+                    } else {
+                        stringResource(R.string.home_section_status_not_enough_matches)
+                    }
+                    HomeSection.TIME_OF_DAY -> if (!heatOn) {
+                        stringResource(R.string.home_section_status_heat_off)
+                    } else {
+                        stringResource(R.string.home_section_status_time_of_day)
+                    }
+                    HomeSection.FOR_YOU,
+                    HomeSection.UPLIFTING,
+                    HomeSection.CALM -> {
+                        val activeProgress = aiAnalysisProgress?.takeIf { !it.finished && !it.lowMemory && it.total > 0 }
+                        when {
+                            !modelInstalled -> stringResource(R.string.home_section_status_ai_required)
+                            aiAnalysisProgress?.lowMemory == true -> stringResource(R.string.home_section_status_ai_low_memory)
+                            activeProgress != null -> stringResource(
+                                R.string.home_section_status_ai_analyzing,
+                                activeProgress.completed.coerceIn(0, activeProgress.total.coerceAtLeast(1)),
+                                activeProgress.total,
+                            )
+                            else -> stringResource(R.string.home_section_status_not_enough_matches)
+                        }
+                    }
+                    HomeSection.TIME_CAPSULE -> stringResource(R.string.home_section_status_time_capsule)
+                    HomeSection.COVERAGE -> stringResource(R.string.home_section_status_coverage)
+                    HomeSection.MIXES,
+                    HomeSection.NEW_ADDITIONS,
+                    HomeSection.RECENTLY_PLAYED,
+                    HomeSection.UNPLAYED_ALBUMS,
+                    HomeSection.STATS -> stringResource(R.string.home_section_status_empty)
+                }
+            },
+        )
     }
     if (showModelPrompt) {
         Music2EmoDownloadDialog(

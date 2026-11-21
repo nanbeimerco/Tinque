@@ -1043,6 +1043,8 @@ fun NowPlayingScreen(
     twoColumnLayout: Boolean = false,
     /** Phone landscape split mode: large square artwork left, controls / lyrics / queue right. */
     landscapeSplitLayout: Boolean = false,
+    openLyricsPending: Boolean = false,
+    onOpenLyricsConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -1334,6 +1336,13 @@ fun NowPlayingScreen(
     var savedQueueManagerOpen by remember { mutableStateOf(false) }
     var quickSleepTimerOpen by remember { mutableStateOf(false) }
     var lyricsOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(openLyricsPending) {
+        if (openLyricsPending) {
+            queueOpen = false
+            lyricsOpen = true
+            onOpenLyricsConsumed()
+        }
+    }
     // A wide, tall full-screen player (an unfolded foldable, a tablet) splits
     // in two: artwork and controls on the left, lyrics — or the queue — on the
     // right, always there. With no border: one backdrop runs under both, and
@@ -1876,6 +1885,22 @@ fun NowPlayingScreen(
         },
     )
 
+    // Keep CanvasArtworkPlayer (ExoPlayer + MediaCodec) alive across foldable unfold/fold
+    // and heroMode transitions, and pause periodic GPU frame capture while bounds settle.
+    val sharedCanvasPlayer = rememberSharedCanvasSlot(
+        canvas = canvas,
+        isPlaying = isPlaying,
+        twoColumn = twoColumn,
+        landscapeSplit = landscapeSplit,
+        docked = docked,
+        dockMoving = dockMoving,
+        meshRefreshMs = meshRefreshMs,
+        heroMode = heroMode,
+        onHeroModeExit = { canvasCover.floatValue = 0f },
+        onRenderedChanged = { canvasRendered = it },
+        onFrameCaptured = { canvasFrame = it },
+    )
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -1916,16 +1941,9 @@ fun NowPlayingScreen(
             // [heroVisible]: the clip has to be mounted and decoding *before*
             // it can report the first frame that raises heroT in the first place.
             if (heroMode) {
-                heroClip?.let { clip ->
-                    CanvasArtworkPlayer(
-                        canvas = clip,
-                        isPlaying = isPlaying,
-                        onRenderedChanged = { canvasRendered = it },
-                        onFrameCaptured = { canvasFrame = it },
-                        refreshFrameEveryMs = if (dockMoving) null else meshRefreshMs,
-                        onCoverChanged = { canvasCover.floatValue = it },
-                        bottomFade = HERO_FADE_FRACTION,
-                        modifier = Modifier
+                if (heroClip != null && sharedCanvasPlayer != null) {
+                    sharedCanvasPlayer(
+                        Modifier
                             .align(Alignment.TopStart)
                             .then(if (twoColumn) Modifier.width(leftColumnWidth).meltRight() else Modifier.fillMaxWidth())
                             .height(heroHeight)
@@ -1933,6 +1951,8 @@ fun NowPlayingScreen(
                             .graphicsLayer {
                                 alpha = (1f - 2f * p).coerceIn(0f, 1f) * (if (docking()) dockFade() else 1f)
                             },
+                        HERO_FADE_FRACTION,
+                        { canvasCover.floatValue = it },
                     )
                 }
             }
@@ -1986,7 +2006,8 @@ fun NowPlayingScreen(
                 artScale = artScale,
                 canvas = canvas,
                 canvasRendered = canvasRendered,
-                meshRefreshMs = if (dockMoving) null else meshRefreshMs,
+                meshRefreshMs = meshRefreshMs,
+                canvasContent = sharedCanvasPlayer,
                 playerHaze = playerHaze,
                 sleeveContentScale = sleeveContentScale,
                 swipeThreshold = swipeThreshold,
@@ -2750,17 +2771,12 @@ fun NowPlayingScreen(
                             .drawWithContent { if (artLoaded || !canvasRendered) drawContent() },
                     )
 
-                    if (!heroMode) {
-                        canvas?.takeIf { p < 0.5f }?.let { clip ->
-                            CanvasArtworkPlayer(
-                                canvas = clip,
-                                isPlaying = isPlaying,
-                                onRenderedChanged = { canvasRendered = it },
-                                onFrameCaptured = { canvasFrame = it },
-                                refreshFrameEveryMs = if (dockMoving) null else meshRefreshMs,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
+                    if (!heroMode && p < 0.5f) {
+                        sharedCanvasPlayer?.invoke(
+                            Modifier.fillMaxSize(),
+                            0f,
+                            {},
+                        )
                     }
                 }
 
@@ -7972,6 +7988,7 @@ private fun LandscapeSplitPlayerContent(
     onCanvasFrameCaptured: (Bitmap?) -> Unit,
     onArtErrorFallback: () -> Unit,
     modifier: Modifier = Modifier,
+    canvasContent: (@Composable (Modifier, Float, (Float) -> Unit) -> Unit)? = null,
 ) {
     val haptics = rememberHaptics()
     val context = LocalContext.current
@@ -8117,15 +8134,19 @@ private fun LandscapeSplitPlayerContent(
                             .fillMaxSize()
                             .drawWithContent { if (artLoaded || !canvasRendered) drawContent() },
                     )
-                    canvas?.let { clip ->
-                        CanvasArtworkPlayer(
-                            canvas = clip,
-                            isPlaying = isPlaying,
-                            onRenderedChanged = onCanvasRenderedChanged,
-                            onFrameCaptured = onCanvasFrameCaptured,
-                            refreshFrameEveryMs = meshRefreshMs,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                    if (canvasContent != null) {
+                        canvasContent(Modifier.fillMaxSize(), 0f) {}
+                    } else {
+                        canvas?.let { clip ->
+                            CanvasArtworkPlayer(
+                                canvas = clip,
+                                isPlaying = isPlaying,
+                                onRenderedChanged = onCanvasRenderedChanged,
+                                onFrameCaptured = onCanvasFrameCaptured,
+                                refreshFrameEveryMs = meshRefreshMs,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
                     if (showNerdStats) {
                         nerdStats?.describe(context)?.let { stats ->

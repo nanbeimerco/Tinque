@@ -2,6 +2,7 @@ package com.music.bitchord.playback
 
 import android.os.SystemClock
 import androidx.media3.common.Player
+import kotlin.math.abs
 
 /**
  * Gets playback out of an audio output that has stopped taking data.
@@ -27,11 +28,12 @@ import androidx.media3.common.Player
  * forever.
  */
 class AudioStallWatchdog(
+    private val clock: () -> Long = SystemClock::elapsedRealtime,
     private val log: (String) -> Unit,
 ) {
     private val flips = ArrayDeque<Pair<Long, Long>>() // (elapsedRealtime, positionMs) at each READY → BUFFERING
     private var lastState = Player.STATE_IDLE
-    private var lastRecoveryAt = 0L
+    private var lastRecoveryAt = Long.MIN_VALUE
     private var recoveriesThisTrack = 0
     private var trackId: String? = null
 
@@ -54,13 +56,13 @@ class AudioStallWatchdog(
             flips.clear()
             return
         }
-        val now = SystemClock.elapsedRealtime()
+        val now = clock()
         flips.addLast(now to player.currentPosition)
         while (flips.isNotEmpty() && now - flips.first().first > WINDOW_MS) flips.removeFirst()
         if (flips.size < FLIPS) return
 
-        val moved = player.currentPosition - flips.first().second
-        if (moved > STILL_MS) {
+        val delta = player.currentPosition - flips.first().second
+        if (abs(delta) > STILL_MS) {
             flips.clear()
             return
         }
@@ -68,7 +70,7 @@ class AudioStallWatchdog(
         val duration = player.duration
         if (duration > 0 && duration - player.currentPosition < 1_500) return
         if (busy) return
-        if (now - lastRecoveryAt < COOLDOWN_MS) return
+        if (recoveriesThisTrack > 0 && now - lastRecoveryAt < COOLDOWN_MS) return
         if (recoveriesThisTrack >= MAX_PER_TRACK) {
             if (recoveriesThisTrack == MAX_PER_TRACK) {
                 log("audio output stalled again; leaving it after $MAX_PER_TRACK recoveries on this track")
@@ -78,15 +80,32 @@ class AudioStallWatchdog(
         }
         lastRecoveryAt = now
         recoveriesThisTrack++
-        val at = player.currentPosition
-        log(
-            "audio output stalled (${flips.size} ready/buffering flips in ${now - flips.first().first}ms, " +
-                "position +${moved}ms): re-opening the output at ${at}ms",
-        )
+        val at = player.currentPosition.coerceAtLeast(0L)
+        val windowElapsed = now - flips.first().first
+        val flipCount = flips.size
         flips.clear()
-        // Same path as a seek by hand: the renderer resets, the sink flushes,
-        // a new AudioTrack is opened at the same place.
-        player.seekTo(player.currentMediaItemIndex, at)
+        if (recoveriesThisTrack == 1) {
+            // Media3 ignores seeks whose millisecond position equals the current
+            // playback position; offset by 1ms so ExoPlayer actually flushes and
+            // re-opens the sink.
+            val target = if (at > 0L) at - 1L else 1L
+            log(
+                "audio output stalled ($flipCount ready/buffering flips in ${windowElapsed}ms, " +
+                    "position delta ${delta}ms): re-opening the output at ${target}ms",
+            )
+            player.seekTo(player.currentMediaItemIndex, target)
+        } else {
+            // A second stall after a flush-seek points to a wedged source or
+            // decoder; stop and prepare again at the same position to rebuild it.
+            log(
+                "audio output stalled again ($flipCount ready/buffering flips in ${windowElapsed}ms, " +
+                    "position delta ${delta}ms): re-preparing source at ${at}ms",
+            )
+            val index = player.currentMediaItemIndex
+            player.stop()
+            player.seekTo(index, at)
+            player.prepare()
+        }
     }
 
     private companion object {

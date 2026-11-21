@@ -17,6 +17,7 @@ object NativeLyricsProviders {
         "lyricsplus",
         "better_lyrics",
         "bini_lrc_red",
+        "lrcapi",
         "netease",
         "qqmusic",
         "kugou",
@@ -46,6 +47,7 @@ object NativeLyricsProviders {
             "lyricsplus" -> LyricsPlusClient.getLyrics(title, artist, album, durationSec)
             "better_lyrics" -> BetterLyricsClient.getLyrics(title, artist, album, durationSec)
             "bini_lrc_red" -> BiniAndLrcRedClient.getLyrics(title, artist, album, durationSec)
+            "lrcapi" -> LrcApiClient.getLyrics(title, artist, album, durationSec)
             "netease" -> NetEaseLyricsClient.getLyrics(title, artist, album, durationSec)
             "qqmusic" -> QqMusicLyricsClient.getLyrics(title, artist, album, durationSec)
             "kugou" -> KugouLyricsClient.getLyrics(title, artist, album, durationSec)
@@ -74,6 +76,7 @@ object NativeLyricsProviders {
             "lyricsplus" -> LyricsPlusClient.searchLyrics(title, artist, album, durationSec)
             "better_lyrics" -> BetterLyricsClient.searchLyrics(title, artist, album, durationSec)
             "bini_lrc_red" -> BiniAndLrcRedClient.searchLyrics(title, artist, album, durationSec)
+            "lrcapi" -> LrcApiClient.searchLyrics(title, artist, album, durationSec)
             "netease" -> NetEaseLyricsClient.searchLyrics(title, artist, album, durationSec)
             "qqmusic" -> QqMusicLyricsClient.searchLyrics(title, artist, album, durationSec)
             "kugou" -> KugouLyricsClient.searchLyrics(title, artist, album, durationSec)

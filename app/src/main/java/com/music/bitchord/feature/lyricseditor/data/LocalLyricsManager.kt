@@ -11,6 +11,7 @@ import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.cleanArtistForSearch
+import com.music.bitchord.data.lyrics.toEnhancedLrc
 import com.music.bitchord.data.lyrics.toLrc
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.settings.AppSettings
@@ -173,7 +174,13 @@ object LocalLyricsManager {
 
         if (repoResult != null && repoResult.lines.isNotEmpty()) {
             val lines = repoResult.lines
-            val synced = lines.toLrc().takeIf { it.isNotBlank() }
+            val synced = if (AppSettings.lyricsSaveWordSync.value &&
+                lines.any { it.isWordSynced || it.background?.isWordSynced == true }
+            ) {
+                lines.toEnhancedLrc().ifBlank { lines.toLrc() }
+            } else {
+                lines.toLrc()
+            }.takeIf { it.isNotBlank() }
             val plain = lines.map { it.text }.filter { it.isNotBlank() }.joinToString("\n").takeIf { it.isNotBlank() }
             if (!synced.isNullOrBlank() || !plain.isNullOrBlank()) {
                 return@withContext DownloadedLyricsResult(plain = plain, synced = synced)
@@ -491,39 +498,51 @@ object LocalLyricsManager {
             pfd.use { desc ->
                 val metadata = TagLib.getMetadata(desc.dup().detachFd(), false)
                 val props = metadata?.propertyMap.orEmpty()
-                props["LYRICS"]?.firstOrNull() ?: props["UNSYNCEDLYRICS"]?.firstOrNull() ?: ""
+                props["BITCHORD_LYRICS"]?.firstOrNull()?.takeIf { it.isNotBlank() }
+                    ?: props["LYRICS"]?.firstOrNull()?.takeIf { it.isNotBlank() }
+                    ?: props["UNSYNCEDLYRICS"]?.firstOrNull()?.takeIf { it.isNotBlank() }
+                    ?: ""
             }
         }.getOrDefault("")
     }
 
-    private fun saveEmbeddedLyrics(context: Context, song: Song, lyricsText: String): Boolean {
+    private suspend fun saveEmbeddedLyrics(context: Context, song: Song, lyricsText: String): Boolean {
         return runCatching {
-            val pfd = openFileDescriptor(context, song, "rw") ?: return false
-            pfd.use { desc ->
-                val current = TagLib.getMetadata(desc.dup().detachFd(), false)?.propertyMap ?: hashMapOf()
-                val map = hashMapOf<String, Array<String>>()
-                map.putAll(current)
-                if (lyricsText.isBlank()) {
-                    map.remove("LYRICS")
-                    map.remove("UNSYNCEDLYRICS")
-                } else {
-                    map["LYRICS"] = arrayOf(lyricsText.trim())
-                }
-                // ReplayGain is kept: lyrics don't change the audio, so its
-                // levels still hold (dropping them silently undid levelling).
-                val cleanedMap = map
-                    .filterValues { it.isNotEmpty() }
-                    .mapValuesTo(hashMapOf()) { it.value }
-
-                val ok = TagLib.savePropertyMap(desc.dup().detachFd(), cleanedMap)
-                if (ok) {
-                    val path = resolveFilePath(context, song)
-                    if (!path.isNullOrBlank()) {
-                        android.media.MediaScannerConnection.scanFile(context, arrayOf(path), null, null)
+            val uri = getUriForSong(song)?.toString()
+            val resolvedPath = resolveFilePath(context, song)
+            val ok = com.music.bitchord.playback.LocalFileWriteGuard.aroundWrite(
+                com.music.bitchord.playback.LocalFileWriteGuard.Target(
+                    mediaId = song.videoId,
+                    uri = uri,
+                    path = resolvedPath,
+                ),
+            ) {
+                val pfd = openFileDescriptor(context, song, "rw") ?: return@aroundWrite false
+                pfd.use { desc ->
+                    val current = TagLib.getMetadata(desc.dup().detachFd(), false)?.propertyMap ?: hashMapOf()
+                    val map = hashMapOf<String, Array<String>>()
+                    map.putAll(current)
+                    if (lyricsText.isBlank()) {
+                        map.remove("LYRICS")
+                        map.remove("UNSYNCEDLYRICS")
+                        map.remove("BITCHORD_LYRICS")
+                    } else {
+                        map.remove("BITCHORD_LYRICS")
+                        map["LYRICS"] = arrayOf(lyricsText.trim())
                     }
+                    // ReplayGain is kept: lyrics don't change the audio, so its
+                    // levels still hold (dropping them silently undid levelling).
+                    val cleanedMap = map
+                        .filterValues { it.isNotEmpty() }
+                        .mapValuesTo(hashMapOf()) { it.value }
+
+                    TagLib.savePropertyMap(desc.dup().detachFd(), cleanedMap)
                 }
-                ok
             }
+            if (ok && !resolvedPath.isNullOrBlank()) {
+                android.media.MediaScannerConnection.scanFile(context, arrayOf(resolvedPath), null, null)
+            }
+            ok
         }.getOrDefault(false)
     }
 

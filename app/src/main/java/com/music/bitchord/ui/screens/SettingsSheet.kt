@@ -79,6 +79,7 @@ import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.FolderOff
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
@@ -125,19 +126,23 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import com.music.bitchord.data.lyrics.align.OnDeviceLyricsAlignerModel
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.OutlinedTextField
 import com.music.bitchord.feature.localmusic.domain.model.LocalFolder
 import com.music.bitchord.feature.localmusic.ui.components.BlacklistedFoldersSheet
+import com.music.bitchord.feature.localmusic.ui.components.RecommendationExcludedFoldersSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
@@ -149,6 +154,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -276,8 +282,14 @@ private fun motionAndNavSearchEntries(): List<SettingsSearchEntry> {
 }
 
 @Composable
-private fun autoplayExtraSearchEntries(): List<SettingsSearchEntry> {
+private fun autoplayExtraSearchEntries(
+    onOpenMusic2Emo: () -> Unit,
+    onOpenExcludedFolders: () -> Unit,
+): List<SettingsSearchEntry> {
     val excludeInstrumentals by AppSettings.excludeInstrumentalsInAutoplay.collectAsStateWithLifecycle()
+    val excludeInstrumentalsMixes by AppSettings.excludeInstrumentalsInHomeMixes.collectAsStateWithLifecycle()
+    val excludeInstrumentalsAiShelves by AppSettings.excludeInstrumentalsInHomeAiShelves.collectAsStateWithLifecycle()
+    val excludedFolders by AppSettings.recommendationExcludedFolders.collectAsStateWithLifecycle()
     return listOf(
         SettingsSearchEntry(
             stringResource(R.string.exclude_instrumentals_autoplay),
@@ -285,6 +297,34 @@ private fun autoplayExtraSearchEntries(): List<SettingsSearchEntry> {
             listOf("autoplay", "instrumental", "vocal", "karaoke", "オフボーカル", "インスト", "オートプレイ"),
             excludeInstrumentals,
         ) { AppSettings.setExcludeInstrumentalsInAutoplay(!excludeInstrumentals) },
+        SettingsSearchEntry(
+            stringResource(R.string.exclude_instrumentals_home_mixes),
+            stringResource(R.string.exclude_instrumentals_home_mixes_subtitle),
+            listOf("home", "mix", "instrumental", "vocal", "karaoke", "ミックス", "あなたへのミックス", "インスト", "オフボーカル"),
+            excludeInstrumentalsMixes,
+        ) { AppSettings.setExcludeInstrumentalsInHomeMixes(!excludeInstrumentalsMixes) },
+        SettingsSearchEntry(
+            stringResource(R.string.exclude_instrumentals_home_ai_shelves),
+            stringResource(R.string.exclude_instrumentals_home_ai_shelves_subtitle),
+            listOf("home", "ai", "mood", "instrumental", "vocal", "karaoke", "こんな曲も好きかも", "気分", "落ち着く", "インスト", "オフボーカル"),
+            excludeInstrumentalsAiShelves,
+        ) { AppSettings.setExcludeInstrumentalsInHomeAiShelves(!excludeInstrumentalsAiShelves) },
+        SettingsSearchEntry(
+            title = stringResource(R.string.home_ai_settings_title),
+            subtitle = stringResource(R.string.home_ai_settings_not_installed),
+            keywords = listOf("ai", "music2emo", "mood", "vocal", "reanalyze", "ムード", "解析", "再解析", "落ち着く", "気分", "モデル"),
+            activate = onOpenMusic2Emo,
+        ),
+        SettingsSearchEntry(
+            title = stringResource(R.string.recommendation_excluded_folders),
+            subtitle = if (excludedFolders.isNotEmpty()) {
+                stringResource(R.string.recommendation_excluded_folders_count, excludedFolders.size)
+            } else {
+                stringResource(R.string.recommendation_excluded_folders_subtitle)
+            },
+            keywords = listOf("folder", "exclude", "recommendation", "toeic", "study", "home", "heat", "mix", "autoplay", "フォルダ", "除外", "おすすめ", "ヒート", "ミックス", "語学"),
+            activate = onOpenExcludedFolders,
+        ),
     )
 }
 
@@ -503,6 +543,9 @@ fun SettingsScreen(
     androidx.activity.compose.BackHandler(enabled = openSettingsCategory != null) { closeSettingsCategory() }
     var showLauncherIconPicker by rememberSaveable { mutableStateOf(false) }
     var showPerformanceWarning by remember { mutableStateOf(false) }
+    var music2EmoOpenRequest by remember { mutableIntStateOf(0) }
+    var lyricsAiModelOpenRequest by remember { mutableIntStateOf(0) }
+    var recommendationFoldersOpenRequest by remember { mutableIntStateOf(0) }
 
     val settingsSearchEntries = listOf(
         SettingsSearchEntry(stringResource(R.string.hide_lyrics_status_text), stringResource(R.string.hide_lyrics_status_text_subtitle), listOf("lyrics", "歌詞", "状態", "status"), hideLyricsStatusText) { AppSettings.setHideLyricsStatusText(!hideLyricsStatusText) },
@@ -686,7 +729,10 @@ fun SettingsScreen(
         ) { AppSettings.setMiniPlayerPreviousButton(!miniPlayerPreviousButton) },
         SettingsSearchEntry(stringResource(R.string.filter_non_music_audio), stringResource(R.string.filter_non_music_audio_subtitle), listOf("filter", "audio", "music", "音楽", "フィルター"), filterNonMusicAudio) { AppSettings.setFilterNonMusicAudio(!filterNonMusicAudio) },
         SettingsSearchEntry(stringResource(R.string.playlist_song_artwork), stringResource(R.string.playlist_song_artwork_subtitle), listOf("playlist", "artwork", "プレイリスト", "アルバムアート"), showPlaylistSongArtwork) { AppSettings.setShowPlaylistSongArtwork(!showPlaylistSongArtwork) },
-    ) + motionAndNavSearchEntries() + autoplayExtraSearchEntries() + listOf(
+    ) + motionAndNavSearchEntries() + autoplayExtraSearchEntries(
+        onOpenMusic2Emo = { music2EmoOpenRequest++ },
+        onOpenExcludedFolders = { recommendationFoldersOpenRequest++ },
+    ) + listOf(
         SettingsSearchEntry(
             stringResource(R.string.artwork_tap_opens_lyrics),
             stringResource(R.string.artwork_tap_opens_lyrics_subtitle),
@@ -1096,7 +1142,7 @@ fun SettingsScreen(
     var showPerformanceConfirmation by remember { mutableStateOf(false) }
     var showEqualizerSheet by remember { mutableStateOf(false) }
     val openEqualizerPage = com.music.bitchord.ui.screens.equalizer.LocalOpenEqualizer.current
-    var showManageFoldersSheet by remember { mutableStateOf(false) }
+    var manageFoldersOpenRequest by remember { mutableIntStateOf(0) }
     var showPlaylistOrderDialog by remember { mutableStateOf(false) }
     var preparedM3uImport by remember { mutableStateOf<PreparedM3uImport?>(null) }
     var m3uPlaylistName by remember { mutableStateOf("") }
@@ -1104,19 +1150,11 @@ fun SettingsScreen(
     var selectedMusicoletPlaylistIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var pendingMusicoletBackupUri by rememberSaveable { mutableStateOf<String?>(null) }
     var showStartupTabPicker by remember { mutableStateOf(false) }
-    val manageFoldersSheetState = rememberModalBottomSheetState()
-    var discoveredFolders by remember { mutableStateOf<List<LocalFolder>>(emptyList()) }
     val lifecycleOwner = LocalLifecycleOwner.current
     // SAF result callbacks can arrive after this composable's remembered scope has
     // left composition (for example when the system picker recreates the activity).
     // Use the screen owner's lifecycle scope for the work they start.
     val backupScope = lifecycleOwner.lifecycleScope
-
-    LaunchedEffect(showManageFoldersSheet) {
-        if (showManageFoldersSheet) {
-            discoveredFolders = LocalMediaRepository.getAllDiscoveredFolders(context)
-        }
-    }
 
     val batterySettingsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -1402,6 +1440,18 @@ fun SettingsScreen(
             activate = { onLyricsSources() },
         ),
         SettingsSearchEntry(
+            title = stringResource(R.string.lyrics_ai_settings_title),
+            subtitle = stringResource(
+                if (OnDeviceLyricsAlignerModel.modelInstalled.collectAsStateWithLifecycle().value) {
+                    R.string.lyrics_ai_settings_installed
+                } else {
+                    R.string.lyrics_ai_settings_not_installed
+                },
+            ),
+            keywords = listOf("lyrics", "ai", "sync", "ctc", "mms", "歌詞", "同期", "オンデバイス", "文字同期"),
+            activate = { lyricsAiModelOpenRequest++ },
+        ),
+        SettingsSearchEntry(
             title = stringResource(R.string.preload_album_art_now),
             subtitle = stringResource(R.string.preload_album_art_now_subtitle),
             keywords = listOf("artwork", "preload", "先読み", "アルバムアート"),
@@ -1411,10 +1461,7 @@ fun SettingsScreen(
             title = stringResource(R.string.startup_tab),
             subtitle = stringResource(R.string.startup_tab_subtitle),
             keywords = listOf("startup", "起動", "tab", "タブ"),
-            activate = {
-                settingsSearchQuery = ""
-                showStartupTabPicker = true
-            },
+            activate = { showStartupTabPicker = true },
         ),
         SettingsSearchEntry(
             title = stringResource(R.string.export_data),
@@ -3271,6 +3318,8 @@ fun SettingsScreen(
                     trailing = { Chevron() },
                     onClick = onLyricsSources,
                 )
+                RowDivider()
+                LyricsAiModelSettingsRow(onOpen = { lyricsAiModelOpenRequest++ })
             }
         }
 
@@ -3440,7 +3489,7 @@ fun SettingsScreen(
                 title = stringResource(R.string.music_folders),
                 subtitle = stringResource(R.string.music_folders_subtitle),
                 trailing = { Chevron() },
-                onClick = { showManageFoldersSheet = true },
+                onClick = { manageFoldersOpenRequest++ },
             )
             RowDivider()
             SettingsRow(
@@ -3740,7 +3789,10 @@ fun SettingsScreen(
                 onClick = onOpenReplay,
             )
             RowDivider()
-            HeatSettingsRows()
+            HeatSettingsRows(
+                onOpenMusic2Emo = { music2EmoOpenRequest++ },
+                onOpenExcludedFolders = { recommendationFoldersOpenRequest++ },
+            )
             RowDivider()
             SettingsRow(
                 icon = Icons.Rounded.LocalOffer,
@@ -3994,66 +4046,6 @@ fun SettingsScreen(
             )
         }
 
-        if (showLauncherIconPicker) {
-            com.music.bitchord.ui.components.AppIconPicker(
-                selected = launcherIcon,
-                onPick = AppSettings::setLauncherIcon,
-                onDismiss = { showLauncherIconPicker = false },
-            )
-        }
-
-        if (showStartupTabPicker) {
-            GlassAlertDialog(
-                onDismissRequest = { showStartupTabPicker = false },
-                title = { Text(stringResource(R.string.startup_tab)) },
-                text = {
-                    Column {
-                        mainTabOrder.filter {
-                            it in visibleMainTabs || (
-                                it == MainNavigationTab.ALBUM_ARTISTS &&
-                                    com.music.bitchord.data.settings.LocalLibraryTab.ALBUM_ARTISTS in localTabs
-                            )
-                        }.forEach { tab ->
-                            val label = when (tab) {
-                                MainNavigationTab.SONGS -> stringResource(R.string.songs)
-                                MainNavigationTab.ALBUMS -> stringResource(R.string.albums)
-                                MainNavigationTab.ARTISTS -> stringResource(R.string.artists)
-                                MainNavigationTab.LIBRARY -> stringResource(R.string.library)
-                                MainNavigationTab.SEARCH -> stringResource(R.string.search)
-                                MainNavigationTab.ALBUM_ARTISTS -> stringResource(R.string.album_artists)
-                                MainNavigationTab.FOLDERS -> stringResource(R.string.folders)
-                                MainNavigationTab.HOME -> stringResource(R.string.home)
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        AppSettings.setStartupTab(tab)
-                                        showStartupTabPicker = false
-                                    }
-                                    .padding(vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                RadioButton(
-                                    selected = startupTab == tab,
-                                    onClick = {
-                                        AppSettings.setStartupTab(tab)
-                                        showStartupTabPicker = false
-                                    },
-                                )
-                                Text(label, modifier = Modifier.padding(start = 8.dp))
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(onClick = { showStartupTabPicker = false }) {
-                        Text(stringResource(R.string.done))
-                    }
-                },
-            )
-        }
-
         Text(
             text = buildAnnotatedString {
                 append("Tinque $version  ")
@@ -4095,6 +4087,71 @@ fun SettingsScreen(
             ),
     )
     }
+
+    if (showLauncherIconPicker) {
+        com.music.bitchord.ui.components.AppIconPicker(
+            selected = launcherIcon,
+            onPick = AppSettings::setLauncherIcon,
+            onDismiss = { showLauncherIconPicker = false },
+        )
+    }
+
+    if (showStartupTabPicker) {
+        GlassAlertDialog(
+            onDismissRequest = { showStartupTabPicker = false },
+            title = { Text(stringResource(R.string.startup_tab)) },
+            text = {
+                Column {
+                    mainTabOrder.filter {
+                        it in visibleMainTabs || (
+                            it == MainNavigationTab.ALBUM_ARTISTS &&
+                                com.music.bitchord.data.settings.LocalLibraryTab.ALBUM_ARTISTS in localTabs
+                        )
+                    }.forEach { tab ->
+                        val label = when (tab) {
+                            MainNavigationTab.SONGS -> stringResource(R.string.songs)
+                            MainNavigationTab.ALBUMS -> stringResource(R.string.albums)
+                            MainNavigationTab.ARTISTS -> stringResource(R.string.artists)
+                            MainNavigationTab.LIBRARY -> stringResource(R.string.library)
+                            MainNavigationTab.SEARCH -> stringResource(R.string.search)
+                            MainNavigationTab.ALBUM_ARTISTS -> stringResource(R.string.album_artists)
+                            MainNavigationTab.FOLDERS -> stringResource(R.string.folders)
+                            MainNavigationTab.HOME -> stringResource(R.string.home)
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    AppSettings.setStartupTab(tab)
+                                    showStartupTabPicker = false
+                                }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(
+                                selected = startupTab == tab,
+                                onClick = {
+                                    AppSettings.setStartupTab(tab)
+                                    showStartupTabPicker = false
+                                },
+                            )
+                            Text(label, modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showStartupTabPicker = false }) {
+                    Text(stringResource(R.string.done))
+                }
+            },
+        )
+    }
+
+    Music2EmoDialogsHost(openRequest = music2EmoOpenRequest)
+    LyricsAiModelDialogsHost(openRequest = lyricsAiModelOpenRequest)
+    ManageFoldersSheetHost(openRequest = manageFoldersOpenRequest)
+    RecommendationExcludedFoldersSheetHost(openRequest = recommendationFoldersOpenRequest)
 
 
 
@@ -4505,20 +4562,6 @@ fun SettingsScreen(
                     Text(stringResource(R.string.cancel))
                 }
             },
-        )
-    }
-
-    if (showManageFoldersSheet) {
-        BlacklistedFoldersSheet(
-            folders = discoveredFolders,
-            onToggleBlacklist = { path, isBlacklisted ->
-                AppSettings.setFolderBlacklisted(path, isBlacklisted)
-                backupScope.launch {
-                    discoveredFolders = LocalMediaRepository.getAllDiscoveredFolders(context)
-                }
-            },
-            sheetState = manageFoldersSheetState,
-            onDismiss = { showManageFoldersSheet = false },
         )
     }
 
@@ -5418,7 +5461,10 @@ private fun PlayerActionsSettingsGroups(
 
 /** The heat meter's rows in "Your data": the switch (and the meter's one explanation), colour, reset. */
 @Composable
-private fun HeatSettingsRows() {
+private fun HeatSettingsRows(
+    onOpenMusic2Emo: () -> Unit,
+    onOpenExcludedFolders: () -> Unit,
+) {
     val context = LocalContext.current
     val heatMeterOn by AppSettings.heatMeterEnabled.collectAsStateWithLifecycle()
     val heatColor by AppSettings.heatColor.collectAsStateWithLifecycle()
@@ -5530,8 +5576,112 @@ private fun HeatSettingsRows() {
             },
         )
     }
+    val excludeInstrumentalsMixes by AppSettings.excludeInstrumentalsInHomeMixes.collectAsStateWithLifecycle()
+    val excludeInstrumentalsAiShelves by AppSettings.excludeInstrumentalsInHomeAiShelves.collectAsStateWithLifecycle()
+    val excludedRecFolders by AppSettings.recommendationExcludedFolders.collectAsStateWithLifecycle()
     RowDivider()
-    Music2EmoSettingsRow()
+    SettingsRow(
+        icon = Icons.Rounded.MusicOff,
+        title = stringResource(R.string.exclude_instrumentals_home_mixes),
+        subtitle = stringResource(R.string.exclude_instrumentals_home_mixes_subtitle),
+        trailing = {
+            Switch(
+                checked = excludeInstrumentalsMixes,
+                onCheckedChange = AppSettings::setExcludeInstrumentalsInHomeMixes,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        },
+        onClick = { AppSettings.setExcludeInstrumentalsInHomeMixes(!excludeInstrumentalsMixes) },
+    )
+    RowDivider()
+    SettingsRow(
+        icon = Icons.Rounded.MusicOff,
+        title = stringResource(R.string.exclude_instrumentals_home_ai_shelves),
+        subtitle = stringResource(R.string.exclude_instrumentals_home_ai_shelves_subtitle),
+        trailing = {
+            Switch(
+                checked = excludeInstrumentalsAiShelves,
+                onCheckedChange = AppSettings::setExcludeInstrumentalsInHomeAiShelves,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        },
+        onClick = { AppSettings.setExcludeInstrumentalsInHomeAiShelves(!excludeInstrumentalsAiShelves) },
+    )
+    RowDivider()
+    SettingsRow(
+        icon = Icons.Rounded.FolderOff,
+        title = stringResource(R.string.recommendation_excluded_folders),
+        subtitle = if (excludedRecFolders.isNotEmpty()) {
+            stringResource(R.string.recommendation_excluded_folders_count, excludedRecFolders.size)
+        } else {
+            stringResource(R.string.recommendation_excluded_folders_subtitle)
+        },
+        onClick = onOpenExcludedFolders,
+    )
+    RowDivider()
+    Music2EmoSettingsRow(onOpen = onOpenMusic2Emo)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ManageFoldersSheetHost(openRequest: Int) {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState()
+    var show by remember { mutableStateOf(false) }
+    var discoveredFolders by remember { mutableStateOf<List<LocalFolder>>(emptyList()) }
+
+    LaunchedEffect(openRequest) {
+        if (openRequest <= 0) return@LaunchedEffect
+        discoveredFolders = LocalMediaRepository.getAllDiscoveredFolders(context)
+        show = true
+    }
+
+    if (show) {
+        BlacklistedFoldersSheet(
+            folders = discoveredFolders,
+            onToggleBlacklist = { path, isBlacklisted ->
+                AppSettings.setFolderBlacklisted(path, isBlacklisted)
+                scope.launch {
+                    discoveredFolders = LocalMediaRepository.getAllDiscoveredFolders(context)
+                }
+            },
+            sheetState = sheetState,
+            onDismiss = { show = false },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RecommendationExcludedFoldersSheetHost(openRequest: Int) {
+    val context = LocalContext.current.applicationContext
+    val excludedFolders by AppSettings.recommendationExcludedFolders.collectAsStateWithLifecycle()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var show by remember { mutableStateOf(false) }
+    var discoveredFolders by remember { mutableStateOf<List<LocalFolder>>(emptyList()) }
+
+    LaunchedEffect(openRequest) {
+        if (openRequest <= 0) return@LaunchedEffect
+        discoveredFolders = LocalMediaRepository.getAllDiscoveredFolders(context)
+        show = true
+    }
+
+    if (show) {
+        RecommendationExcludedFoldersSheet(
+            folders = discoveredFolders,
+            excludedFolders = excludedFolders,
+            onToggleExcluded = AppSettings::setFolderExcludedFromRecommendations,
+            sheetState = sheetState,
+            onDismiss = { show = false },
+        )
+    }
 }
 
 @Composable
@@ -5557,21 +5707,25 @@ private fun ExcludeInstrumentalsSettingRow() {
 }
 
 @Composable
-private fun Music2EmoSettingsRow() {
+private fun Music2EmoSettingsRow(onOpen: () -> Unit) {
     val context = LocalContext.current.applicationContext
-    val scope = rememberCoroutineScope()
     val offlineMode by AppSettings.offlineMode.collectAsStateWithLifecycle()
     val cacheRevision by LocalHomeAi.cacheRevision.collectAsStateWithLifecycle()
     val downloadProgress by LocalHomeAi.downloadProgress.collectAsStateWithLifecycle()
     val analysisProgress by LocalHomeAi.analysisProgress.collectAsStateWithLifecycle()
+    val modelInstalledState by LocalHomeAi.modelInstalled.collectAsStateWithLifecycle()
+    val excludedRecFolders by AppSettings.recommendationExcludedFolders.collectAsStateWithLifecycle()
     val downloadSupported = remember(context) { LocalHomeAi.isDownloadSupported(context) }
-    var modelInstalled by remember { mutableStateOf(false) }
-    var showDownloadConfirm by remember { mutableStateOf(false) }
-    var showDeleteConfirm by remember { mutableStateOf(false) }
-    var downloadError by remember { mutableStateOf<String?>(null) }
+    var modelInstalled by remember { mutableStateOf(modelInstalledState) }
+    var summary by remember { mutableStateOf(LocalHomeAi.LibraryAnalysisSummary(0, 0, 0)) }
 
-    LaunchedEffect(context, cacheRevision) {
-        modelInstalled = withContext(Dispatchers.IO) { LocalHomeAi.isModelInstalled(context) }
+    LaunchedEffect(context, cacheRevision, modelInstalledState, analysisProgress, excludedRecFolders) {
+        val (installed, currentSummary) = withContext(Dispatchers.IO) {
+            val ready = LocalHomeAi.isModelInstalled(context)
+            ready to if (ready) LocalHomeAi.analysisSummary(context) else LocalHomeAi.LibraryAnalysisSummary(0, 0, 0)
+        }
+        modelInstalled = installed
+        summary = currentSummary
     }
 
     val subtitle = when {
@@ -5583,9 +5737,15 @@ private fun Music2EmoSettingsRow() {
                 dp.totalBytes.coerceAtLeast(1L) / (1024f * 1024f),
             )
         }
-        modelInstalled && analysisProgress != null && !analysisProgress!!.finished && analysisProgress!!.total > 0 -> {
+        modelInstalled && analysisProgress != null && !analysisProgress!!.finished && !analysisProgress!!.lowMemory && analysisProgress!!.total > 0 -> {
             val ap = analysisProgress!!
             stringResource(R.string.home_ai_analysis_progress, ap.completed, ap.total)
+        }
+        modelInstalled && summary.total > 0 && summary.failed > 0 -> {
+            stringResource(R.string.home_ai_settings_summary_failed, summary.analyzed, summary.total, summary.failed)
+        }
+        modelInstalled && summary.total > 0 -> {
+            stringResource(R.string.home_ai_settings_summary, summary.analyzed, summary.total)
         }
         modelInstalled -> stringResource(R.string.home_ai_settings_installed)
         !downloadSupported -> stringResource(R.string.home_ai_settings_nointernet)
@@ -5598,14 +5758,130 @@ private fun Music2EmoSettingsRow() {
         title = stringResource(R.string.home_ai_settings_title),
         subtitle = subtitle,
         enabled = modelInstalled || (downloadSupported && !offlineMode),
-        onClick = {
-            if (modelInstalled) {
-                showDeleteConfirm = true
-            } else if (downloadSupported && !offlineMode) {
-                showDownloadConfirm = true
-            }
-        },
+        onClick = onOpen,
     )
+}
+
+@Composable
+private fun Music2EmoDialogsHost(openRequest: Int) {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    val offlineMode by AppSettings.offlineMode.collectAsStateWithLifecycle()
+    val cacheRevision by LocalHomeAi.cacheRevision.collectAsStateWithLifecycle()
+    val downloadProgress by LocalHomeAi.downloadProgress.collectAsStateWithLifecycle()
+    val analysisProgress by LocalHomeAi.analysisProgress.collectAsStateWithLifecycle()
+    val excludedRecFolders by AppSettings.recommendationExcludedFolders.collectAsStateWithLifecycle()
+    val downloadSupported = remember(context) { LocalHomeAi.isDownloadSupported(context) }
+
+    var showManageDialog by remember { mutableStateOf(false) }
+    var showDownloadConfirm by remember { mutableStateOf(false) }
+    var showClearCacheConfirm by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var downloadError by remember { mutableStateOf<String?>(null) }
+    var summary by remember { mutableStateOf(LocalHomeAi.LibraryAnalysisSummary(0, 0, 0)) }
+
+    LaunchedEffect(openRequest) {
+        if (openRequest <= 0) return@LaunchedEffect
+        val installed = withContext(Dispatchers.IO) { LocalHomeAi.isModelInstalled(context) }
+        if (installed) {
+            summary = withContext(Dispatchers.IO) { LocalHomeAi.analysisSummary(context) }
+            showManageDialog = true
+        } else if (downloadSupported && !offlineMode) {
+            showDownloadConfirm = true
+        } else {
+            val msgRes = if (!downloadSupported) R.string.home_ai_settings_nointernet else R.string.home_ai_settings_offline_mode
+            Toast.makeText(context, msgRes, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    LaunchedEffect(showManageDialog, cacheRevision, analysisProgress, excludedRecFolders) {
+        if (showManageDialog) {
+            summary = withContext(Dispatchers.IO) { LocalHomeAi.analysisSummary(context) }
+        }
+    }
+
+    if (showManageDialog) {
+        GlassAlertDialog(
+            onDismissRequest = { showManageDialog = false },
+            title = { Text(stringResource(R.string.home_ai_settings_title)) },
+            text = {
+                Column {
+                    if (summary.total > 0) {
+                        val summaryText = if (summary.failed > 0) {
+                            stringResource(R.string.home_ai_manage_summary_failed, summary.analyzed, summary.total, summary.failed)
+                        } else {
+                            stringResource(R.string.home_ai_manage_summary, summary.analyzed, summary.total)
+                        }
+                        Text(
+                            text = summaryText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 12.dp),
+                        )
+                    }
+                    Music2EmoManageAction(
+                        title = stringResource(R.string.home_ai_retry_failed),
+                        subtitle = stringResource(R.string.home_ai_retry_failed_subtitle),
+                        onClick = {
+                            showManageDialog = false
+                            LocalHomeAi.retryFailedAnalysis(context)
+                            Toast.makeText(context, R.string.home_ai_retry_failed_toast, Toast.LENGTH_SHORT).show()
+                        },
+                    )
+                    RowDivider()
+                    Music2EmoManageAction(
+                        title = stringResource(R.string.home_ai_clear_cache_action),
+                        subtitle = stringResource(R.string.home_ai_clear_cache_subtitle),
+                        onClick = {
+                            showManageDialog = false
+                            showClearCacheConfirm = true
+                        },
+                    )
+                    RowDivider()
+                    Music2EmoManageAction(
+                        title = stringResource(R.string.home_ai_delete_model_action),
+                        subtitle = stringResource(R.string.home_ai_delete_model_subtitle),
+                        titleColor = MaterialTheme.colorScheme.error,
+                        onClick = {
+                            showManageDialog = false
+                            showDeleteConfirm = true
+                        },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showManageDialog = false }) {
+                    Text(stringResource(R.string.close))
+                }
+            },
+        )
+    }
+
+    if (showClearCacheConfirm) {
+        GlassAlertDialog(
+            onDismissRequest = { showClearCacheConfirm = false },
+            title = { Text(stringResource(R.string.home_ai_clear_cache_confirm_title)) },
+            text = { Text(stringResource(R.string.home_ai_clear_cache_confirm_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showClearCacheConfirm = false
+                        scope.launch {
+                            LocalHomeAi.clearAnalysisDataAndRestart(context)
+                            Toast.makeText(context, R.string.home_ai_clear_cache_done_toast, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.home_ai_clear_cache_confirm_button))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearCacheConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
 
     if (showDownloadConfirm) {
         Music2EmoDownloadDialog(
@@ -5616,7 +5892,6 @@ private fun Music2EmoSettingsRow() {
                 scope.launch {
                     try {
                         LocalHomeAi.downloadModels(context)
-                        modelInstalled = withContext(Dispatchers.IO) { LocalHomeAi.isModelInstalled(context) }
                     } catch (e: Exception) {
                         downloadError = e.localizedMessage ?: "Download failed"
                     }
@@ -5637,7 +5912,6 @@ private fun Music2EmoSettingsRow() {
                         showDeleteConfirm = false
                         scope.launch {
                             LocalHomeAi.deleteModels(context)
-                            modelInstalled = false
                         }
                     },
                 ) {
@@ -5660,6 +5934,216 @@ private fun Music2EmoSettingsRow() {
         Music2EmoDownloadErrorDialog(
             error = err,
             onDismiss = { downloadError = null },
+        )
+    }
+}
+
+@Composable
+private fun Music2EmoManageAction(
+    title: String,
+    subtitle: String,
+    titleColor: Color = MaterialTheme.colorScheme.onSurface,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = titleColor,
+        )
+        Text(
+            text = subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun LyricsAiModelSettingsRow(onOpen: () -> Unit) {
+    val context = LocalContext.current.applicationContext
+    val offlineMode by AppSettings.offlineMode.collectAsStateWithLifecycle()
+    val modelInstalledState by OnDeviceLyricsAlignerModel.modelInstalled.collectAsStateWithLifecycle()
+    val downloadProgress by OnDeviceLyricsAlignerModel.downloadProgress.collectAsStateWithLifecycle()
+    val downloadSupported = remember(context) { OnDeviceLyricsAlignerModel.isDownloadSupported(context) }
+    var modelInstalled by remember { mutableStateOf(modelInstalledState) }
+
+    LaunchedEffect(context, modelInstalledState) {
+        modelInstalled = withContext(Dispatchers.IO) {
+            OnDeviceLyricsAlignerModel.isModelInstalled(context)
+        }
+    }
+
+    val subtitle = when {
+        downloadProgress != null -> {
+            val dp = downloadProgress!!
+            stringResource(
+                R.string.lyrics_ai_download_progress,
+                dp.bytes / (1024f * 1024f),
+                dp.totalBytes.coerceAtLeast(1L) / (1024f * 1024f),
+            )
+        }
+        modelInstalled -> stringResource(R.string.lyrics_ai_settings_installed)
+        !downloadSupported -> stringResource(R.string.lyrics_ai_settings_nointernet)
+        offlineMode -> stringResource(R.string.lyrics_ai_settings_offline_mode)
+        else -> stringResource(R.string.lyrics_ai_settings_not_installed)
+    }
+
+    SettingsRow(
+        icon = Icons.Rounded.AutoAwesome,
+        title = stringResource(R.string.lyrics_ai_settings_title),
+        subtitle = subtitle,
+        enabled = modelInstalled || (downloadSupported && !offlineMode),
+        onClick = onOpen,
+    )
+}
+
+@Composable
+private fun LyricsAiModelDialogsHost(openRequest: Int) {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    val offlineMode by AppSettings.offlineMode.collectAsStateWithLifecycle()
+    val downloadProgress by OnDeviceLyricsAlignerModel.downloadProgress.collectAsStateWithLifecycle()
+    val downloadSupported = remember(context) { OnDeviceLyricsAlignerModel.isDownloadSupported(context) }
+
+    var showManageDialog by remember { mutableStateOf(false) }
+    var showDownloadConfirm by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    var downloadError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(openRequest) {
+        if (openRequest <= 0) return@LaunchedEffect
+        val installed = withContext(Dispatchers.IO) { OnDeviceLyricsAlignerModel.isModelInstalled(context) }
+        if (installed) {
+            showManageDialog = true
+        } else if (downloadSupported && !offlineMode) {
+            showDownloadConfirm = true
+        } else {
+            val msgRes = if (!downloadSupported) R.string.lyrics_ai_settings_nointernet else R.string.lyrics_ai_settings_offline_mode
+            Toast.makeText(context, msgRes, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    if (showManageDialog) {
+        GlassAlertDialog(
+            onDismissRequest = { showManageDialog = false },
+            title = { Text(stringResource(R.string.lyrics_ai_manage_title)) },
+            text = {
+                Column {
+                    Text(
+                        text = stringResource(R.string.lyrics_ai_manage_message),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                    Music2EmoManageAction(
+                        title = stringResource(R.string.lyrics_ai_delete_confirm),
+                        subtitle = stringResource(R.string.lyrics_ai_delete_message),
+                        titleColor = MaterialTheme.colorScheme.error,
+                        onClick = {
+                            showManageDialog = false
+                            showDeleteConfirm = true
+                        },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showManageDialog = false }) {
+                    Text(stringResource(R.string.close))
+                }
+            },
+        )
+    }
+
+    if (showDownloadConfirm) {
+        GlassAlertDialog(
+            onDismissRequest = { showDownloadConfirm = false },
+            title = { Text(stringResource(R.string.lyrics_ai_download_confirm_title)) },
+            text = { Text(stringResource(R.string.lyrics_ai_download_confirm_message)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDownloadConfirm = false
+                        scope.launch {
+                            val result = OnDeviceLyricsAlignerModel.downloadModel(context)
+                            result.onFailure { err ->
+                                downloadError = err.localizedMessage ?: "Download failed"
+                            }
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.lyrics_ai_download_confirm_button))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDownloadConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    if (showDeleteConfirm) {
+        GlassAlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text(stringResource(R.string.lyrics_ai_delete_title)) },
+            text = { Text(stringResource(R.string.lyrics_ai_delete_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        scope.launch(Dispatchers.IO) {
+                            OnDeviceLyricsAlignerModel.deleteModel(context)
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.lyrics_ai_delete_confirm))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    downloadProgress?.let { dp ->
+        val totalMb = dp.totalBytes.coerceAtLeast(1L) / (1024f * 1024f)
+        val doneMb = dp.bytes / (1024f * 1024f)
+        val fraction = (dp.bytes.toFloat() / dp.totalBytes.coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
+        GlassAlertDialog(
+            onDismissRequest = {},
+            title = { Text(stringResource(R.string.lyrics_ai_download_confirm_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(stringResource(R.string.lyrics_ai_download_progress, doneMb, totalMb))
+                    LinearProgressIndicator(
+                        progress = { fraction },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {},
+        )
+    }
+
+    downloadError?.let { err ->
+        GlassAlertDialog(
+            onDismissRequest = { downloadError = null },
+            title = { Text(stringResource(R.string.lyrics_ai_download_failed)) },
+            text = { Text(err) },
+            confirmButton = {
+                TextButton(onClick = { downloadError = null }) {
+                    Text(stringResource(android.R.string.ok))
+                }
+            },
         )
     }
 }

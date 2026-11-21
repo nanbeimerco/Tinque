@@ -41,8 +41,16 @@ object VocalDetector {
         val isInstrumental: Boolean,
     )
 
+    data class SeparatedChunk(
+        val vocalMono16k: FloatArray,
+        val vocalCurve: FloatArray,
+    )
+
     @Volatile private var session: OrtSession? = null
     private val lock = Any()
+    private val inferenceLock = Any()
+    private var reusableBacking: ByteBuffer? = null
+    private var reusableZeroPad: FloatArray? = null
 
     /** Returns cached classification if available, or null when not yet analyzed. */
     fun cached(context: Context, song: Song): VocalResult? {
@@ -109,16 +117,16 @@ object VocalDetector {
 
         return source.use { dataSource ->
             val start = (song.localStartMs ?: 0L).coerceAtLeast(0L) / 1000.0
-            val containerDuration = AudioDecoder.containerDurationSeconds(dataSource)
             val metaDuration = song.durationMillis().takeIf { it > 0L }?.div(1000.0)
-            val end = listOfNotNull(containerDuration, metaDuration?.let { start + it })
-                .minOrNull() ?: (start + DEFAULT_WINDOW_SECONDS)
-            val duration = (end - start).takeIf { it.isFinite() && it > 0.0 } ?: return null
-            val winLen = min(DEFAULT_WINDOW_SECONDS, duration)
-            val regionStart = start + ((duration - winLen) * 0.5).coerceAtLeast(0.0)
-            val regionEnd = min(regionStart + winLen, end)
-            val decoded = AudioDecoder.decodeRegionStereo(dataSource, regionStart, regionEnd, abort)
-                ?: return null
+            val decoded = AudioDecoder.decodeStereoWindow(dataSource, abort) { containerDuration ->
+                val end = listOfNotNull(containerDuration, metaDuration?.let { start + it })
+                    .minOrNull() ?: (start + DEFAULT_WINDOW_SECONDS)
+                val duration = (end - start).takeIf { it.isFinite() && it > 0.0 } ?: return@decodeStereoWindow null
+                val winLen = min(DEFAULT_WINDOW_SECONDS, duration)
+                val regionStart = start + ((duration - winLen) * 0.5).coerceAtLeast(0.0)
+                val regionEnd = min(regionStart + winLen, end)
+                regionStart to regionEnd
+            } ?: return null
             classifyStereoWindow(context, song, decoded.first.left, decoded.first.right, decoded.first.sampleRate)
         }
     }
@@ -172,21 +180,83 @@ object VocalDetector {
         return curve
     }
 
+    /**
+     * Runs bundled Open-Unmix separation on a <=20s planar stereo chunk to obtain:
+     * - [SeparatedChunk.vocalCurve]: frame-level vocal presence ratios (~23.22 ms/frame)
+     * - [SeparatedChunk.vocalMono16k]: reconstructed 16 kHz mono vocal PCM (when [reconstructAudio] is true)
+     */
+    fun separateChunk(
+        context: Context,
+        left: FloatArray,
+        right: FloatArray,
+        sampleRate: Double,
+        reconstructAudio: Boolean = true,
+    ): SeparatedChunk? {
+        val resLeft = AudioDecoder.resampleLinear(left, sampleRate, VocalSpectrogram.SAMPLE_RATE) ?: return null
+        val resRight = AudioDecoder.resampleLinear(right, sampleRate, VocalSpectrogram.SAMPLE_RATE) ?: return null
+        val complex = VocalSpectrogram.computeComplex(resLeft, resRight, VocalSpectrogram.SAMPLE_RATE) ?: return null
+        if (complex.frames <= 0 || complex.frames > FIXED_FRAMES) return null
+
+        val activeSession = ensureSession(context) ?: return null
+        return runCatching {
+            synchronized(inferenceLock) {
+                val bins = complex.bins
+                val neededBytes = VocalSpectrogram.CHANNELS * bins * FIXED_FRAMES * Float.SIZE_BYTES
+                val backing = reusableBacking?.takeIf { it.capacity() == neededBytes }
+                    ?: ByteBuffer
+                        .allocateDirect(neededBytes)
+                        .order(ByteOrder.nativeOrder())
+                        .also { reusableBacking = it }
+                backing.clear()
+                val inputFloats = backing.asFloatBuffer()
+                fillFixedFrames(inputFloats, complex.magnitude, bins, complex.frames)
+                inputFloats.rewind()
+                val env = OrtEnvironment.getEnvironment()
+                val shape = longArrayOf(1, VocalSpectrogram.CHANNELS.toLong(), bins.toLong(), FIXED_FRAMES.toLong())
+                OnnxTensor.createTensor(env, inputFloats, shape).use { tensor ->
+                    activeSession.run(mapOf(activeSession.inputNames.first() to tensor)).use { outputs ->
+                        val target = (outputs.get(0) as OnnxTensor).floatBuffer
+                        inputFloats.rewind()
+                        val curve = reduceToBandCurve(inputFloats, target, bins, complex.frames)
+                        val vocal16k = if (reconstructAudio) {
+                            target.rewind()
+                            val vocal44k = VocalSpectrogram.reconstructMonoFromMask(complex, target, FIXED_FRAMES)
+                            AudioDecoder.resampleLinear(vocal44k, VocalSpectrogram.SAMPLE_RATE, 16_000.0)
+                                ?: FloatArray(0)
+                        } else {
+                            FloatArray(0)
+                        }
+                        SeparatedChunk(vocalMono16k = vocal16k, vocalCurve = curve)
+                    }
+                }
+            }
+        }.onFailure { Log.w(TAG, "Vocal chunk separation failed", it) }.getOrNull()
+    }
+
     private fun runModel(context: Context, spectrogram: VocalSpectrogram.Spectrogram): FloatArray? {
         if (spectrogram.frames <= 0 || spectrogram.frames > FIXED_FRAMES) return null
         val activeSession = ensureSession(context) ?: return null
         return runCatching {
-            val bins = spectrogram.bins
-            val backing = ByteBuffer
-                .allocateDirect(VocalSpectrogram.CHANNELS * bins * FIXED_FRAMES * Float.SIZE_BYTES)
-                .order(ByteOrder.nativeOrder())
-            fillFixedFrames(backing.asFloatBuffer(), spectrogram.values, bins, spectrogram.frames)
-            val env = OrtEnvironment.getEnvironment()
-            val shape = longArrayOf(1, VocalSpectrogram.CHANNELS.toLong(), bins.toLong(), FIXED_FRAMES.toLong())
-            OnnxTensor.createTensor(env, backing.asFloatBuffer(), shape).use { tensor ->
-                activeSession.run(mapOf(activeSession.inputNames.first() to tensor)).use { outputs ->
-                    val target = (outputs.get(0) as OnnxTensor).floatBuffer
-                    reduceToBandCurve(backing.asFloatBuffer(), target, bins, spectrogram.frames)
+            synchronized(inferenceLock) {
+                val bins = spectrogram.bins
+                val neededBytes = VocalSpectrogram.CHANNELS * bins * FIXED_FRAMES * Float.SIZE_BYTES
+                val backing = reusableBacking?.takeIf { it.capacity() == neededBytes }
+                    ?: ByteBuffer
+                        .allocateDirect(neededBytes)
+                        .order(ByteOrder.nativeOrder())
+                        .also { reusableBacking = it }
+                backing.clear()
+                val inputFloats = backing.asFloatBuffer()
+                fillFixedFrames(inputFloats, spectrogram.values, bins, spectrogram.frames)
+                inputFloats.rewind()
+                val env = OrtEnvironment.getEnvironment()
+                val shape = longArrayOf(1, VocalSpectrogram.CHANNELS.toLong(), bins.toLong(), FIXED_FRAMES.toLong())
+                OnnxTensor.createTensor(env, inputFloats, shape).use { tensor ->
+                    activeSession.run(mapOf(activeSession.inputNames.first() to tensor)).use { outputs ->
+                        val target = (outputs.get(0) as OnnxTensor).floatBuffer
+                        inputFloats.rewind()
+                        reduceToBandCurve(inputFloats, target, bins, spectrogram.frames)
+                    }
                 }
             }
         }.onFailure { Log.w(TAG, "Vocal inference failed", it) }.getOrNull()
@@ -197,11 +267,13 @@ object VocalDetector {
             into.put(values)
             return
         }
-        val pad = FloatArray(FIXED_FRAMES - frames)
+        val padFrames = FIXED_FRAMES - frames
+        val pad = reusableZeroPad?.takeIf { it.size >= padFrames }
+            ?: FloatArray(FIXED_FRAMES).also { reusableZeroPad = it }
         for (channel in 0 until VocalSpectrogram.CHANNELS) {
             for (bin in 0 until bins) {
                 into.put(values, (channel * bins + bin) * frames, frames)
-                into.put(pad)
+                into.put(pad, 0, padFrames)
             }
         }
     }
@@ -250,6 +322,10 @@ object VocalDetector {
         synchronized(lock) {
             runCatching { session?.close() }
             session = null
+            synchronized(inferenceLock) {
+                reusableBacking = null
+                reusableZeroPad = null
+            }
         }
     }
 

@@ -87,6 +87,7 @@ class BitChordApplication : Application(), SingletonImageLoader.Factory {
         LocalPlaylistStore.init(this)
         LocalFavoritesStore.init(this)
         com.music.bitchord.data.lyrics.LyricsOverrideStore.init(this)
+        com.music.bitchord.data.lyrics.LyricsFetchCache.init(this)
         // The device's own listening record. Opened here rather than in
         // PlaybackService because the Replay page reads it from the UI side and
         // both live in this process — one owner, one directory.

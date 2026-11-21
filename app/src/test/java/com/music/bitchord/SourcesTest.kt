@@ -1,8 +1,6 @@
 package com.music.bitchord
 
 import com.music.bitchord.data.NerdStats
-import com.music.bitchord.data.jiosaavn.RawSongItem
-import com.music.bitchord.data.jiosaavn.prioritizeExplicit
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.ModuleSource
 import com.music.bitchord.data.sources.MusicSource
@@ -556,25 +554,6 @@ class SourcesTest {
     }
 
     @Test
-    fun `JioSaavn prioritizes the uncensored duplicate`() {
-        val clean = RawSongItem(id = "clean", title = "Starboy", explicitContent = "0")
-        val explicit = RawSongItem(id = "explicit", title = "Starboy", explicitContent = "1")
-        val anotherClean = RawSongItem(id = "clean-2", title = "Starboy", explicitContent = "0")
-
-        assertEquals(
-            listOf("explicit", "clean", "clean-2"),
-            prioritizeExplicit(listOf(clean, explicit, anotherClean)).map { it.id },
-        )
-    }
-
-    @Test
-    fun `JioSaavn accepts textual explicit flags defensively`() {
-        assertTrue(RawSongItem(explicitContent = "true").isExplicit)
-        assertFalse(RawSongItem(explicitContent = "false").isExplicit)
-        assertFalse(RawSongItem(explicitContent = "").isExplicit)
-    }
-
-    @Test
     fun `explicit YouTube track cannot match the censored JioSaavn edition`() {
         val target = TrackMatcher.Target(
             "Starboy",
@@ -906,15 +885,12 @@ class SourcesTest {
     // ---- Which sources are worth asking before a track is played ------------
 
     /**
-     * Read-ahead resolves the track *after* the one playing, so a source that
-     * needs ten seconds to answer is usually still answering when the listener
-     * arrives — and a wasted module resolve costs a QuickJS engine and several
-     * backend searches, where a wasted JioSaavn one costs a round trip. Only
-     * JioSaavn earns the speculative ask.
+     * Slow and user-added sources are resolved only on demand, not
+     * speculatively during read-ahead.
      */
     @Test
-    fun `only the quick source is worth resolving ahead of playback`() {
-        assertTrue(SourceKind.JIOSAAVN.worthPrefetching)
+    fun `slow and user-added sources are not prefetched ahead of playback`() {
+        assertFalse(SourceKind.ADDON.worthPrefetching)
         assertFalse(SourceKind.MODULE.worthPrefetching)
         assertFalse(SourceKind.CUSTOM_MODULE.worthPrefetching)
     }
@@ -943,7 +919,7 @@ class SourcesTest {
         override val displayName: String,
         private val answerAfterMs: Long,
         private val format: StreamFormat?,
-        override val kind: SourceKind = SourceKind.JIOSAAVN,
+        override val kind: SourceKind = SourceKind.ADDON,
         private val candidates: List<Song>? = null,
     ) : MusicSource {
         override val configId = displayName
@@ -979,24 +955,6 @@ class SourcesTest {
     }
 
     private fun raceTarget() = TrackMatcher.Target(RACE_TITLE, RACE_ARTIST, durationSec = 120)
-
-    @Test
-    fun `JioSaavn substitution refuses conflicting albums without a target album`() = runBlocking {
-        val source = FakeSource(
-            displayName = "JioSaavn",
-            answerAfterMs = 0,
-            format = StreamFormat("mp4", kbps = 320),
-            candidates = listOf(
-                song("Brown Rang", "Yo Yo Honey Singh", "2:59")
-                    .copy(videoId = "international-villager", albumName = "International Villager"),
-                song("Brown Rang", "Yo Yo Honey Singh", "2:54")
-                    .copy(videoId = "chaar-ikke", albumName = "Chaar Ikke"),
-            ),
-        )
-        val target = TrackMatcher.Target("Brown Rang", "Yo Yo Honey Singh", durationSec = 175)
-
-        assertNull(SourceResolver.bestAcross(listOf(source), target, StreamRequest.Best))
-    }
 
     /**
      * The '9:45' case itself, as a race rather than a queue.

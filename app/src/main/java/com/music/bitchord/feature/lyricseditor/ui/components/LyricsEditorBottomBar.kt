@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ClearAll
 import androidx.compose.material.icons.rounded.ContentPaste
 import androidx.compose.material.icons.rounded.Download
@@ -61,6 +62,7 @@ fun LyricsEditorBottomBar(
     onUndoChangesClick: () -> Unit,
     onInsertTimestampClick: (() -> Unit)? = null,
     onClearAllClick: (() -> Unit)? = null,
+    onAiSyncClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -193,6 +195,23 @@ fun LyricsEditorBottomBar(
                         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
                     ) {
+                        if (onAiSyncClick != null) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.lyrics_ai_generate_button)) },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Rounded.AutoAwesome,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                },
+                                onClick = {
+                                    menuExpanded = false
+                                    onAiSyncClick()
+                                },
+                            )
+                        }
+
                         if (onInsertTimestampClick != null) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.l10n_insert_timestamp)) },

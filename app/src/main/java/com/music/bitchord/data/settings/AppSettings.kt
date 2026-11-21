@@ -596,6 +596,12 @@ object AppSettings {
     /** Skips clear instrumental tracks during AutoPlay recommendations (metadata + local vocal check). */
     val excludeInstrumentalsInAutoplay = MutableStateFlow(false)
 
+    /** Skips clear instrumental tracks in Home "Mixes for you" pills. */
+    val excludeInstrumentalsInHomeMixes = MutableStateFlow(false)
+
+    /** Skips clear instrumental tracks in Home AI mood shelves ("Might also like", "Uplifting", "Restful", etc.). */
+    val excludeInstrumentalsInHomeAiShelves = MutableStateFlow(false)
+
     /** Drops haze blur (status bar, mini player, bottom fade, lyrics focus) for a solid-fill look. */
     val reduceDynamicBlur = MutableStateFlow(false)
 
@@ -968,6 +974,9 @@ object AppSettings {
     /** Normalized paths of folders blacklisted/excluded from local music scanning. */
     val blacklistedFolders = MutableStateFlow<Set<String>>(emptySet())
 
+    /** Normalized paths of folders excluded from AutoPlay, Home Mixes/Heat/AI shelves, and Music2Emo analysis (still playable in Library & shown in Recently Played). */
+    val recommendationExcludedFolders = MutableStateFlow<Set<String>>(emptySet())
+
     /**
      * Browse ids of the playlists pinned to the top of the Library tab, in the
      * order they were pinned.
@@ -1286,6 +1295,8 @@ object AppSettings {
         homeHeatDailyMixBoost.value = prefs.getBoolean(KEY_HOME_HEAT_DAILY_MIX_BOOST, true)
         phoneLandscapeSplitPlayer.value = prefs.getBoolean(KEY_PHONE_LANDSCAPE_SPLIT_PLAYER, false)
         excludeInstrumentalsInAutoplay.value = prefs.getBoolean(KEY_EXCLUDE_INSTRUMENTALS_IN_AUTOPLAY, false)
+        excludeInstrumentalsInHomeMixes.value = prefs.getBoolean(KEY_EXCLUDE_INSTRUMENTALS_IN_HOME_MIXES, false)
+        excludeInstrumentalsInHomeAiShelves.value = prefs.getBoolean(KEY_EXCLUDE_INSTRUMENTALS_IN_HOME_AI_SHELVES, false)
         homeSectionOrder.value = readOrder(KEY_HOME_SECTION_ORDER, HomeSection.entries)
         hiddenHomeSections.value = readSet(KEY_HOME_SECTIONS_HIDDEN, HomeSection.entries)
         librarySectionOrder.value = readOrder(KEY_LIBRARY_SECTION_ORDER, LibrarySection.entries)
@@ -1452,6 +1463,7 @@ object AppSettings {
         detailSongSorts.value = readDetailSongSorts()
         LauncherIconManager.apply(appContext, launcherIcon.value)
         blacklistedFolders.value = prefs.getStringSet(KEY_BLACKLISTED_FOLDERS, emptySet()).orEmpty()
+        recommendationExcludedFolders.value = prefs.getStringSet(KEY_RECOMMENDATION_EXCLUDED_FOLDERS, emptySet()).orEmpty().toSet()
         pinnedPlaylists.value = readPinnedPlaylists()
         discordToken.value = authStore.discordToken.orEmpty()
         discordUsername.value = prefs.getString(KEY_DISCORD_USERNAME, "").orEmpty()
@@ -2271,7 +2283,10 @@ object AppSettings {
 
     private inline fun <reified E : Enum<E>> readOrder(key: String, all: List<E>): List<E> {
         val saved = prefs.getString(key, null)?.split(',')
-            ?.mapNotNull { name -> all.firstOrNull { it.name == name } }
+            ?.mapNotNull { raw ->
+                val name = raw.trim()
+                all.firstOrNull { it.name == name }
+            }
             .orEmpty()
         return (saved + all).distinct()
     }
@@ -2309,6 +2324,16 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_EXCLUDE_INSTRUMENTALS_IN_AUTOPLAY, value).apply()
     }
 
+    fun setExcludeInstrumentalsInHomeMixes(value: Boolean) {
+        excludeInstrumentalsInHomeMixes.value = value
+        prefs.edit().putBoolean(KEY_EXCLUDE_INSTRUMENTALS_IN_HOME_MIXES, value).apply()
+    }
+
+    fun setExcludeInstrumentalsInHomeAiShelves(value: Boolean) {
+        excludeInstrumentalsInHomeAiShelves.value = value
+        prefs.edit().putBoolean(KEY_EXCLUDE_INSTRUMENTALS_IN_HOME_AI_SHELVES, value).apply()
+    }
+
     fun moveHomeSection(section: HomeSection, offset: Int) {
         val list = homeSectionOrder.value.toMutableList()
         val from = list.indexOf(section)
@@ -2316,7 +2341,7 @@ object AppSettings {
         if (from < 0 || from == to) return
         list.add(to, list.removeAt(from))
         homeSectionOrder.value = list
-        prefs.edit().putString(KEY_HOME_SECTION_ORDER, list.joinToString( ) { it.name }).apply()
+        prefs.edit().putString(KEY_HOME_SECTION_ORDER, list.joinToString(",") { it.name }).apply()
     }
 
     fun setHomeSectionVisible(section: HomeSection, visible: Boolean) {
@@ -2332,7 +2357,7 @@ object AppSettings {
         if (from < 0 || from == to) return
         list.add(to, list.removeAt(from))
         librarySectionOrder.value = list
-        prefs.edit().putString(KEY_LIBRARY_SECTION_ORDER, list.joinToString( ) { it.name }).apply()
+        prefs.edit().putString(KEY_LIBRARY_SECTION_ORDER, list.joinToString(",") { it.name }).apply()
     }
 
     fun setLibrarySectionVisible(section: LibrarySection, visible: Boolean) {
@@ -2672,12 +2697,12 @@ object AppSettings {
      * no longer exists — a source dropped or deleted from the repo — falls out
      * quietly, and the default when nothing has been saved is "all of them".
      */
-    private fun readLyricsSources(allSources: List<LyricsSource>): Set<LyricsSource> {
+    private fun readLyricsSources(allSources: List<LyricsSource>): Pair<Set<LyricsSource>, Set<String>> {
         val allIds = allSources.map { it.id }.toSet()
         val stored = prefs.getString(KEY_LYRICS_SOURCES, null)
         if (stored == null) {
             prefs.edit().putString("known_lyrics_sources", allIds.joinToString(",")).apply()
-            return allSources.toSet()
+            return allSources.toSet() to emptySet()
         }
         val ids = stored.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
         val knownRaw = prefs.getString("known_lyrics_sources", null)
@@ -2691,7 +2716,7 @@ object AppSettings {
                 .apply()
         }
         val filtered = allSources.filter { it.id in effectiveIds }.toSet()
-        return filtered.ifEmpty { allSources.toSet() }
+        return filtered.ifEmpty { allSources.toSet() } to newlyAddedIds
     }
 
     fun setLyricsSourceOrder(value: List<LyricsSource>) {
@@ -2699,18 +2724,34 @@ object AppSettings {
         prefs.edit().putString(KEY_LYRICS_SOURCE_ORDER, value.joinToString(",") { it.id }).apply()
     }
 
-    private fun readLyricsSourceOrder(allSources: List<LyricsSource>): List<LyricsSource> {
+    private fun readLyricsSourceOrder(
+        allSources: List<LyricsSource>,
+        newlyAddedIds: Set<String> = emptySet(),
+    ): List<LyricsSource> {
         val stored = prefs.getString(KEY_LYRICS_SOURCE_ORDER, null)
             ?: return allSources
         val ids = stored.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        val saved = ids.mapNotNull { id -> allSources.firstOrNull { it.id == id } }
-        return saved + allSources.filter { it !in saved }
+        val saved = ids.mapNotNull { id -> allSources.firstOrNull { it.id == id } }.toMutableList()
+        val missing = allSources.filter { it !in saved }
+        if (missing.isEmpty()) return saved
+        for (src in missing) {
+            if (src.id in newlyAddedIds) {
+                val targetIndex = allSources.indexOf(src).coerceIn(0, saved.size)
+                saved.add(targetIndex, src)
+            } else {
+                saved.add(src)
+            }
+        }
+        if (missing.any { it.id in newlyAddedIds }) {
+            prefs.edit().putString(KEY_LYRICS_SOURCE_ORDER, saved.joinToString(",") { it.id }).apply()
+        }
+        return saved
     }
 
     fun refreshLyricsSources(allSources: List<LyricsSource>) {
         if (allSources.isEmpty()) return
-        val currentEnabled = readLyricsSources(allSources)
-        val currentOrder = readLyricsSourceOrder(allSources)
+        val (currentEnabled, newlyAddedIds) = readLyricsSources(allSources)
+        val currentOrder = readLyricsSourceOrder(allSources, newlyAddedIds)
         lyricsSources.value = currentEnabled
         lyricsSourceOrder.value = currentOrder
     }
@@ -3192,7 +3233,7 @@ object AppSettings {
 
 
     fun setFolderBlacklisted(folderPath: String, blacklisted: Boolean) {
-        val normalized = folderPath.replace('\\', '/').trimEnd('/').lowercase(Locale.ROOT)
+        val normalized = normalizeFolderPath(folderPath)
         val current = blacklistedFolders.value
         val updated = if (blacklisted) current + normalized else current - normalized
         blacklistedFolders.value = updated
@@ -3201,11 +3242,45 @@ object AppSettings {
 
     fun isFolderBlacklisted(folderPath: String?): Boolean {
         if (folderPath.isNullOrBlank()) return false
-        val normalized = folderPath.replace('\\', '/').trimEnd('/').lowercase(Locale.ROOT)
+        val normalized = normalizeFolderPath(folderPath)
         val blacklisted = blacklistedFolders.value
         return blacklisted.any { b ->
             normalized == b || normalized.startsWith("$b/")
         }
+    }
+
+    internal fun normalizeFolderPath(folderPath: String): String =
+        folderPath.replace('\\', '/').trimEnd('/').lowercase(Locale.ROOT)
+
+    fun setFolderExcludedFromRecommendations(folderPath: String, excluded: Boolean) {
+        val normalized = normalizeFolderPath(folderPath)
+        if (normalized.isBlank()) return
+        val current = recommendationExcludedFolders.value
+        val updated = if (excluded) current + normalized else current - normalized
+        recommendationExcludedFolders.value = updated
+        prefs.edit().putStringSet(KEY_RECOMMENDATION_EXCLUDED_FOLDERS, updated).apply()
+    }
+
+    fun matchesExcludedFolders(folderPath: String?, excludedFolders: Set<String>): Boolean {
+        if (folderPath.isNullOrBlank() || excludedFolders.isEmpty()) return false
+        val normalized = normalizeFolderPath(folderPath)
+        if (normalized.isBlank()) return false
+        return excludedFolders.any { raw ->
+            val b = normalizeFolderPath(raw)
+            b.isNotBlank() && (normalized == b || normalized.startsWith("$b/"))
+        }
+    }
+
+    fun isFolderExcludedFromRecommendations(folderPath: String?): Boolean =
+        matchesExcludedFolders(folderPath, recommendationExcludedFolders.value)
+
+    fun isSongPathExcludedFromRecommendations(
+        localPath: String?,
+        excludedFolders: Set<String> = recommendationExcludedFolders.value,
+    ): Boolean {
+        if (localPath.isNullOrBlank() || excludedFolders.isEmpty()) return false
+        val folderPath = localPath.replace('\\', '/').substringBeforeLast('/', "")
+        return matchesExcludedFolders(folderPath, excludedFolders)
     }
 
     private fun readLocalMusicSort(key: String): LocalMusicSort =
@@ -3490,6 +3565,8 @@ object AppSettings {
     private const val KEY_HOME_HEAT_DAILY_MIX_BOOST = "home_heat_daily_mix_boost"
     private const val KEY_PHONE_LANDSCAPE_SPLIT_PLAYER = "phone_landscape_split_player"
     private const val KEY_EXCLUDE_INSTRUMENTALS_IN_AUTOPLAY = "exclude_instrumentals_in_autoplay"
+    private const val KEY_EXCLUDE_INSTRUMENTALS_IN_HOME_MIXES = "exclude_instrumentals_in_home_mixes"
+    private const val KEY_EXCLUDE_INSTRUMENTALS_IN_HOME_AI_SHELVES = "exclude_instrumentals_in_home_ai_shelves"
     private const val KEY_WARN_BEFORE_SPEAKER_PLAYBACK = "warn_before_speaker_playback"
     private const val KEY_HOME_SECTION_ORDER = "home_section_order"
     private const val KEY_HOME_SECTIONS_HIDDEN = "home_sections_hidden"
@@ -3609,6 +3686,7 @@ object AppSettings {
     private const val KEY_LOCAL_DRILLDOWN_SONGS_VIEW_TYPE = "local_drilldown_songs_view_type"
     private const val KEY_DOWNLOADED_DRILLDOWN_SONGS_VIEW_TYPE = "downloaded_drilldown_songs_view_type"
     private const val KEY_BLACKLISTED_FOLDERS = "blacklisted_folders"
+    private const val KEY_RECOMMENDATION_EXCLUDED_FOLDERS = "recommendation_excluded_folders"
     private const val KEY_PINNED_PLAYLISTS = "pinned_playlists"
     private const val KEY_ALL_FILES_PERMISSION_ASKED = "all_files_permission_asked"
 

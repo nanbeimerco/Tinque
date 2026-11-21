@@ -125,7 +125,7 @@ object LyricsCatalog {
         val results = ArrayList<LyricsCandidate>()
 
         if (com.music.bitchord.data.lyrics.providers.NativeLyricsProviders.isNativeProvider(source.id)) {
-            val nativeItems = runCatching {
+            val nativeItems = try {
                 com.music.bitchord.data.lyrics.providers.NativeLyricsProviders.searchLyrics(
                     providerId = source.id,
                     title = query.title,
@@ -133,7 +133,13 @@ object LyricsCatalog {
                     album = album,
                     durationMs = durationMs,
                 )
-            }.getOrDefault(emptyList())
+            } catch (e: ProviderFailureException) {
+                throw e
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                emptyList()
+            }
 
             for (item in nativeItems) {
                 val raw = item.bestRaw ?: continue

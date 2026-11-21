@@ -78,63 +78,73 @@ object TagLibWriter {
         fields: Set<com.music.bitchord.feature.tageditor.domain.model.TagField>? = null,
     ): Boolean = withContext(Dispatchers.IO) {
         try {
-            val pfd = openFileDescriptor(context, song, "rw") ?: return@withContext false
+            val uri = getUriForSong(song)
+            val filePath = (if (uri != null) resolveFilePath(context, uri) else null) ?: song.localPath
+            val propsOk = com.music.bitchord.playback.LocalFileWriteGuard.aroundWrite(
+                com.music.bitchord.playback.LocalFileWriteGuard.Target(
+                    mediaId = song.videoId,
+                    uri = uri?.toString(),
+                    path = filePath,
+                ),
+            ) {
+                val pfd = openFileDescriptor(context, song, "rw") ?: return@aroundWrite false
 
-            pfd.use { descriptor ->
-                val currentProps = TagLib.getMetadata(descriptor.dup().detachFd(), false)?.propertyMap ?: hashMapOf()
+                pfd.use { descriptor ->
+                    val currentProps = TagLib.getMetadata(descriptor.dup().detachFd(), false)?.propertyMap ?: hashMapOf()
 
-                val newMap = hashMapOf<String, Array<String>>()
-                newMap.putAll(currentProps)
+                    val newMap = hashMapOf<String, Array<String>>()
+                    newMap.putAll(currentProps)
 
-                fun put(key: String, value: String) {
-                    val trimmed = value.trim()
-                    if (trimmed.isEmpty()) {
-                        newMap.remove(key)
-                        newMap.remove(key.uppercase())
-                    } else {
-                        newMap[key] = arrayOf(trimmed)
+                    fun put(key: String, value: String) {
+                        val trimmed = value.trim()
+                        if (trimmed.isEmpty()) {
+                            newMap.remove(key)
+                            newMap.remove(key.uppercase())
+                        } else {
+                            newMap[key] = arrayOf(trimmed)
+                        }
                     }
-                }
 
-                for (field in com.music.bitchord.feature.tageditor.domain.model.TagField.entries) {
-                    val key = field.propertyKey ?: continue
-                    if (fields == null || field in fields) put(key, field.get(data))
-                }
-
-                // Editing descriptive tags or lyrics does not change the PCM
-                // samples, so ReplayGain values remain valid and must survive
-                // a metadata write. Only empty property entries are removed.
-                val cleanedMap = newMap.filterValues { it.isNotEmpty() }
-                    .mapValuesTo(hashMapOf()) { it.value }
-
-                val propsOk = TagLib.savePropertyMap(descriptor.dup().detachFd(), cleanedMap)
-
-                val writeArtwork = fields == null || com.music.bitchord.feature.tageditor.domain.model.TagField.ARTWORK in fields
-                if (data.artworkChanged && writeArtwork) {
-                    if (data.artworkDeleted || data.artworkBitmap == null) {
-                        TagLib.savePictures(descriptor.dup().detachFd(), arrayOf())
-                    } else {
-                        val stream = ByteArrayOutputStream()
-                        data.artworkBitmap.compress(Bitmap.CompressFormat.JPEG, 95, stream)
-                        val bytes = stream.toByteArray()
-                        val pic = Picture(
-                            data = bytes,
-                            description = "Front Cover",
-                            pictureType = "Front Cover",
-                            mimeType = "image/jpeg",
-                        )
-                        TagLib.savePictures(descriptor.dup().detachFd(), arrayOf(pic))
+                    for (field in com.music.bitchord.feature.tageditor.domain.model.TagField.entries) {
+                        val key = field.propertyKey ?: continue
+                        if (fields == null || field in fields) put(key, field.get(data))
                     }
-                }
 
-                val uri = getUriForSong(song)
-                val filePath = (if (uri != null) resolveFilePath(context, uri) else null) ?: song.localPath
-                if (!filePath.isNullOrBlank()) {
-                    scanFile(context, filePath)
-                }
+                    // Editing descriptive tags or lyrics does not change the PCM
+                    // samples, so ReplayGain values remain valid and must survive
+                    // a metadata write. Only empty property entries are removed.
+                    val cleanedMap = newMap.filterValues { it.isNotEmpty() }
+                        .mapValuesTo(hashMapOf()) { it.value }
 
-                propsOk
+                    val savedProps = TagLib.savePropertyMap(descriptor.dup().detachFd(), cleanedMap)
+
+                    val writeArtwork = fields == null || com.music.bitchord.feature.tageditor.domain.model.TagField.ARTWORK in fields
+                    if (data.artworkChanged && writeArtwork) {
+                        if (data.artworkDeleted || data.artworkBitmap == null) {
+                            TagLib.savePictures(descriptor.dup().detachFd(), arrayOf())
+                        } else {
+                            val stream = ByteArrayOutputStream()
+                            data.artworkBitmap.compress(Bitmap.CompressFormat.JPEG, 95, stream)
+                            val bytes = stream.toByteArray()
+                            val pic = Picture(
+                                data = bytes,
+                                description = "Front Cover",
+                                pictureType = "Front Cover",
+                                mimeType = "image/jpeg",
+                            )
+                            TagLib.savePictures(descriptor.dup().detachFd(), arrayOf(pic))
+                        }
+                    }
+
+                    savedProps
+                }
             }
+
+            if (propsOk && !filePath.isNullOrBlank()) {
+                scanFile(context, filePath)
+            }
+
+            propsOk
         } catch (t: Throwable) {
             Log.e(TAG, "Failed writing tags via TagLib for ${song.videoId}", t)
             false

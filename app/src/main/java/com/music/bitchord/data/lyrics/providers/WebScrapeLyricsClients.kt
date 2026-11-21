@@ -1,5 +1,7 @@
 package com.music.bitchord.data.lyrics.providers
 
+import com.music.bitchord.data.lyrics.ProviderFailureException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -36,8 +38,8 @@ internal object WebScrapeHtmlUtils {
 
     fun htmlToCleanLyrics(rawHtml: String): String {
         val withBreaks = rawHtml
-            .replace(Regex("""<br\s*/?>""", RegexOption.IGNORE_CASE), "\n")
-            .replace(Regex("""</(?:p|div|li|tr)>""", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("""<br\s*/?>[ \t]*\r?\n?""", RegexOption.IGNORE_CASE), "\n")
+            .replace(Regex("""</(?:p|div|li|tr)>[ \t]*\r?\n?""", RegexOption.IGNORE_CASE), "\n")
             .replace(Regex("""<script[\s\S]*?</script>""", RegexOption.IGNORE_CASE), "")
             .replace(Regex("""<style[\s\S]*?</style>""", RegexOption.IGNORE_CASE), "")
         val stripped = HTML_TAG_REGEX.replace(withBreaks, "")
@@ -122,7 +124,7 @@ internal object UtaNetLyricsClient {
 
     private data class UtaNetHit(val songId: String, val title: String)
 
-    private fun searchSongLinks(title: String, artist: String): List<UtaNetHit> = runCatching {
+    private fun searchSongLinks(title: String, artist: String): List<UtaNetHit> {
         val cleanTitle = NativeLyricsHttp.cleanQueryText(title)
         val cleanArtist = NativeLyricsHttp.primaryArtist(artist)
         val urls = listOf(
@@ -133,32 +135,26 @@ internal object UtaNetLyricsClient {
         val results = mutableListOf<UtaNetHit>()
         for (url in urls) {
             val req = Request.Builder().url(url).header("User-Agent", NativeLyricsHttp.USER_AGENT).build()
-            NativeLyricsHttp.fastClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@use
-                val html = resp.body?.string() ?: return@use
-                for (m in SONG_ROW_REGEX.findAll(html)) {
-                    val id = m.groupValues[1]
-                    if (!seen.add(id)) continue
-                    val rawTitle = WebScrapeHtmlUtils.htmlToCleanLyrics(m.groupValues[2]).lines().firstOrNull().orEmpty()
-                    results += UtaNetHit(id, rawTitle)
-                    if (results.size >= 5) break
-                }
+            val html = NativeLyricsHttp.executeOrThrow(NativeLyricsHttp.fastClient, req, "Uta-Net") ?: continue
+            for (m in SONG_ROW_REGEX.findAll(html)) {
+                val id = m.groupValues[1]
+                if (!seen.add(id)) continue
+                val rawTitle = WebScrapeHtmlUtils.htmlToCleanLyrics(m.groupValues[2]).lines().firstOrNull().orEmpty()
+                results += UtaNetHit(id, rawTitle)
+                if (results.size >= 5) break
             }
             if (results.isNotEmpty()) break
         }
-        results
-    }.getOrDefault(emptyList())
+        return results
+    }
 
-    private fun fetchSongLyrics(songId: String): String? = runCatching {
+    private fun fetchSongLyrics(songId: String): String? {
         val url = "https://www.uta-net.com/song/$songId/"
         val req = Request.Builder().url(url).header("User-Agent", NativeLyricsHttp.USER_AGENT).build()
-        NativeLyricsHttp.fastClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return null
-            val html = resp.body?.string() ?: return null
-            val kashiHtml = KASHI_AREA_REGEX.find(html)?.groupValues?.get(1) ?: return null
-            WebScrapeHtmlUtils.htmlToCleanLyrics(kashiHtml).takeIf { it.isNotBlank() }
-        }
-    }.getOrNull()
+        val html = NativeLyricsHttp.executeOrThrow(NativeLyricsHttp.fastClient, req, "Uta-Net") ?: return null
+        val kashiHtml = KASHI_AREA_REGEX.find(html)?.groupValues?.get(1) ?: return null
+        return WebScrapeHtmlUtils.htmlToCleanLyrics(kashiHtml).takeIf { it.isNotBlank() }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -205,34 +201,40 @@ internal object UtaTenLyricsClient {
         }.awaitAll().filterNotNull()
     }
 
-    private fun searchLyricPaths(title: String, artist: String): List<String> = runCatching {
+    private fun searchLyricPaths(title: String, artist: String): List<String> {
         val cleanTitle = NativeLyricsHttp.cleanQueryText(title)
         val cleanArtist = NativeLyricsHttp.primaryArtist(artist)
         val url = "https://utaten.com/search?title=${NativeLyricsHttp.urlEncode(cleanTitle)}&artist_name=${NativeLyricsHttp.urlEncode(cleanArtist)}"
-        val req = Request.Builder().url(url).header("User-Agent", NativeLyricsHttp.USER_AGENT).build()
-        NativeLyricsHttp.fastClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return emptyList()
-            val html = resp.body?.string() ?: return emptyList()
-            LYRIC_LINK_REGEX.findAll(html)
-                .map { it.groupValues[1] }
-                .filterNot { it.contains("=") }
-                .distinct()
-                .take(4)
-                .toList()
-        }
-    }.getOrDefault(emptyList())
+        val req = Request.Builder()
+            .url(url)
+            .header("User-Agent", NativeLyricsHttp.USER_AGENT)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+            .header("Referer", "https://utaten.com/")
+            .build()
+        val html = NativeLyricsHttp.executeOrThrow(NativeLyricsHttp.fastClient, req, "UtaTen") ?: return emptyList()
+        return LYRIC_LINK_REGEX.findAll(html)
+            .map { it.groupValues[1] }
+            .filterNot { it.contains("=") }
+            .distinct()
+            .take(4)
+            .toList()
+    }
 
-    private fun fetchLyricPage(path: String): String? = runCatching {
+    private fun fetchLyricPage(path: String): String? {
         val url = if (path.startsWith("http")) path else "https://utaten.com$path"
-        val req = Request.Builder().url(url).header("User-Agent", NativeLyricsHttp.USER_AGENT).build()
-        NativeLyricsHttp.fastClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return null
-            val html = resp.body?.string() ?: return null
-            extractUtatenMediumBlock(html)?.let { block ->
-                WebScrapeHtmlUtils.convertUtatenRubyToFurigana(block).takeIf { it.isNotBlank() }
-            }
+        val req = Request.Builder()
+            .url(url)
+            .header("User-Agent", NativeLyricsHttp.USER_AGENT)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+            .header("Referer", "https://utaten.com/")
+            .build()
+        val html = NativeLyricsHttp.executeOrThrow(NativeLyricsHttp.fastClient, req, "UtaTen") ?: return null
+        return extractUtatenMediumBlock(html)?.let { block ->
+            WebScrapeHtmlUtils.convertUtatenRubyToFurigana(block).takeIf { it.isNotBlank() }
         }
-    }.getOrNull()
+    }
 
     internal fun extractUtatenMediumBlock(html: String): String? {
         val markerIdx = html.indexOf("""class="medium"""")
@@ -269,14 +271,24 @@ internal object UtaTenLyricsClient {
 // 13. J-Lyric (j-lyric.net)
 // ─────────────────────────────────────────────────────────────────────────────
 internal object JLyricClient {
-    private val SONG_URL_REGEX = Regex(
-        """href=["'](https?://j-lyric\.net/artist/a[0-9a-z]+/s[0-9a-z]+\.html)["']""",
+    internal val SONG_URL_REGEX = Regex(
+        """href=["']((?:https?://j-lyric\.net)?/artist/a[0-9a-z]+/[ls][0-9a-z]+\.html)["']""",
         RegexOption.IGNORE_CASE,
     )
     private val LYRIC_P_REGEX = Regex(
         """<p[^>]*id=["']Lyric["'][^>]*>([\s\S]*?)</p>""",
         RegexOption.IGNORE_CASE,
     )
+
+    internal fun extractSongUrlsFromSearchHtml(html: String): List<String> =
+        SONG_URL_REGEX.findAll(html)
+            .map { match ->
+                val raw = match.groupValues[1]
+                if (raw.startsWith("http")) raw else "https://j-lyric.net$raw"
+            }
+            .distinct()
+            .take(4)
+            .toList()
 
     suspend fun getLyrics(
         title: String,
@@ -313,31 +325,33 @@ internal object JLyricClient {
         }.awaitAll().filterNotNull()
     }
 
-    private fun searchSongUrls(title: String, artist: String): List<String> = runCatching {
+    private fun searchSongUrls(title: String, artist: String): List<String> {
         val cleanTitle = NativeLyricsHttp.cleanQueryText(title)
         val cleanArtist = NativeLyricsHttp.primaryArtist(artist)
-        val url = "https://search3.j-lyric.net/index.php?kt=${NativeLyricsHttp.urlEncode(cleanTitle)}&ct=2&ka=${NativeLyricsHttp.urlEncode(cleanArtist)}&ca=2"
-        val req = Request.Builder().url(url).header("User-Agent", NativeLyricsHttp.USER_AGENT).build()
-        NativeLyricsHttp.fastClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return emptyList()
-            val html = resp.body?.string() ?: return emptyList()
-            SONG_URL_REGEX.findAll(html)
-                .map { it.groupValues[1] }
-                .distinct()
-                .take(4)
-                .toList()
-        }
-    }.getOrDefault(emptyList())
+        val url = "https://j-lyric.net/search.php?kt=${NativeLyricsHttp.urlEncode(cleanTitle)}&ct=2&ka=${NativeLyricsHttp.urlEncode(cleanArtist)}&ca=2"
+        val req = Request.Builder()
+            .url(url)
+            .header("User-Agent", NativeLyricsHttp.USER_AGENT)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+            .header("Referer", "https://j-lyric.net/")
+            .build()
+        val html = NativeLyricsHttp.executeOrThrow(NativeLyricsHttp.fastClient, req, "J-Lyric") ?: return emptyList()
+        return extractSongUrlsFromSearchHtml(html)
+    }
 
-    private fun fetchSongPage(url: String): String? = runCatching {
-        val req = Request.Builder().url(url).header("User-Agent", NativeLyricsHttp.USER_AGENT).build()
-        NativeLyricsHttp.fastClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return null
-            val html = resp.body?.string() ?: return null
-            val rawLyric = LYRIC_P_REGEX.find(html)?.groupValues?.get(1) ?: return null
-            WebScrapeHtmlUtils.htmlToCleanLyrics(rawLyric).takeIf { it.isNotBlank() }
-        }
-    }.getOrNull()
+    private fun fetchSongPage(url: String): String? {
+        val req = Request.Builder()
+            .url(url)
+            .header("User-Agent", NativeLyricsHttp.USER_AGENT)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .header("Accept-Language", "ja,en-US;q=0.9,en;q=0.8")
+            .header("Referer", "https://j-lyric.net/")
+            .build()
+        val html = NativeLyricsHttp.executeOrThrow(NativeLyricsHttp.fastClient, req, "J-Lyric") ?: return null
+        val rawLyric = LYRIC_P_REGEX.find(html)?.groupValues?.get(1) ?: return null
+        return WebScrapeHtmlUtils.htmlToCleanLyrics(rawLyric).takeIf { it.isNotBlank() }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -386,7 +400,7 @@ internal object GeniusLyricsClient {
         val url: String,
     )
 
-    private fun searchGeniusSongs(title: String, artist: String): List<GeniusHit> = runCatching {
+    private fun searchGeniusSongs(title: String, artist: String): List<GeniusHit> {
         val cleanTitle = NativeLyricsHttp.cleanQueryText(title)
         val cleanArtist = NativeLyricsHttp.primaryArtist(artist)
         val q = "$cleanTitle $cleanArtist".trim()
@@ -397,9 +411,8 @@ internal object GeniusLyricsClient {
             .header("Accept", "application/json")
             .build()
 
-        NativeLyricsHttp.fastClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return emptyList()
-            val body = resp.body?.string() ?: return emptyList()
+        val body = NativeLyricsHttp.executeOrThrow(NativeLyricsHttp.fastClient, req, "Genius") ?: return emptyList()
+        return runCatching {
             val hitsArr = JSONObject(body)
                 .optJSONObject("response")
                 ?.optJSONArray("hits") ?: return emptyList()
@@ -419,20 +432,17 @@ internal object GeniusLyricsClient {
                 )
             }
             list
-        }
-    }.getOrDefault(emptyList())
+        }.getOrDefault(emptyList())
+    }
 
-    private fun fetchGeniusPageLyrics(url: String): String? = runCatching {
+    private fun fetchGeniusPageLyrics(url: String): String? {
         val req = Request.Builder()
             .url(url)
             .header("User-Agent", NativeLyricsHttp.USER_AGENT)
             .build()
-        NativeLyricsHttp.fastClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return null
-            val html = resp.body?.string() ?: return null
-            extractGeniusContainers(html)
-        }
-    }.getOrNull()
+        val html = NativeLyricsHttp.executeOrThrow(NativeLyricsHttp.fastClient, req, "Genius") ?: return null
+        return extractGeniusContainers(html)
+    }
 
     internal fun extractGeniusContainers(html: String): String? {
         val sb = StringBuilder()

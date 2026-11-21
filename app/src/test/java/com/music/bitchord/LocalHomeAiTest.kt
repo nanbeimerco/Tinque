@@ -99,4 +99,72 @@ class LocalHomeAiTest {
         assertEquals(LocalHomeAi.cacheKey(withText), LocalHomeAi.cacheKey(withoutText))
         assertNotEquals(LocalHomeAi.cacheKey(withText), LocalHomeAi.cacheKey(splitCue))
     }
+
+    @Test
+    fun prioritizeLibraryForAnalysis_matchesLocalUriKeysAndDistributesUnplayedAcrossAlbums() {
+        val downloadedFav = Song(
+            videoId = "yt_dl_1",
+            title = "Downloaded Fav",
+            artist = "Artist A",
+            thumbnailUrl = "",
+            localUri = "content://media/external/audio/media/9001",
+            localPath = "/music/dl/fav.m4a",
+            localDateAddedSeconds = 100L,
+        )
+        val downloadedPlayed = Song(
+            videoId = "yt_dl_2",
+            title = "Downloaded Played",
+            artist = "Artist B",
+            thumbnailUrl = "",
+            localUri = "content://media/external/audio/media/9002",
+            localPath = "/music/dl/played.m4a",
+            localDateAddedSeconds = 110L,
+        )
+        val oldAlbumSongs = (1..5).map { idx ->
+            Song(
+                videoId = "old_$idx",
+                title = "Old $idx",
+                artist = "OldArtist",
+                albumName = "OldAlbum",
+                thumbnailUrl = "",
+                localPath = "/music/old/$idx.flac",
+                localDateAddedSeconds = 100L + idx,
+            )
+        }
+        val newAlbumSongs = (1..5).map { idx ->
+            Song(
+                videoId = "new_$idx",
+                title = "New $idx",
+                artist = "NewArtist",
+                albumName = "NewAlbum",
+                thumbnailUrl = "",
+                localPath = "/music/new/$idx.flac",
+                localDateAddedSeconds = 1_000_000L + idx,
+            )
+        }
+        val midAlbumSongs = (1..5).map { idx ->
+            Song(
+                videoId = "mid_$idx",
+                title = "Mid $idx",
+                artist = "MidArtist",
+                albumName = "MidAlbum",
+                thumbnailUrl = "",
+                localPath = "/music/mid/$idx.flac",
+                localDateAddedSeconds = 500_000L + idx,
+            )
+        }
+
+        val ordered = LocalHomeAi.prioritizeLibraryForAnalysis(
+            songs = newAlbumSongs + oldAlbumSongs + midAlbumSongs + listOf(downloadedPlayed, downloadedFav),
+            heatLevels = emptyMap(),
+            favoriteIds = setOf("content://media/external/audio/media/9001"),
+            playCounts = mapOf("content://media/external/audio/media/9002" to 3),
+        )
+
+        assertEquals(17, ordered.size)
+        assertEquals(listOf("yt_dl_1", "yt_dl_2"), ordered.take(2).map { it.videoId })
+
+        val firstRoundAlbums = ordered.drop(2).take(3).map { it.albumName }.toSet()
+        assertEquals(setOf("OldAlbum", "NewAlbum", "MidAlbum"), firstRoundAlbums)
+    }
 }

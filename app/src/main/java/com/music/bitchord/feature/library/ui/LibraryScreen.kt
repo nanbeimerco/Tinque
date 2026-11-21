@@ -5,6 +5,7 @@ import com.music.bitchord.ui.components.SelectionScopeEffect
 import com.music.bitchord.ui.components.LocalSongSelection
 import com.music.bitchord.ui.components.GlassAlertDialog
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -29,12 +30,16 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -178,6 +183,58 @@ private fun PlaylistSelectionToolbar(
 /** [LibraryScreen]'s openPlaylistRequest for Favourites. */
 const val LIBRARY_OPEN_FAVORITES = "\u0000favorites"
 
+internal object LibraryHistoryCache {
+    data class Snapshot(
+        val revision: Long,
+        val count: Int,
+        val firstKey: String?,
+        val lastKey: String?,
+        val playCounts: Map<String, Int>,
+        val recentlyPlayed: List<Song>,
+        val mostPlayed: List<Song>,
+    ) {
+        fun matches(songs: List<Song>, revision: Long): Boolean =
+            this.revision == revision &&
+                count == songs.size &&
+                firstKey == songs.firstOrNull()?.let { it.localUri ?: it.videoId } &&
+                lastKey == songs.lastOrNull()?.let { it.localUri ?: it.videoId }
+    }
+
+    @Volatile
+    private var snapshot: Snapshot? = null
+
+    fun latest(): Snapshot? = snapshot
+
+    fun getIfMatching(songs: List<Song>, revision: Long): Snapshot? =
+        snapshot?.takeIf { it.matches(songs, revision) }
+
+    fun warm(context: Context, songs: List<Song>, revision: Long): Snapshot {
+        snapshot?.takeIf { it.matches(songs, revision) }?.let { return it }
+        val ranked = songs.map { song ->
+            song to LocalPlayStatsStore.getStats(context, song.localUri ?: song.videoId)
+        }.filter { (_, stats) -> stats.playedCount > 0 }
+        val next = Snapshot(
+            revision = revision,
+            count = songs.size,
+            firstKey = songs.firstOrNull()?.let { it.localUri ?: it.videoId },
+            lastKey = songs.lastOrNull()?.let { it.localUri ?: it.videoId },
+            playCounts = ranked.associate { (song, stats) -> (song.localUri ?: song.videoId) to stats.playedCount },
+            recentlyPlayed = ranked
+                .sortedByDescending { it.second.lastPlayedTimestamp }
+                .map { it.first },
+            mostPlayed = ranked
+                .sortedWith(
+                    compareByDescending<Pair<Song, com.music.bitchord.feature.localsongactions.domain.model.LocalPlayStats>> {
+                        it.second.playedCount
+                    }.thenByDescending { it.second.lastPlayedTimestamp },
+                )
+                .map { it.first },
+        )
+        snapshot = next
+        return next
+    }
+}
+
 /**
  * Modern Library screen unifying user Favorites and Playlists with list/grid toggle.
  */
@@ -214,6 +271,9 @@ fun LibraryScreen(
     resetToTopSignal: Int = 0,
     /** Whether the large "Library" title has scrolled away — drives the top bar's title capsule. */
     onTitleScrolledAway: (Boolean) -> Unit = {},
+    songsLoaded: Boolean = true,
+    collectionListState: LazyListState = rememberLazyListState(),
+    collectionGridState: LazyGridState = rememberLazyGridState(),
 ) {
     val context = LocalContext.current.applicationContext
     val playlists by LocalPlaylistStore.playlists.collectAsStateWithLifecycle()
@@ -241,32 +301,27 @@ fun LibraryScreen(
             }
         }
     }
-    var recentlyPlayedSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
-    var mostPlayedSongs by remember { mutableStateOf<List<Song>>(emptyList()) }
-    var playCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
+    val initialHistory = remember { LibraryHistoryCache.getIfMatching(songs, playStatsRevision) ?: LibraryHistoryCache.latest() }
+    var recentlyPlayedSongs by remember { mutableStateOf(initialHistory?.recentlyPlayed.orEmpty()) }
+    var mostPlayedSongs by remember { mutableStateOf(initialHistory?.mostPlayed.orEmpty()) }
+    var playCounts by remember { mutableStateOf(initialHistory?.playCounts.orEmpty()) }
+    var historyReady by remember { mutableStateOf(initialHistory != null || (songsLoaded && songs.isEmpty())) }
     val choosePlaylistCover = rememberPlaylistCoverPicker { playlistId, uri ->
         LocalPlaylistStore.setPlaylistCover(playlistId, uri)
     }
 
-    LaunchedEffect(songs, playStatsRevision) {
-        val ranked = withContext(Dispatchers.IO) {
-            songs.map { song ->
-                song to LocalPlayStatsStore.getStats(context, song.localUri ?: song.videoId)
-            }.filter { (_, stats) -> stats.playedCount > 0 }
+    LaunchedEffect(songs, songsLoaded, playStatsRevision) {
+        if (!songsLoaded && songs.isEmpty()) return@LaunchedEffect
+        val snap = LibraryHistoryCache.getIfMatching(songs, playStatsRevision) ?: withContext(Dispatchers.IO) {
+            LibraryHistoryCache.warm(context, songs, playStatsRevision)
         }
-        playCounts = ranked.associate { (song, stats) -> (song.localUri ?: song.videoId) to stats.playedCount }
-        recentlyPlayedSongs = ranked
-            .sortedByDescending { it.second.lastPlayedTimestamp }
-            .map { it.first }
-        mostPlayedSongs = ranked
-            .sortedWith(compareByDescending<Pair<Song, com.music.bitchord.feature.localsongactions.domain.model.LocalPlayStats>> { it.second.playedCount }
-                .thenByDescending { it.second.lastPlayedTimestamp })
-            .map { it.first }
+        playCounts = snap.playCounts
+        recentlyPlayedSongs = snap.recentlyPlayed
+        mostPlayedSongs = snap.mostPlayed
+        historyReady = true
     }
 
     var selectedFilter by rememberSaveable { mutableStateOf(LibraryFilter.ALL) }
-    val collectionListState = rememberLazyListState()
-    val collectionGridState = rememberLazyGridState()
     var showCreateDialog by remember { mutableStateOf(false) }
     var playlistToRename by remember { mutableStateOf<LocalPlaylist?>(null) }
 
@@ -824,7 +879,17 @@ fun LibraryScreen(
                 // takes the top inset as its own content padding, so it scrolls
                 // under the translucent bar instead of stopping short of it.
                 Column(modifier = Modifier.fillMaxSize()) {
-                    if (historySongs.isEmpty()) {
+                    if (!historyReady) {
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(top = contentPadding.calculateTopPadding()),
+                            contentAlignment = androidx.compose.ui.Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(28.dp),
+                                strokeWidth = 2.6.dp,
+                            )
+                        }
+                    } else if (historySongs.isEmpty()) {
                         Box(
                             modifier = Modifier.fillMaxSize().padding(top = contentPadding.calculateTopPadding()),
                             contentAlignment = androidx.compose.ui.Alignment.Center,
@@ -913,7 +978,27 @@ fun LibraryScreen(
                     }
 
                     // Grid applies to the Playlists filter only; "All" is always the sectioned list.
-                    if (libraryViewType == LibraryViewType.GRID && selectedFilter == LibraryFilter.PLAYLISTS) {
+                    if (!songsLoaded && songs.isEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = contentPadding.calculateTopPadding()),
+                        ) {
+                            header()
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .fillMaxWidth()
+                                    .padding(bottom = contentPadding.calculateBottomPadding() + 80.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(28.dp),
+                                    strokeWidth = 2.6.dp,
+                                )
+                            }
+                        }
+                    } else if (libraryViewType == LibraryViewType.GRID && selectedFilter == LibraryFilter.PLAYLISTS) {
                         LibraryGridContent(
                             header = header,
                             filter = selectedFilter,

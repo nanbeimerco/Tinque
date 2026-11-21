@@ -19,7 +19,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,11 +30,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -46,12 +51,14 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -60,8 +67,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.lyrics.CatalogEvent
@@ -73,6 +82,9 @@ import com.music.bitchord.data.lyrics.LyricsQuery
 import com.music.bitchord.data.lyrics.LyricsSource
 import com.music.bitchord.data.lyrics.LyricsStrictness
 import com.music.bitchord.data.lyrics.SourceStatus
+import com.music.bitchord.data.lyrics.align.LyricsAlignTaskManager
+import com.music.bitchord.data.lyrics.align.OnDeviceLyricsAligner
+import com.music.bitchord.data.lyrics.align.OnDeviceLyricsAlignerModel
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.LocalMediaRepository
@@ -81,9 +93,12 @@ import com.music.bitchord.feature.lyrics.manager.LyricsExtensionManager
 import com.music.bitchord.feature.lyricseditor.data.LocalLyricsManager
 import com.music.bitchord.feature.lyricseditor.domain.model.LyricsEditorSource
 import com.music.bitchord.ui.components.GlassAlertDialog
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Asks for the catalog to open on a song, from wherever (the player's lyrics
@@ -93,6 +108,35 @@ object LyricsCatalogRequests {
     val song = MutableStateFlow<Song?>(null)
     fun open(song: Song) { this.song.value = song }
     fun close() { song.value = null }
+}
+
+/**
+ * Process-scoped session memory keeping AI-aligned [LyricsCandidate] results
+ * across dialog close/reopen and catalog reopen within the same app run.
+ */
+internal object LyricsCatalogAiSessionCache {
+    private const val MAX_ENTRIES = 32
+    private val map = object : LinkedHashMap<Pair<String, String>, LyricsCandidate>(MAX_ENTRIES + 1, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Pair<String, String>, LyricsCandidate>?): Boolean =
+            size > MAX_ENTRIES
+    }
+
+    @Synchronized
+    fun get(songKey: String, candidateId: String): LyricsCandidate? = map[songKey to candidateId]
+
+    @Synchronized
+    fun put(songKey: String, candidateId: String, candidate: LyricsCandidate) {
+        map[songKey to candidateId] = candidate
+    }
+
+    @Synchronized
+    fun allForSong(songKey: String): List<LyricsCandidate> =
+        map.entries.filter { it.key.first == songKey }.map { it.value }
+
+    @Synchronized
+    fun clear() {
+        map.clear()
+    }
 }
 
 private fun LyricsFormat.label(): Int = when (this) {
@@ -109,7 +153,12 @@ private fun LyricsFormat.label(): Int = when (this) {
  */
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun LyricsCatalogScreen(song: Song, onDismiss: () -> Unit, onApplied: (Song) -> Unit) {
+fun LyricsCatalogScreen(
+    song: Song,
+    onDismiss: () -> Unit,
+    onApplied: (Song) -> Unit,
+    onPlayAndOpenLyrics: ((Song) -> Unit)? = null,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sources by LyricsExtensionManager.dynamicSources.collectAsStateWithLifecycle()
@@ -122,7 +171,7 @@ fun LyricsCatalogScreen(song: Song, onDismiss: () -> Unit, onApplied: (Song) -> 
     var useArtist by remember { mutableStateOf(autoStrictness.useArtist) }
     var useAlbum by remember { mutableStateOf(autoStrictness.useAlbum) }
     var useDuration by remember { mutableStateOf(autoStrictness.useDuration) }
-    var tolerance by remember { mutableIntStateOf(5) }
+    var tolerance by remember { mutableIntStateOf(10) }
     var formatFilter by remember { mutableStateOf<LyricsFormat?>(null) }
 
     val candidates = remember { mutableStateListOf<LyricsCandidate>() }
@@ -131,10 +180,45 @@ fun LyricsCatalogScreen(song: Song, onDismiss: () -> Unit, onApplied: (Song) -> 
     var preview by remember { mutableStateOf<LyricsCandidate?>(null) }
     val overrideKey = remember(song) { LyricsOverrideStore.keyFor(song.videoId, song.localUri) }
     var hasOverride by remember { mutableStateOf(LyricsOverrideStore.get(overrideKey) != null) }
+    val alignSnapshot by LyricsAlignTaskManager.state.collectAsStateWithLifecycle()
+
+    LaunchedEffect(alignSnapshot.completed, overrideKey) {
+        val doneForSong = alignSnapshot.completed
+            .filter { it.songKey == overrideKey }
+            .mapNotNull { it.resultCandidate }
+        if (doneForSong.isNotEmpty()) {
+            doneForSong.forEach { updated ->
+                val idx = candidates.indexOfFirst { it.id == updated.id }
+                if (idx >= 0) {
+                    candidates[idx] = updated
+                }
+                if (preview?.id == updated.id) {
+                    preview = updated
+                }
+            }
+        }
+    }
+
+    fun mergeIntoCandidates(incoming: List<LyricsCandidate>) {
+        incoming.forEach { rawCandidate ->
+            val resolved = LyricsCatalogAiSessionCache.get(overrideKey, rawCandidate.id) ?: rawCandidate
+            val existingIdx = candidates.indexOfFirst { it.id == resolved.id }
+            if (existingIdx >= 0) {
+                candidates[existingIdx] = resolved
+            } else {
+                candidates += resolved
+            }
+        }
+        candidates.sortByDescending { it.match }
+    }
 
     fun search() {
         searchJob?.cancel()
         candidates.clear()
+        val cachedForSong = LyricsCatalogAiSessionCache.allForSong(overrideKey)
+        if (cachedForSong.isNotEmpty()) {
+            candidates.addAll(cachedForSong.sortedByDescending { it.match })
+        }
         statuses.clear()
         val query = LyricsQuery(
             title = title.trim(),
@@ -150,10 +234,7 @@ fun LyricsCatalogScreen(song: Song, onDismiss: () -> Unit, onApplied: (Song) -> 
             LyricsCatalog.search(query, sources).collect { event ->
                 when (event) {
                     is CatalogEvent.Status -> statuses[event.source.id] = event.status
-                    is CatalogEvent.Results -> {
-                        candidates += event.candidates
-                        candidates.sortByDescending { it.match }
-                    }
+                    is CatalogEvent.Results -> mergeIntoCandidates(event.candidates)
                 }
             }
         }
@@ -290,20 +371,51 @@ fun LyricsCatalogScreen(song: Song, onDismiss: () -> Unit, onApplied: (Song) -> 
             song = song,
             candidate = candidate,
             onDismiss = { preview = null },
-            onUse = {
-                // Stored as shown, translation kept or dropped as the switch says
-                // (many sources add a Chinese one even to Japanese songs).
+            onCandidateUpdated = { updated ->
+                LyricsCatalogAiSessionCache.put(overrideKey, updated.id, updated)
+                val idx = candidates.indexOfFirst { it.id == updated.id }
+                if (idx >= 0) {
+                    candidates[idx] = updated
+                } else {
+                    candidates.add(0, updated)
+                }
+                preview = updated
+            },
+            onUse = { chosen ->
                 val stored = LyricsCatalog.serialize(
-                    candidate,
+                    chosen,
                     wordSync = true,
                     keepTranslation = AppSettings.lyricsKeepTranslation.value,
                     keepFurigana = true,
                 )
-                LyricsOverrideStore.set(overrideKey, LyricsOverrideStore.Override(candidate.source.id, candidate.source.label, stored))
+                LyricsOverrideStore.set(overrideKey, LyricsOverrideStore.Override(chosen.source.id, chosen.source.label, stored))
+                LyricsAlignTaskManager.taskFor(overrideKey, chosen.id)?.let { t ->
+                    LyricsAlignTaskManager.dismissCompleted(t.taskId)
+                }
                 hasOverride = true
                 preview = null
                 Toast.makeText(context, context.getString(R.string.lyrics_catalog_used), Toast.LENGTH_SHORT).show()
                 onApplied(song)
+            },
+            onPlayAndTry = if (onPlayAndOpenLyrics != null) {
+                { chosen ->
+                    val stored = LyricsCatalog.serialize(
+                        chosen,
+                        wordSync = true,
+                        keepTranslation = AppSettings.lyricsKeepTranslation.value,
+                        keepFurigana = true,
+                    )
+                    LyricsOverrideStore.set(overrideKey, LyricsOverrideStore.Override(chosen.source.id, chosen.source.label, stored))
+                    LyricsAlignTaskManager.taskFor(overrideKey, chosen.id)?.let { t ->
+                        LyricsAlignTaskManager.dismissCompleted(t.taskId)
+                    }
+                    hasOverride = true
+                    preview = null
+                    onApplied(song)
+                    onPlayAndOpenLyrics(song)
+                }
+            } else {
+                null
             },
             onSaved = {
                 preview = null
@@ -404,16 +516,72 @@ private fun CandidateCard(candidate: LyricsCandidate, onClick: () -> Unit) {
  * with or without its word timing, translation and furigana.
  */
 @Composable
-private fun CandidatePreview(song: Song, candidate: LyricsCandidate, onDismiss: () -> Unit, onUse: () -> Unit, onSaved: () -> Unit) {
+private fun CandidatePreview(
+    song: Song,
+    candidate: LyricsCandidate,
+    onDismiss: () -> Unit,
+    onCandidateUpdated: (LyricsCandidate) -> Unit,
+    onUse: (LyricsCandidate) -> Unit,
+    onPlayAndTry: ((LyricsCandidate) -> Unit)? = null,
+    onSaved: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val wordSyncSetting by AppSettings.lyricsSaveWordSync.collectAsStateWithLifecycle()
     val keepTranslation by AppSettings.lyricsKeepTranslation.collectAsStateWithLifecycle()
     val keepFurigana by AppSettings.lyricsKeepFurigana.collectAsStateWithLifecycle()
+    val offlineMode by AppSettings.offlineMode.collectAsStateWithLifecycle()
+    val aiModelInstalledState by OnDeviceLyricsAlignerModel.modelInstalled.collectAsStateWithLifecycle()
+    val aiDownloadProgress by OnDeviceLyricsAlignerModel.downloadProgress.collectAsStateWithLifecycle()
+    val downloadSupported = remember(context) { OnDeviceLyricsAlignerModel.isDownloadSupported(context) }
+
+    val songKey = remember(song) { LyricsAlignTaskManager.songKeyFor(song) }
+    val alignSnapshot by LyricsAlignTaskManager.state.collectAsStateWithLifecycle()
+    val activeTask = alignSnapshot.active?.takeIf { it.songKey == songKey && it.candidateId == candidate.id }
+    val queuedTask = alignSnapshot.queued.firstOrNull { it.songKey == songKey && it.candidateId == candidate.id }
+    val completedTask = alignSnapshot.completed.firstOrNull { it.songKey == songKey && it.candidateId == candidate.id }
+    val isTaskPending = activeTask != null || queuedTask != null
+
+    var activeCandidate by remember(candidate.id) { mutableStateOf(candidate) }
+    var installedChecked by remember { mutableStateOf(aiModelInstalledState) }
+    LaunchedEffect(aiModelInstalledState) {
+        installedChecked = withContext(Dispatchers.IO) {
+            OnDeviceLyricsAlignerModel.isModelInstalled(context)
+        }
+    }
+    val canAlign by produceState(false, song.videoId, song.localUri, song.localPath) {
+        value = withContext(Dispatchers.IO) { OnDeviceLyricsAligner.canAlignAudio(context, song) }
+    }
+
+    var showAiDownloadConfirm by remember { mutableStateOf(false) }
+    var aiDownloadError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(candidate) {
+        if (!isTaskPending) {
+            activeCandidate = candidate
+        }
+    }
+    LaunchedEffect(completedTask?.taskId) {
+        val updated = completedTask?.resultCandidate ?: return@LaunchedEffect
+        activeCandidate = updated
+        onCandidateUpdated(updated)
+    }
+
+    fun runAiAlign(plainForAi: String, forceReanalyze: Boolean = false) {
+        if (plainForAi.isBlank()) return
+        LyricsAlignTaskManager.enqueue(
+            context = context,
+            song = song,
+            candidate = activeCandidate,
+            plainText = plainForAi,
+            forceReanalyze = forceReanalyze,
+        )
+    }
+
     val hasFile = !song.localUri.isNullOrBlank() || !song.localPath.isNullOrBlank()
     var pendingEmbed by remember { mutableStateOf<String?>(null) }
 
-    fun text() = LyricsCatalog.serialize(candidate, wordSyncSetting, keepTranslation, keepFurigana)
+    fun text() = LyricsCatalog.serialize(activeCandidate, wordSyncSetting, keepTranslation, keepFurigana)
 
     var pendingOverwriteLrc by remember { mutableStateOf<Pair<String, String>?>(null) }
     var pendingSafLrc by remember { mutableStateOf<Pair<LocalLyricsManager.LrcSaveResult.NeedsDirectoryAccess, String>?>(null) }
@@ -422,6 +590,7 @@ private fun CandidatePreview(song: Song, candidate: LyricsCandidate, onDismiss: 
         scope.launch {
             when (val outcome = LocalLyricsManager.saveLyricsDetailed(context, song, target, text)) {
                 is LocalLyricsManager.LrcSaveResult.Success -> {
+                    completedTask?.let { LyricsAlignTaskManager.dismissCompleted(it.taskId) }
                     Toast.makeText(
                         context,
                         context.getString(R.string.l10n_lyrics_saved),
@@ -506,75 +675,309 @@ private fun CandidatePreview(song: Song, candidate: LyricsCandidate, onDismiss: 
         onDismissRequest = onDismiss,
         title = {
             Column {
-                Text(candidate.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(activeCandidate.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "${candidate.source.label} · ${stringResource(R.string.lyrics_match, (candidate.match * 100).toInt())}",
+                    "${activeCandidate.source.label} · ${stringResource(R.string.lyrics_match, (activeCandidate.match * 100).toInt())}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Badges(candidate)
-                Column(
-                    Modifier
-                        .heightIn(max = 280.dp)
-                        .verticalScroll(rememberScrollState()),
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Badges(activeCandidate)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.35f),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    candidate.lines.forEach { line ->
-                        if (line.text.isNotBlank()) {
-                            Text(
-                                line.text,
-                                style = if (line.timingSource != null) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
-                                color = if (line.timingSource != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                            )
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 176.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        activeCandidate.lines.forEach { line ->
+                            if (line.text.isNotBlank()) {
+                                Text(
+                                    line.text,
+                                    style = if (line.timingSource != null) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+                                    color = if (line.timingSource != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
                         }
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-                if (candidate.format == LyricsFormat.WORD) {
+                if (canAlign && activeCandidate.lines.isNotEmpty()) {
+                    HorizontalDivider()
+                    val dp = aiDownloadProgress
+                    val ap = activeTask?.progress
+                    val plainForAi = activeCandidate.lines
+                        .filter { it.timingSource == null && it.text.isNotBlank() }
+                        .joinToString("\n") { it.text }
+                    when {
+                        dp != null -> {
+                            val totalMb = dp.totalBytes.coerceAtLeast(1L) / (1024f * 1024f)
+                            val doneMb = dp.bytes / (1024f * 1024f)
+                            val frac = (dp.bytes.toFloat() / dp.totalBytes.coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    stringResource(R.string.lyrics_ai_download_progress, doneMb, totalMb),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                LinearProgressIndicator(progress = { frac }, modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                        isTaskPending -> {
+                            val stageLabel = when {
+                                queuedTask != null -> {
+                                    val ahead = alignSnapshot.queued.indexOfFirst { it.taskId == queuedTask.taskId } +
+                                        if (alignSnapshot.active != null) 1 else 0
+                                    stringResource(R.string.lyrics_ai_bg_queued, ahead.coerceAtLeast(1))
+                                }
+                                ap?.stage == OnDeviceLyricsAligner.AlignStage.DECODING_VOCALS ->
+                                    stringResource(R.string.lyrics_ai_stage_decoding)
+                                ap?.stage == OnDeviceLyricsAligner.AlignStage.CTC_INFERENCE ->
+                                    stringResource(R.string.lyrics_ai_stage_ctc)
+                                else -> stringResource(R.string.lyrics_ai_stage_aligning)
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        stageLabel,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            LyricsAlignTaskManager.cancelForCandidate(songKey, candidate.id)
+                                        },
+                                    ) {
+                                        Text(stringResource(R.string.lyrics_ai_cancel))
+                                    }
+                                }
+                                LinearProgressIndicator(
+                                    progress = { (ap?.fraction ?: 0f).coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                                Text(
+                                    stringResource(R.string.lyrics_ai_bg_running_hint),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        activeCandidate.source.id == "on_device_ai" -> {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Text(
+                                        stringResource(R.string.lyrics_ai_synced_ready),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { runAiAlign(plainForAi, forceReanalyze = true) },
+                                    enabled = plainForAi.isNotBlank(),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                ) {
+                                    Text(stringResource(R.string.lyrics_ai_reanalyze))
+                                }
+                            }
+                        }
+                        else -> {
+                            FilledTonalButton(
+                                onClick = { runAiAlign(plainForAi, forceReanalyze = false) },
+                                enabled = plainForAi.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(stringResource(R.string.lyrics_ai_generate_button))
+                            }
+                            Text(
+                                stringResource(
+                                    if (installedChecked) R.string.lyrics_ai_mode_ctc_desc else R.string.lyrics_ai_mode_vad_desc,
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            if (!installedChecked && downloadSupported && !offlineMode) {
+                                TextButton(
+                                    onClick = { showAiDownloadConfirm = true },
+                                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                                ) {
+                                    Text(stringResource(R.string.lyrics_ai_download_model_cta))
+                                }
+                            }
+                        }
+                    }
+                }
+                if (activeCandidate.format == LyricsFormat.WORD) {
                     SwitchLine(stringResource(R.string.lyrics_keep_word_sync), wordSyncSetting, AppSettings::setLyricsSaveWordSync)
                 }
-                if (candidate.hasTranslation) {
+                if (activeCandidate.hasTranslation) {
                     SwitchLine(stringResource(R.string.lyrics_keep_translation), keepTranslation, AppSettings::setLyricsKeepTranslation)
                 }
-                if (candidate.hasFurigana) {
+                if (activeCandidate.hasFurigana) {
                     SwitchLine(stringResource(R.string.lyrics_keep_furigana), keepFurigana, AppSettings::setLyricsKeepFurigana)
                 }
-                if ((candidate.hasTranslation && keepTranslation) || (candidate.hasFurigana && keepFurigana)) {
+                if ((activeCandidate.hasTranslation && keepTranslation) || (activeCandidate.hasFurigana && keepFurigana)) {
                     Text(
                         stringResource(R.string.lyrics_keep_extras_note),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Button(onClick = onUse, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.lyrics_use_for_song)) }
+                Button(
+                    onClick = { onUse(activeCandidate) },
+                    enabled = !isTaskPending,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        stringResource(R.string.lyrics_use_for_song),
+                        maxLines = 1,
+                        softWrap = false,
+                    )
+                }
                 if (hasFile) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                val lyricsText = text()
+                                val existing = LocalLyricsManager.findExistingLrcFile(context, song)
+                                if (existing != null) {
+                                    pendingOverwriteLrc = existing.name to lyricsText
+                                } else {
+                                    save(LyricsEditorSource.File, lyricsText)
+                                }
+                            },
+                            enabled = !isTaskPending,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                stringResource(R.string.lyrics_save_lrc),
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                        FilledTonalButton(
+                            onClick = ::embed,
+                            enabled = !isTaskPending,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                stringResource(R.string.lyrics_embed),
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
+                    }
+                }
+                if (onPlayAndTry != null && activeCandidate.format != LyricsFormat.PLAIN && !isTaskPending) {
                     FilledTonalButton(
-                        onClick = {
-                            val lyricsText = text()
-                            val existing = LocalLyricsManager.findExistingLrcFile(context, song)
-                            if (existing != null) {
-                                pendingOverwriteLrc = existing.name to lyricsText
-                            } else {
-                                save(LyricsEditorSource.File, lyricsText)
-                            }
-                        },
+                        onClick = { onPlayAndTry(activeCandidate) },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(stringResource(R.string.lyrics_save_lrc))
-                    }
-                    FilledTonalButton(onClick = ::embed, modifier = Modifier.fillMaxWidth()) {
-                        Text(stringResource(R.string.lyrics_embed))
+                        Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            stringResource(R.string.lyrics_ai_try_play_song),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.l10n_close)) }
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(if (isTaskPending) R.string.lyrics_ai_continue_bg else R.string.l10n_close))
+            }
         },
     )
+
+    if (showAiDownloadConfirm) {
+        GlassAlertDialog(
+            onDismissRequest = { showAiDownloadConfirm = false },
+            title = { Text(stringResource(R.string.lyrics_ai_download_confirm_title)) },
+            text = { Text(stringResource(R.string.lyrics_ai_download_confirm_message)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showAiDownloadConfirm = false
+                        scope.launch {
+                            val res = OnDeviceLyricsAlignerModel.downloadModel(context)
+                            res.onFailure { err ->
+                                aiDownloadError = err.localizedMessage ?: "Download failed"
+                            }
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.lyrics_ai_download_confirm_button))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAiDownloadConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    aiDownloadError?.let { err ->
+        GlassAlertDialog(
+            onDismissRequest = { aiDownloadError = null },
+            title = { Text(stringResource(R.string.lyrics_ai_download_failed)) },
+            text = { Text(err) },
+            confirmButton = {
+                TextButton(onClick = { aiDownloadError = null }) {
+                    Text(stringResource(android.R.string.ok))
+                }
+            },
+        )
+    }
 
     pendingOverwriteLrc?.let { (fileName, lyricsText) ->
         GlassAlertDialog(

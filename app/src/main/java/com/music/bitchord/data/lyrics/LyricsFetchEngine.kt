@@ -30,7 +30,21 @@ import java.util.concurrent.ConcurrentHashMap
 object LyricsFetchEngine {
 
     private const val PARALLELISM = 8
-    private const val PRIORITY_GRACE_MS = 1000L
+    private const val PRIORITY_GRACE_MS = 1800L
+    private const val PLAIN_WAIT_FOR_SYNCED_MS = 5000L
+
+    private val SYNCED_CAPABLE_IDS = setOf(
+        "bini_lrc_red",
+        "lrcapi",
+        "netease",
+        "lrclib",
+        "lyricsplus",
+        "kugou",
+        "apple_music",
+        "better_lyrics",
+        "qqmusic",
+        "musixmatch",
+    )
 
     private val INSTRUMENTAL_PATTERN = Regex(
         "(?i)(?:^|[\\s\\[(\\\\-])(?:instrumental|inst\\.?)(?:[\\s\\])]|$)"
@@ -115,7 +129,7 @@ object LyricsFetchEngine {
         }
 
         // 4. Parallel Dispatch with Priority Grace Period
-        val result = executeParallelSearch(
+        val outcome = executeParallelSearch(
             videoId = videoId,
             title = title,
             artist = artist,
@@ -126,15 +140,20 @@ object LyricsFetchEngine {
             fetcher = fetcher,
         )
 
-        // 5. Update Cache
-        if (result != null) {
-            LyricsFetchCache.putSuccess(title, artist, durationMs, result)
-        } else {
+        // 5. Update Cache (never negative-cache when a transient provider error occurred)
+        if (outcome.result != null) {
+            LyricsFetchCache.putSuccess(title, artist, durationMs, outcome.result)
+        } else if (!outcome.hadProviderError) {
             LyricsFetchCache.putNegative(title, artist, durationMs)
         }
 
-        return result
+        return outcome.result
     }
+
+    private data class SearchOutcome(
+        val result: LyricsRepository.Result?,
+        val hadProviderError: Boolean,
+    )
 
     private data class CandidateResult(
         val index: Int,
@@ -142,6 +161,9 @@ object LyricsFetchEngine {
         val lines: List<LyricLine>?,
         val error: Throwable?,
     )
+
+    private fun isSyncedCapable(source: LyricsSource): Boolean =
+        source.wordSynced || source.id.lowercase() in SYNCED_CAPABLE_IDS
 
     private suspend fun executeParallelSearch(
         videoId: String,
@@ -152,7 +174,7 @@ object LyricsFetchEngine {
         activeSources: List<LyricsSource>,
         prioritizeSyllableSync: Boolean,
         fetcher: suspend (source: LyricsSource, videoId: String, title: String, artist: String, durationMs: Long, album: String?) -> List<LyricLine>?,
-    ): LyricsRepository.Result? = coroutineScope {
+    ): SearchOutcome = coroutineScope {
         val semaphore = Semaphore(PARALLELISM)
         val resultsChannel = Channel<CandidateResult>(activeSources.size)
 
@@ -163,7 +185,7 @@ object LyricsFetchEngine {
 
         if (viableSourcesWithIndex.isEmpty()) {
             LyricsLog.w("Engine", "All active providers are currently in cooldown")
-            return@coroutineScope null
+            return@coroutineScope SearchOutcome(result = null, hadProviderError = true)
         }
 
         // Launch candidate searches
@@ -190,33 +212,62 @@ object LyricsFetchEngine {
         var bestCandidate: CandidateResult? = null
         var pendingCount = viableSourcesWithIndex.size
         var graceStartedAt = 0L
+        var hadProviderError = false
 
-        fun hasPendingEarlier(targetIndex: Int): Boolean {
-            return viableSourcesWithIndex.any { (idx, _) -> idx < targetIndex && idx !in completed }
-        }
+        fun hasPendingEarlier(targetIndex: Int): Boolean =
+            viableSourcesWithIndex.any { (idx, _) -> idx < targetIndex && idx !in completed }
+
+        fun hasPendingEarlierSynced(targetIndex: Int): Boolean =
+            viableSourcesWithIndex.any { (idx, src) -> idx < targetIndex && idx !in completed && isSyncedCapable(src) }
+
+        fun hasPendingSyncedCapable(): Boolean =
+            viableSourcesWithIndex.any { (idx, src) -> idx !in completed && isSyncedCapable(src) }
+
+        fun hasPendingWordSyncedCapable(targetIndex: Int): Boolean =
+            viableSourcesWithIndex.any { (idx, src) ->
+                idx !in completed && src.wordSynced && idx != targetIndex
+            }
 
         while (pendingCount > 0) {
-            // Check if current best candidate has no earlier candidates pending
             bestCandidate?.let { best ->
-                if (!hasPendingEarlier(best.index) || (prioritizeSyllableSync && best.lines!!.any { it.isWordSynced } && !hasPendingEarlier(best.index))) {
+                val bestLines = best.lines!!
+                val bestIsWord = bestLines.any { it.isWordSynced }
+                val bestIsLine = !bestIsWord && bestLines.any { it.timeMs > 0 }
+                val canReturnImmediately = when {
+                    bestIsWord -> !hasPendingEarlier(best.index)
+                    bestIsLine -> if (prioritizeSyllableSync) {
+                        !hasPendingEarlier(best.index) && !hasPendingWordSyncedCapable(best.index)
+                    } else {
+                        !hasPendingEarlierSynced(best.index)
+                    }
+                    else -> !hasPendingSyncedCapable() && !hasPendingEarlier(best.index)
+                }
+                if (canReturnImmediately) {
                     resultsChannel.close()
                     coroutineContext.cancelChildren()
-                    return@coroutineScope LyricsRepository.Result(best.source, best.lines!!)
+                    return@coroutineScope SearchOutcome(LyricsRepository.Result(best.source, bestLines), hadProviderError)
                 }
             }
 
             val remainingGrace = if (bestCandidate != null && graceStartedAt > 0) {
+                val bestLines = bestCandidate!!.lines!!
+                val bestIsSynced = bestLines.any { it.isWordSynced || it.timeMs > 0 }
+                val graceWindow = if (!bestIsSynced && hasPendingSyncedCapable()) {
+                    PLAIN_WAIT_FOR_SYNCED_MS
+                } else {
+                    PRIORITY_GRACE_MS
+                }
                 val elapsed = System.currentTimeMillis() - graceStartedAt
-                (PRIORITY_GRACE_MS - elapsed).coerceAtLeast(0L)
+                (graceWindow - elapsed).coerceAtLeast(0L)
             } else {
                 Long.MAX_VALUE
             }
 
             if (bestCandidate != null && remainingGrace == 0L) {
-                LyricsLog.i("Engine", "Priority grace period expired, returning ${bestCandidate.source.label}")
+                LyricsLog.i("Engine", "Priority grace period expired, returning ${bestCandidate!!.source.label}")
                 resultsChannel.close()
                 coroutineContext.cancelChildren()
-                return@coroutineScope LyricsRepository.Result(bestCandidate.source, bestCandidate.lines!!)
+                return@coroutineScope SearchOutcome(LyricsRepository.Result(bestCandidate!!.source, bestCandidate!!.lines!!), hadProviderError)
             }
 
             // Await next result or timeout
@@ -231,16 +282,19 @@ object LyricsFetchEngine {
             if (candidate == null) {
                 // Grace expired
                 if (bestCandidate != null) {
-                    LyricsLog.i("Engine", "Priority grace expired, returning ${bestCandidate.source.label}")
+                    LyricsLog.i("Engine", "Priority grace expired, returning ${bestCandidate!!.source.label}")
                     resultsChannel.close()
                     coroutineContext.cancelChildren()
-                    return@coroutineScope LyricsRepository.Result(bestCandidate.source, bestCandidate.lines!!)
+                    return@coroutineScope SearchOutcome(LyricsRepository.Result(bestCandidate!!.source, bestCandidate!!.lines!!), hadProviderError)
                 }
                 break
             }
 
             completed.add(candidate.index)
             pendingCount--
+            if (candidate.error != null && candidate.error !is CancellationException) {
+                hadProviderError = true
+            }
 
             val lines = candidate.lines
             if (!lines.isNullOrEmpty()) {
@@ -251,19 +305,21 @@ object LyricsFetchEngine {
                 val bestIsLine = bestLines?.any { it.timeMs > 0 } == true
 
                 // Determine if this candidate is better than current best:
-                // Timed lyrics always beat plain text; word-synced beats line-synced when prioritizeSyllableSync is on.
+                // Timed lyrics always beat plain text; word-synced beats line-synced when prioritizeSyllableSync is on
+                // or when line-synced is only a fallback and word-synced wasn't already held at a higher priority.
                 val isBetter = when {
                     bestCandidate == null -> true
                     prioritizeSyllableSync && isWordSynced && !bestIsWord -> true
                     prioritizeSyllableSync && !isWordSynced && bestIsWord -> false
                     isLineSynced && !bestIsLine -> true
                     !isLineSynced && bestIsLine -> false
-                    else -> candidate.index < bestCandidate.index
+                    else -> candidate.index < bestCandidate!!.index
                 }
 
                 if (isBetter) {
+                    val upgradedSyncTier = (isWordSynced && !bestIsWord) || (isLineSynced && !bestIsLine)
                     bestCandidate = candidate
-                    if (graceStartedAt == 0L) {
+                    if (graceStartedAt == 0L || upgradedSyncTier) {
                         graceStartedAt = System.currentTimeMillis()
                     }
                 }
@@ -272,7 +328,7 @@ object LyricsFetchEngine {
 
         resultsChannel.close()
         coroutineContext.cancelChildren()
-        bestCandidate?.let { LyricsRepository.Result(it.source, it.lines!!) }
+        SearchOutcome(bestCandidate?.let { LyricsRepository.Result(it.source, it.lines!!) }, hadProviderError)
     }
 
     private suspend fun fetchWithFallback(
@@ -284,8 +340,20 @@ object LyricsFetchEngine {
         album: String?,
         fetcher: suspend (source: LyricsSource, videoId: String, title: String, artist: String, durationMs: Long, album: String?) -> List<LyricLine>?,
     ): List<LyricLine>? {
+        suspend fun invokeOrPropagate(t: String, a: String): List<LyricLine>? {
+            return try {
+                fetcher(source, videoId, t, a, durationMs, album)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ProviderFailureException) {
+                throw e
+            } catch (_: Throwable) {
+                null
+            }
+        }
+
         // 1. Direct query
-        var lines = runCatching { fetcher(source, videoId, title, artist, durationMs, album) }.getOrNull()
+        var lines = invokeOrPropagate(title, artist)
         if (!lines.isNullOrEmpty()) return lines
 
         // Native providers already normalize title/artist internally, so skip redundant retries
@@ -298,14 +366,14 @@ object LyricsFetchEngine {
         val cleanArtist = LrcParser.cleanArtistForSearch(artist)
 
         if (cleanTitle != title || cleanArtist != artist) {
-            lines = runCatching { fetcher(source, videoId, cleanTitle, cleanArtist, durationMs, album) }.getOrNull()
+            lines = invokeOrPropagate(cleanTitle, cleanArtist)
             if (!lines.isNullOrEmpty()) return lines
         }
 
         // 3. Primary artist fallback
         val primaryArtist = cleanArtist.split(",", "&", "/", "feat.", "ft.").firstOrNull()?.trim()
         if (!primaryArtist.isNullOrBlank() && primaryArtist != cleanArtist) {
-            lines = runCatching { fetcher(source, videoId, cleanTitle, primaryArtist, durationMs, album) }.getOrNull()
+            lines = invokeOrPropagate(cleanTitle, primaryArtist)
             if (!lines.isNullOrEmpty()) return lines
         }
 

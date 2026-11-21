@@ -30,19 +30,23 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -56,6 +60,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -73,7 +78,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.music.bitchord.data.LocalMediaRepository
+import com.music.bitchord.data.lyrics.align.OnDeviceLyricsAligner
 import com.music.bitchord.data.model.Song
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.music.bitchord.R
 import com.music.bitchord.feature.lyricseditor.data.LocalLyricsManager
 import com.music.bitchord.feature.lyricseditor.domain.model.LyricsEditorSource
@@ -123,6 +131,13 @@ fun LyricsEditorScreen(
     val candidateResult by viewModel.candidateResult.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
     val isSearchingResults by viewModel.isSearchingResults.collectAsState()
+    val aiAlignProgress by viewModel.aiAlignProgress.collectAsState()
+    val isAligningAi = aiAlignProgress != null
+    val canAlignAudio by produceState(false, song.videoId, song.localUri, song.localPath) {
+        value = withContext(Dispatchers.IO) {
+            OnDeviceLyricsAligner.canAlignAudio(context, song)
+        }
+    }
 
     var showDownloadDialog by remember { mutableStateOf(false) }
     var showSearchResultsDialog by remember { mutableStateOf(false) }
@@ -319,7 +334,7 @@ fun LyricsEditorScreen(
                 onBackClick = onBackClick,
                 actions = {
                     if (syncMode) {
-                        IconButton(onClick = { handleSave() }, enabled = !isLoading && !isSaving) {
+                        IconButton(onClick = { handleSave() }, enabled = !isLoading && !isSaving && !isAligningAi) {
                             Icon(
                                 imageVector = Icons.Rounded.Check,
                                 contentDescription = stringResource(R.string.lyrics_sync_save),
@@ -336,14 +351,14 @@ fun LyricsEditorScreen(
                     positionMs = playbackPositionMs,
                     durationMs = playbackDurationMs,
                     isPlaying = playbackIsPlaying,
-                    enabled = !isLoading && !isSaving,
+                    enabled = !isLoading && !isSaving && !isAligningAi,
                     onPlayPause = { onSyncPlaybackToggle?.invoke() },
                     onPrevious = { onSyncPrevious?.invoke() },
                     onNext = { onSyncNext?.invoke() },
                     onSeek = { onSyncSeek?.invoke(it) },
                 )
             } else LyricsEditorBottomBar(
-                enabled = !isLoading && !isSaving,
+                enabled = !isLoading && !isSaving && !isAligningAi,
                 onSearchClick = {
                     val query = "${song.title} ${song.artist} lyrics".trim()
                     runCatching {
@@ -405,6 +420,9 @@ fun LyricsEditorScreen(
                     viewModel.updateText("")
                     Toast.makeText(context, context.getString(R.string.l10n_lyrics_cleared), Toast.LENGTH_SHORT).show()
                 },
+                onAiSyncClick = if (currentText.isNotBlank() && canAlignAudio) {
+                    { viewModel.generateAiSyncedLyrics(song) }
+                } else null,
             )
         },
         containerColor = MaterialTheme.colorScheme.background,
@@ -430,13 +448,13 @@ fun LyricsEditorScreen(
                         LyricsEditorModeButton(
                             text = stringResource(R.string.lyrics_sync_simple),
                             selected = !syncMode,
-                            enabled = !isLoading && !isSaving,
+                            enabled = !isLoading && !isSaving && !isAligningAi,
                             onClick = { syncMode = false },
                         )
                         LyricsEditorModeButton(
                             text = stringResource(R.string.lyrics_sync_mode),
                             selected = syncMode,
-                            enabled = !isLoading && !isSaving,
+                            enabled = !isLoading && !isSaving && !isAligningAi,
                             onClick = { syncMode = true },
                         )
                     }
@@ -454,8 +472,63 @@ fun LyricsEditorScreen(
                 LyricsSourcePillSelector(
                     selectedSource = selectedSource,
                     onSourceSelected = { source -> viewModel.selectSource(source) },
-                    enabled = !isLoading && !isSaving,
+                    enabled = !isLoading && !isSaving && !isAligningAi,
                 )
+
+                AnimatedVisibility(
+                    visible = isAligningAi || (currentText.isNotBlank() && !isTimeSynced && canAlignAudio),
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                ) {
+                    val progress = aiAlignProgress
+                    if (progress != null) {
+                        val stageLabel = when (progress.stage) {
+                            OnDeviceLyricsAligner.AlignStage.DECODING_VOCALS -> stringResource(R.string.lyrics_ai_stage_decoding)
+                            OnDeviceLyricsAligner.AlignStage.CTC_INFERENCE -> stringResource(R.string.lyrics_ai_stage_ctc)
+                            OnDeviceLyricsAligner.AlignStage.ALIGNING -> stringResource(R.string.lyrics_ai_stage_aligning)
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = stageLabel,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    TextButton(onClick = { viewModel.cancelAiAlign() }) {
+                                        Text(stringResource(R.string.lyrics_ai_cancel))
+                                    }
+                                }
+                                LinearProgressIndicator(
+                                    progress = { progress.fraction.coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    } else {
+                        FilledTonalButton(
+                            onClick = { viewModel.generateAiSyncedLyrics(song) },
+                            enabled = !isLoading && !isSaving,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(stringResource(R.string.lyrics_ai_generate_button))
+                        }
+                    }
+                }
             }
 
             AnimatedVisibility(
@@ -590,6 +663,7 @@ fun LyricsEditorScreen(
                     } else {
                         TextField(
                             value = textFieldValue,
+                            enabled = !isLoading && !isSaving && !isAligningAi,
                             onValueChange = { newValue ->
                                 textFieldValue = newValue
                                 viewModel.updateText(newValue.text)

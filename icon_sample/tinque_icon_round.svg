@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 100 100">
+  <defs>
+    <clipPath id="circle_mask">
+      <circle cx="50" cy="50" r="50"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#circle_mask)">
+    <rect width="100" height="100" fill="#111111"/>
+    <g transform="translate(5.819444 -0.5) scale(0.93)" fill="none" stroke-width="13" stroke-linejoin="round" stroke-linecap="butt">
+      <path d="M22 32V68Q22 76 17 81" stroke="#FFFFFF"/>
+      <path d="M40 32V68Q40 76 35 81" stroke="#FFFFFF"/>
+      <path d="M63 18Q58 23 58 31V68Q58 76 53 81" stroke="#FF5A36"/>
+      <path d="M75 54V68Q75 76 80 81" stroke="#FFFFFF"/>
+    </g>
+  </g>
+</svg>

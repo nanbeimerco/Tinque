@@ -702,6 +702,9 @@ private fun BitChordApp(
     var showEqualizerSheet by remember { mutableStateOf(false) }
     // Tabs opened so far, kept built (see the page host).
     val keptTabs = remember { androidx.compose.runtime.mutableStateListOf<Int>() }
+    val homeListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val libraryListState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val libraryGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     val lifecycleForParked = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val parkedBackOwner = remember(lifecycleForParked) {
         object : androidx.activity.OnBackPressedDispatcherOwner {
@@ -950,6 +953,7 @@ private fun BitChordApp(
     val youtubeMusicSearchResults by viewModel.results.collectAsStateWithLifecycle()
     val isRefreshingLocalMusic by viewModel.isRefreshingLocalMusic.collectAsStateWithLifecycle()
     val localArtworkPreload by viewModel.localArtworkPreload.collectAsStateWithLifecycle()
+    val localSongsLoaded = localSongsState !is UiState.Loading
     val localSongs = (localSongsState as? UiState.Success)?.data.orEmpty()
     // The one clock every flowing heat line runs on: only while music plays,
     // and the pages' lines hold still while the player is raised over them.
@@ -982,51 +986,61 @@ private fun BitChordApp(
             com.music.bitchord.data.stats.HeatStore.seedOnce(counts)
         }
     }
+    // Pre-warm Home and Library caches as soon as local songs finish loading
+    // so neither initial Home open nor tab switching pops in half-built.
+    val warmFavoritesLabel = stringResource(R.string.favorites)
+    LaunchedEffect(localSongsLoaded, localSongs) {
+        if (!localSongsLoaded) return@LaunchedEffect
+        val songsNow = localSongs
+        val statsRevisionNow = com.music.bitchord.feature.localsongactions.data.LocalPlayStatsStore.revision.value
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.music.bitchord.feature.home.data.HomeModel.warm(
+                context = context,
+                songs = songsNow,
+                heat = com.music.bitchord.data.stats.HeatStore.info.value,
+                playlists = com.music.bitchord.feature.localmusic.data.LocalPlaylistStore.playlists.value,
+                favoriteIds = com.music.bitchord.feature.localmusic.data.LocalFavoritesStore.favoriteIds.value,
+                favoritesName = warmFavoritesLabel,
+                libraryEntries = com.music.bitchord.feature.library.data.LibraryEntryStore.entries.value,
+            )
+            com.music.bitchord.feature.library.ui.LibraryHistoryCache.warm(context, songsNow, statsRevisionNow)
+        }
+    }
+
     // Keep Music2Emo mood analysis running from the app root regardless of active tab or screen.
     val localHomeAiModelInstalled by com.music.bitchord.feature.homeai.LocalHomeAi.modelInstalled.collectAsStateWithLifecycle()
     val localHomeAiCacheRevision by com.music.bitchord.feature.homeai.LocalHomeAi.cacheRevision.collectAsStateWithLifecycle()
     val offlineModeForHomeAi by AppSettings.offlineMode.collectAsStateWithLifecycle()
+    val recommendationExcludedFolders by AppSettings.recommendationExcludedFolders.collectAsStateWithLifecycle()
     LaunchedEffect(context, localHomeAiCacheRevision, offlineModeForHomeAi) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             com.music.bitchord.feature.homeai.LocalHomeAi.isModelInstalled(context)
         }
     }
-    LaunchedEffect(localHomeAiModelInstalled, localSongs) {
+    LaunchedEffect(localHomeAiModelInstalled, localSongs, recommendationExcludedFolders) {
         if (!localHomeAiModelInstalled || localSongs.isEmpty()) return@LaunchedEffect
-        val songsNow = localSongs
+        val eligibleSongs = localSongs.filterNot {
+            AppSettings.isSongPathExcludedFromRecommendations(it.localPath, recommendationExcludedFolders)
+        }
+        if (eligibleSongs.isEmpty()) return@LaunchedEffect
         val prioritized = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             val heatNow = com.music.bitchord.data.stats.HeatStore.info.value
             val favoriteNow = com.music.bitchord.feature.localmusic.data.LocalFavoritesStore.favoriteIds.value
             val statsMap = com.music.bitchord.feature.localsongactions.data.LocalPlayStatsStore.exportStats(context)
-            songsNow.sortedWith(
-                compareByDescending<Song> { heatNow[it.heatKey()]?.level ?: heatNow[it.videoId]?.level ?: 0f }
-                    .thenByDescending { if (it.videoId in favoriteNow) 1 else 0 }
-                    .thenByDescending { statsMap[it.videoId]?.playedCount ?: 0 }
-                    .thenByDescending { it.localDateAddedSeconds ?: 0L },
+            val heatLevels = heatNow.mapValues { it.value.level }
+            val playCounts = statsMap.mapValues { it.value.playedCount }
+            com.music.bitchord.feature.homeai.LocalHomeAi.prioritizeLibraryForAnalysis(
+                songs = eligibleSongs,
+                heatLevels = heatLevels,
+                favoriteIds = favoriteNow,
+                playCounts = playCounts,
             )
         }
         com.music.bitchord.feature.homeai.LocalHomeAi.requestAnalysis(context, prioritized)
     }
     // The lyrics catalog, opened from the player (its lyrics footer, its ⋮ menu).
     val catalogSong by com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.song.collectAsStateWithLifecycle()
-    catalogSong?.let { target ->
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.close() },
-            properties = androidx.compose.ui.window.DialogProperties(
-                usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = false,
-            ),
-        ) {
-            com.music.bitchord.ui.components.GlassWindowScope {
-                com.music.bitchord.ui.components.NoDialogDim()
-                com.music.bitchord.feature.lyricscatalog.LyricsCatalogScreen(
-                    song = target,
-                    onDismiss = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.close() },
-                    onApplied = { viewModel.reloadLyrics(it) },
-                )
-            }
-        }
-    }
+    var pendingOpenLyrics by remember { mutableStateOf(false) }
     // A folder's songs open in the tag editor together (its own, with its subfolders').
     var batchTagSongs by remember { mutableStateOf<Pair<List<Song>, List<Song>>?>(null) }
     batchTagSongs?.let { (own, all) ->
@@ -1248,6 +1262,67 @@ private fun BitChordApp(
         }
     }
 
+    val playSongPreservingQueueAndOpenLyrics: (Song) -> Unit = { target ->
+        val resolved = when {
+            target.localUri != null && !Downloads.isMissingLocalFile(target.localUri) -> target
+            !target.localPath.isNullOrBlank() && java.io.File(target.localPath).isFile ->
+                target.copy(localUri = android.net.Uri.fromFile(java.io.File(target.localPath)).toString())
+            else -> localSongs.firstOrNull { com.music.bitchord.ui.isSameTrackForLyrics(it, target) } ?: target
+        }
+        val activePlaying = player.song
+        val c = controller
+        if (activePlaying != null && com.music.bitchord.ui.isSameTrackForLyrics(activePlaying, resolved)) {
+            viewModel.reloadLyrics(resolved)
+            if (c != null && !c.isPlaying) c.play()
+        } else if (c == null || c.mediaItemCount == 0) {
+            play(listOf(resolved), 0)
+        } else {
+            var existingIdx = -1
+            for (i in 0 until c.mediaItemCount) {
+                val queuedSong = c.getMediaItemAt(i).toSong()
+                if (queuedSong != null && com.music.bitchord.ui.isSameTrackForLyrics(queuedSong, resolved)) {
+                    existingIdx = i
+                    break
+                }
+            }
+            if (existingIdx >= 0) {
+                c.seekTo(existingIdx, 0L)
+                c.play()
+            } else {
+                val insertAt = (c.currentMediaItemIndex + 1).coerceIn(0, c.mediaItemCount)
+                val radioName = c.currentMediaItem?.toSong()?.radioName
+                c.addMediaItem(insertAt, resolved.copy(radioName = radioName).toMediaItem())
+                c.seekTo(insertAt, 0L)
+                c.play()
+            }
+        }
+        com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.close()
+        pendingOpenLyrics = true
+        if (!playerDocked && !showNowPlaying) {
+            if (reducePlayerMotion) showNowPlaying = true else playerSheetMotion.open()
+        }
+    }
+
+    catalogSong?.let { target ->
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.close() },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false,
+            ),
+        ) {
+            com.music.bitchord.ui.components.GlassWindowScope {
+                com.music.bitchord.ui.components.NoDialogDim()
+                com.music.bitchord.feature.lyricscatalog.LyricsCatalogScreen(
+                    song = target,
+                    onDismiss = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.close() },
+                    onApplied = { viewModel.reloadLyrics(it) },
+                    onPlayAndOpenLyrics = playSongPreservingQueueAndOpenLyrics,
+                )
+            }
+        }
+    }
+
     /**
      * Starts the explicit station offered by every song overflow menu.
      *
@@ -1273,6 +1348,7 @@ private fun BitChordApp(
                     existing = listOf(seed),
                     seedSong = seed,
                     limit = INITIAL_RADIO_TRACKS,
+                    context = context,
                 ).getOrElse {
                     if (request == playRequestGeneration) {
                         Toast.makeText(context, R.string.couldnt_load_tracks, Toast.LENGTH_SHORT).show()
@@ -2012,6 +2088,8 @@ private fun BitChordApp(
             twoColumnLayout = playerLayout == com.music.bitchord.ui.player.PlayerLayout.TWO_COLUMN,
             landscapeSplitLayout = playerLayout == com.music.bitchord.ui.player.PlayerLayout.LANDSCAPE_SPLIT,
             isPlaying = player.isPlaying,
+            openLyricsPending = pendingOpenLyrics,
+            onOpenLyricsConsumed = { pendingOpenLyrics = false },
             isLoading = player.isLoading,
             positionMs = player.position.positionMs,
             durationMs = player.durationMs,
@@ -2827,6 +2905,8 @@ private fun BitChordApp(
                                 contentPadding = listPadding,
                                 isRefreshing = isRefreshingLocalMusic,
                                 onRefresh = { viewModel.loadLocalMusic(isPullToRefresh = true) },
+                                songsLoaded = localSongsLoaded,
+                                listState = homeListState,
                             )
                         }
                         TAB_LIBRARY -> if (!hasStoragePermission) {
@@ -2874,6 +2954,9 @@ private fun BitChordApp(
                                 onCollectionNavigationChanged = onCollectionNavigationChanged,
                                 resetToTopSignal = libraryResetSignal,
                                 onTitleScrolledAway = { libraryTitleAway = it },
+                                songsLoaded = localSongsLoaded,
+                                collectionListState = libraryListState,
+                                collectionGridState = libraryGridState,
                             )
                         }
                         TAB_SEARCH -> if (!hasStoragePermission) {
@@ -3351,6 +3434,27 @@ private fun BitChordApp(
                         )
                     }
                 }
+                // Background AI lyrics analysis floating status / completion popup.
+                val undoOfferVisible = com.music.bitchord.ui.components.ReorderUndo.offer != null
+                com.music.bitchord.feature.lyricscatalog.LyricsAlignFloatingHost(
+                    visible = !(!playerDocked && showNowPlaying && playerSong != null) && catalogSong == null,
+                    glassBackdrop = glassSamplesBackdrop && useCollapsibleNavBar,
+                    currentPlayingSong = player.song,
+                    onApplied = { viewModel.reloadLyrics(it) },
+                    onPlayAndOpenLyrics = playSongPreservingQueueAndOpenLyrics,
+                    onOpenCatalog = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.open(it) },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(horizontal = 16.dp)
+                        .offset {
+                            val extraOffsetPx = (
+                                (if (undoOfferVisible) 60.dp else 0.dp) +
+                                    (if (songSelection.active) 64.dp else 0.dp)
+                                ).roundToPx()
+                            IntOffset(0, -(floatingBarsHeight.intValue + 10.dp.roundToPx() + extraOffsetPx))
+                        },
+                )
+
                 // "Undo" after a reorder, in the same floating glass layer.
                 com.music.bitchord.ui.components.ReorderUndoHost(
                     glassBackdrop = glassSamplesBackdrop && useCollapsibleNavBar,
@@ -3572,8 +3676,55 @@ private fun BitChordApp(
                             playerSheetMotion.onMeasured(it.height.toFloat())
                         },
                 ) {
-                    CompositionLocalProvider(LocalPlayerDock provides playerDock) {
-                        nowPlaying(playerSong, false)
+                    // The AI lyrics popup over the player belongs to the open
+                    // player only: it goes the moment the player starts down
+                    // (rather than riding the sheet down to the mini player),
+                    // and the page's own popup takes over above the mini
+                    // player once the player has gone. Derived so the sheet's
+                    // travel recomposes this twice, not every frame.
+                    val playerFullyOpen by remember(playerDock) {
+                        derivedStateOf { playerDock.openFraction() >= 0.98f }
+                    }
+                    val alignQueue by com.music.bitchord.data.lyrics.align.LyricsAlignTaskManager.state
+                        .collectAsStateWithLifecycle()
+                    val alignPopupInPlayer = playerRaised && catalogSong == null && playerFullyOpen
+                    val alignHasWork = alignQueue.active != null || alignQueue.queued.isNotEmpty() ||
+                        alignQueue.completed.isNotEmpty() || alignQueue.failed.isNotEmpty()
+                    // The player is its own window and cannot see the page's
+                    // backdrop, so it records one of its own for the popup's
+                    // glass — and only while the popup is up, since recording
+                    // the player is a second draw of artwork and lyrics. Not
+                    // tied to [playerFullyOpen], so the glass holds through
+                    // the popup's fade-out instead of flipping to flat mid-fade.
+                    val playerGlassBackdrop = glassActive && !reduceDynamicBlur &&
+                        catalogSong == null && alignHasWork
+                    val playerBackdrop = rememberLayerBackdrop()
+                    Box(
+                        if (playerGlassBackdrop) Modifier.layerBackdrop(playerBackdrop) else Modifier,
+                    ) {
+                        CompositionLocalProvider(LocalPlayerDock provides playerDock) {
+                            nowPlaying(playerSong, false)
+                        }
+                    }
+                    CompositionLocalProvider(LocalAppBackdrop provides playerBackdrop) {
+                        com.music.bitchord.feature.lyricscatalog.LyricsAlignFloatingHost(
+                            visible = alignPopupInPlayer,
+                            glassBackdrop = playerGlassBackdrop,
+                            currentPlayingSong = player.song,
+                            onApplied = { viewModel.reloadLyrics(it) },
+                            onPlayAndOpenLyrics = playSongPreservingQueueAndOpenLyrics,
+                            onOpenCatalog = { com.music.bitchord.feature.lyricscatalog.LyricsCatalogRequests.open(it) },
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                // Pinned to the screen: cancel the sheet's own travel
+                                // so the popup fades out where it stood.
+                                .offset {
+                                    val travelled = playerSheetMotion.position().takeUnless { it.isNaN() } ?: 0f
+                                    IntOffset(0, -travelled.toInt())
+                                }
+                                .statusBarsPadding()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                        )
                     }
                 }
             }

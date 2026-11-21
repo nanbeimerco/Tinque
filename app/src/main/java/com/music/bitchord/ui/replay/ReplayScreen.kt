@@ -11,6 +11,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -71,8 +73,11 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.core.graphics.ColorUtils
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -109,6 +114,7 @@ import com.music.bitchord.ui.components.expressiveItemShape
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.rememberArtworkColors
+import com.music.bitchord.ui.theme.AccentRed
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.roundToInt
@@ -1831,6 +1837,7 @@ private fun ReplayGenresSection(summary: ReplaySummary) {
             return
         }
 
+        val chartColors = rememberReplayChartColors()
         ExpressiveGroup {
             genres.forEachIndexed { idx, genre ->
                 val share = (genre.ms.toFloat() / topGenreMs.toFloat()).coerceIn(0.08f, 1f)
@@ -1904,7 +1911,7 @@ private fun ReplayGenresSection(summary: ReplaySummary) {
                                 .fillMaxWidth(share)
                                 .clip(CircleShape)
                                 .background(
-                                    if (idx == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
+                                    if (idx == 0) chartColors.topOne else chartColors.topTwoThree,
                                 ),
                         )
                     }
@@ -1914,6 +1921,55 @@ private fun ReplayGenresSection(summary: ReplaySummary) {
     }
 }
 
+private data class ReplayChartColors(
+    val topOne: Color,
+    val topTwoThree: Color,
+    val others: Color,
+)
+
+@Composable
+private fun rememberReplayChartColors(): ReplayChartColors {
+    val colorScheme = MaterialTheme.colorScheme
+    val isDark = colorScheme.background.luminance() < 0.5f
+    val primary = colorScheme.primary
+    val surfaceContainerHighest = colorScheme.surfaceContainerHighest
+    val onSurfaceVariant = colorScheme.onSurfaceVariant
+    return remember(primary, surfaceContainerHighest, onSurfaceVariant, isDark) {
+        val hsl = FloatArray(3)
+        ColorUtils.colorToHSL(primary.toArgb(), hsl)
+        val hasChromaticPrimary = hsl[1] >= 0.14f
+        val topOne = if (hasChromaticPrimary) {
+            val tuned = floatArrayOf(
+                hsl[0],
+                hsl[1].coerceIn(0.60f, 0.90f),
+                if (isDark) hsl[2].coerceIn(0.54f, 0.70f) else hsl[2].coerceIn(0.38f, 0.52f),
+            )
+            Color(ColorUtils.HSLToColor(tuned))
+        } else {
+            if (isDark) AccentRed else Color(0xFFE01E3A)
+        }
+        val topOneHsl = FloatArray(3).also { ColorUtils.colorToHSL(topOne.toArgb(), it) }
+        val isWarmTopOne = topOneHsl[0] < 75f || topOneHsl[0] >= 275f
+        val secondHue = if (isWarmTopOne) 202f else 32f
+        val topTwoThree = Color(
+            ColorUtils.HSLToColor(
+                floatArrayOf(
+                    secondHue,
+                    if (isWarmTopOne) 0.82f else 0.86f,
+                    if (isDark) 0.62f else 0.45f,
+                ),
+            ),
+        )
+        val others = lerp(surfaceContainerHighest, onSurfaceVariant, if (isDark) 0.42f else 0.36f)
+        ReplayChartColors(
+            topOne = topOne,
+            topTwoThree = topTwoThree,
+            others = others,
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ReplayConcentrationAndHabitsCard(summary: ReplaySummary) {
     val context = LocalContext.current
@@ -1922,6 +1978,7 @@ private fun ReplayConcentrationAndHabitsCard(summary: ReplaySummary) {
     val avgDaily = remember(summary.totalMs, summary.dailyMs) { avgDailyMinutes(summary.totalMs, summary.dailyMs) }
     val topSongArt = summary.songs.firstOrNull()?.song?.thumbnailUrl
     val topThreePct = (conc.topThreeShare * 100f).roundToInt()
+    val chartColors = rememberReplayChartColors()
 
     Surface(
         modifier = Modifier
@@ -1982,7 +2039,7 @@ private fun ReplayConcentrationAndHabitsCard(summary: ReplaySummary) {
                             .weight(conc.topOneShare)
                             .fillMaxHeight()
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
+                            .background(chartColors.topOne),
                     )
                 }
                 if (conc.topTwoThreeShare > 0.01f) {
@@ -1991,7 +2048,7 @@ private fun ReplayConcentrationAndHabitsCard(summary: ReplaySummary) {
                             .weight(conc.topTwoThreeShare)
                             .fillMaxHeight()
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.secondary),
+                            .background(chartColors.topTwoThree),
                     )
                 }
                 if (conc.othersShare > 0.01f) {
@@ -2000,25 +2057,26 @@ private fun ReplayConcentrationAndHabitsCard(summary: ReplaySummary) {
                             .weight(conc.othersShare)
                             .fillMaxHeight()
                             .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.tertiary),
+                            .background(chartColors.others),
                     )
                 }
             }
 
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 LegendPill(
-                    color = MaterialTheme.colorScheme.primary,
+                    color = chartColors.topOne,
                     label = "${stringResource(R.string.replay_concentration_top1)} ${(conc.topOneShare * 100f).roundToInt()}%",
                 )
                 LegendPill(
-                    color = MaterialTheme.colorScheme.secondary,
+                    color = chartColors.topTwoThree,
                     label = "${stringResource(R.string.replay_concentration_top23)} ${(conc.topTwoThreeShare * 100f).roundToInt()}%",
                 )
                 LegendPill(
-                    color = MaterialTheme.colorScheme.tertiary,
+                    color = chartColors.others,
                     label = "${stringResource(R.string.replay_concentration_others)} ${(conc.othersShare * 100f).roundToInt()}%",
                 )
             }
@@ -2079,7 +2137,7 @@ private fun LegendPill(color: Color, label: String) {
     ) {
         Box(
             modifier = Modifier
-                .size(8.dp)
+                .size(10.dp)
                 .clip(CircleShape)
                 .background(color),
         )

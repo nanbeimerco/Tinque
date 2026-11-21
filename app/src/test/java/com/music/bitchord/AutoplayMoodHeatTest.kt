@@ -222,4 +222,27 @@ class AutoplayMoodHeatTest {
         )
         assertEquals(listOf("r3", "r1"), ranked.map { it.videoId })
     }
+
+    @Test
+    fun excludedFoldersRemovesFolderAndSubfolderCandidates() {
+        val seed = song("seed", "Main Track", localPath = "/storage/emulated/0/Music/Pop/seed.flac")
+        val direct = song("t_direct", "Unit 1", localPath = "/storage/emulated/0/Music/TOEIC/unit1.mp3")
+        val sub = song("t_sub", "Part 2", localPath = "/storage/emulated/0/Music/TOEIC/Part2/q1.mp3")
+        val samePrefix = song("prefix_ok", "Bonus", localPath = "/storage/emulated/0/Music/TOEIC_MixTape/bonus.flac")
+        val pop = song("pop_ok", "Song 2", localPath = "/storage/emulated/0/Music/Pop/song2.flac")
+
+        val ranked = rankAutoplayCandidates(
+            AutoplayScoringInput(
+                seed = seed,
+                candidates = listOf(direct, sub, samePrefix, pop),
+                excludedFolders = setOf("/storage/emulated/0/Music/TOEIC"),
+                jitterFor = { 0.0 },
+            ),
+        )
+        val ids = ranked.map { it.videoId }.toSet()
+        assertFalse("t_direct" in ids)
+        assertFalse("t_sub" in ids)
+        assertTrue("prefix_ok" in ids)
+        assertTrue("pop_ok" in ids)
+    }
 }

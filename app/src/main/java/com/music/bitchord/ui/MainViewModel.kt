@@ -18,7 +18,9 @@ import com.music.bitchord.data.lyrics.EmbeddedLyrics
 import com.music.bitchord.data.lyrics.LyricLine
 import com.music.bitchord.data.lyrics.LyricsRepository
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.toEnhancedLrc
 import com.music.bitchord.data.lyrics.toLrc
+import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.feature.lyricseditor.data.LocalLyricsManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -402,7 +404,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         localUri = effectiveUri,
                         localPath = effectivePath,
                     )
-                    val lrcText = found.lines.toLrc()
+                    val lrcText = if (AppSettings.lyricsSaveWordSync.value &&
+                        found.lines.any { it.isWordSynced || it.background?.isWordSynced == true }
+                    ) {
+                        found.lines.toEnhancedLrc().ifBlank { found.lines.toLrc() }
+                    } else {
+                        found.lines.toLrc()
+                    }
                     viewModelScope.launch(Dispatchers.IO) {
                         try {
                             LocalLyricsManager.autoEmbedLyrics(getApplication(), targetSong, lrcText)
@@ -420,15 +428,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Forces an immediate reload of lyrics for [song] (or the current playing track),
      * clearing the cache so newly embedded or edited lyrics appear immediately.
+     *
+     * When [song] is non-null and differs from the currently active player track,
+     * only the cache is invalidated so applying lyrics for another track never
+     * briefly overwrites the currently playing track's lyrics screen.
      */
     fun reloadLyrics(song: Song? = null) {
         val target = song ?: lastSong ?: return
+        val durationMs = target.durationMillis().coerceAtLeast(1L)
+        com.music.bitchord.data.lyrics.LyricsFetchCache.invalidate(
+            title = target.title,
+            artist = target.artist,
+            durationMs = durationMs,
+        )
+        val current = lastSong
+        if (song != null && (current == null || !isSameTrackForLyrics(current, song))) {
+            return
+        }
         lyricsFor = null
         loadLyrics(
             videoId = target.videoId,
             title = target.title,
             artist = target.artist,
-            durationMs = 0L,
+            durationMs = durationMs,
             album = target.albumName,
             localUri = target.localUri,
             song = target,
@@ -2801,4 +2823,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun text(id: Int): String = getApplication<Application>().getString(id)
+}
+
+internal fun isSameTrackForLyrics(current: Song, candidate: Song): Boolean {
+    if ((current.localStartMs ?: 0L) != (candidate.localStartMs ?: 0L)) {
+        return false
+    }
+    if (current.videoId.isNotBlank() && current.videoId == candidate.videoId) {
+        return true
+    }
+    val curUri = current.localUri?.takeIf { it.isNotBlank() }
+    val candUri = candidate.localUri?.takeIf { it.isNotBlank() }
+    if (curUri != null && curUri == candUri) {
+        return true
+    }
+    val curPath = current.localPath?.takeIf { it.isNotBlank() }
+    val candPath = candidate.localPath?.takeIf { it.isNotBlank() }
+    return curPath != null && curPath == candPath
 }

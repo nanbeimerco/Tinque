@@ -109,12 +109,14 @@ object LyricsRepository {
         durationMs: Long,
         album: String?,
     ): List<LyricLine>? {
+        val startedAt = System.currentTimeMillis()
         LyricsLog.i(source.label, "Querying ${source.label} (${source.id})...")
 
         var found: List<LyricLine>? = null
+        val isNative = com.music.bitchord.data.lyrics.providers.NativeLyricsProviders.isNativeProvider(source.id)
 
-        if (com.music.bitchord.data.lyrics.providers.NativeLyricsProviders.isNativeProvider(source.id)) {
-            val raw = runCatching {
+        if (isNative) {
+            val raw = try {
                 com.music.bitchord.data.lyrics.providers.NativeLyricsProviders.getLyrics(
                     providerId = source.id,
                     title = title,
@@ -122,13 +124,23 @@ object LyricsRepository {
                     album = album,
                     durationMs = durationMs,
                 )
-            }.getOrNull()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: ProviderFailureException) {
+                LyricsLog.w(source.label, "Failed (${System.currentTimeMillis() - startedAt}ms): ${e.message}")
+                throw e
+            } catch (e: Throwable) {
+                LyricsLog.w(source.label, "Error (${System.currentTimeMillis() - startedAt}ms): ${e.message ?: e.javaClass.simpleName}")
+                null
+            }
             if (!raw.isNullOrBlank()) {
                 found = ProviderLyrics.parse(raw)?.map { it.withDecodedEntities() }?.withBackgroundVocals()
             }
         }
 
-        if (found.isNullOrEmpty()) {
+        // Only run QuickJS extension scripts for non-native (third-party / custom) sources.
+        // Running dead/failing native providers through the single-mutex QuickJS VM serialized retries and starved working providers.
+        if (found.isNullOrEmpty() && !isNative) {
             val ext = com.music.bitchord.feature.lyrics.manager.LyricsExtensionManager.getExtension(source.id)
             if (ext != null && ext.scriptFile.exists()) {
                 val raw = com.music.bitchord.feature.lyrics.engine.LyricsExtensionExecutor.getLyrics(
@@ -146,15 +158,16 @@ object LyricsRepository {
             }
         }
 
+        val elapsed = System.currentTimeMillis() - startedAt
         if (found.isNullOrEmpty()) {
-            LyricsLog.w(source.label, "No lyrics returned")
+            LyricsLog.w(source.label, "No lyrics returned (${elapsed}ms)")
         } else {
             val syncType = when {
                 found.any { it.isWordSynced } -> "word-synced"
                 found.any { it.timeMs > 0 } -> "line-synced"
                 else -> "plain text"
             }
-            LyricsLog.s(source.label, "Returned ${found.size} lines ($syncType)")
+            LyricsLog.s(source.label, "Returned ${found.size} lines ($syncType, ${elapsed}ms)")
         }
         return found
     }

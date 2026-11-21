@@ -556,6 +556,141 @@ class PlaybackService : MediaLibraryService() {
 
     private var crossfade: CrossfadeController? = null
 
+    private data class LocalWriteSuspension(
+        val activePlayer: ExoPlayer,
+        val stoppedCurrent: Boolean,
+        val currentIndex: Int,
+        val currentMediaId: String?,
+        val positionMs: Long,
+        val nextIndex: Int?,
+        val nextMediaId: String?,
+    )
+
+    private fun MediaItem.matchesWriteTarget(target: LocalFileWriteGuard.Target): Boolean {
+        val extras = mediaMetadata.extras
+        return LocalFileWriteGuard.matches(
+            target = target,
+            itemMediaId = mediaId,
+            itemUri = localConfiguration?.uri?.toString(),
+            itemExtraLocalUri = extras?.getString(EXTRA_LOCAL_URI),
+            itemExtraLocalPath = extras?.getString(EXTRA_LOCAL_PATH),
+        )
+    }
+
+    private val localFileWriteHandler = object : LocalFileWriteGuard.Handler {
+        override suspend fun beforeWrite(target: LocalFileWriteGuard.Target): Any? {
+            val result = withContext(Dispatchers.Main.immediate) {
+                val active = player ?: return@withContext null
+                val spareMatches = spare?.currentMediaItem?.matchesWriteTarget(target) == true
+                val curIdx = active.currentMediaItemIndex
+                val curItem = active.currentMediaItem
+                val currentMatches = curItem?.matchesWriteTarget(target) == true
+
+                val timeline = active.currentTimeline
+                val candidateNext = if (!timeline.isEmpty && curIdx in 0 until active.mediaItemCount) {
+                    timeline.getNextWindowIndex(curIdx, active.repeatMode, active.shuffleModeEnabled)
+                        .takeIf { it != C.INDEX_UNSET && it != curIdx && it in 0 until active.mediaItemCount }
+                } else null
+                val nextItem = candidateNext?.let { active.getMediaItemAt(it) }
+                val nextMatches = nextItem?.matchesWriteTarget(target) == true
+
+                if (!spareMatches && !currentMatches && !nextMatches) return@withContext null
+
+                if (spareMatches || (crossfade?.isTransitioning() == true && (currentMatches || nextMatches))) {
+                    crossfade?.cancelTransition()
+                    spare?.let {
+                        it.stop()
+                        it.clearMediaItems()
+                    }
+                }
+
+                if (currentMatches && active.playbackState != Player.STATE_IDLE) {
+                    val positionMs = active.currentPosition.coerceAtLeast(0L)
+                    val currentMediaId = curItem.mediaId
+                    active.stop()
+                    val fence = CompletableDeferred<Unit>()
+                    runCatching {
+                        active.createMessage { _, _ -> fence.complete(Unit) }
+                            .setLooper(active.playbackLooper)
+                            .send()
+                    }.onFailure { fence.complete(Unit) }
+                    LocalWriteSuspension(
+                        activePlayer = active,
+                        stoppedCurrent = true,
+                        currentIndex = curIdx,
+                        currentMediaId = currentMediaId,
+                        positionMs = positionMs,
+                        nextIndex = if (nextMatches) candidateNext else null,
+                        nextMediaId = if (nextMatches) nextItem.mediaId else null,
+                    ) to fence
+                } else if (nextMatches) {
+                    LocalWriteSuspension(
+                        activePlayer = active,
+                        stoppedCurrent = false,
+                        currentIndex = curIdx,
+                        currentMediaId = curItem?.mediaId,
+                        positionMs = 0L,
+                        nextIndex = candidateNext,
+                        nextMediaId = nextItem.mediaId,
+                    ) to null
+                } else {
+                    null
+                }
+            } ?: return null
+
+            val (suspension, fence) = result
+            if (fence != null) {
+                withTimeoutOrNull(500L) { fence.await() }
+            }
+            return suspension
+        }
+
+        override suspend fun afterWrite(target: LocalFileWriteGuard.Target, token: Any?) {
+            val state = token as? LocalWriteSuspension ?: return
+            withContext(Dispatchers.Main.immediate) {
+                val active = player ?: return@withContext
+                if (active !== state.activePlayer) return@withContext
+
+                if (state.stoppedCurrent) {
+                    if (active.playbackState == Player.STATE_IDLE &&
+                        state.currentIndex in 0 until active.mediaItemCount &&
+                        active.getMediaItemAt(state.currentIndex).mediaId == state.currentMediaId
+                    ) {
+                        active.seekTo(state.currentIndex, state.positionMs)
+                        active.prepare()
+                        PlaybackLog.note(
+                            "reopened modified local track at ${state.positionMs}ms",
+                            about = state.currentMediaId,
+                        )
+                        loadLyricsForCurrentTrack()
+                    }
+                }
+
+                val nextIdx = state.nextIndex
+                if (nextIdx != null &&
+                    nextIdx in 0 until active.mediaItemCount &&
+                    active.getMediaItemAt(nextIdx).mediaId == state.nextMediaId
+                ) {
+                    if (active.currentMediaItemIndex == nextIdx) {
+                        if (active.playbackState != Player.STATE_IDLE) {
+                            val pos = active.currentPosition.coerceAtLeast(0L)
+                            active.stop()
+                            active.seekTo(nextIdx, pos)
+                            active.prepare()
+                            loadLyricsForCurrentTrack()
+                        }
+                    } else {
+                        val currentNext = active.getMediaItemAt(nextIdx)
+                        val refreshed = currentNext.buildUpon()
+                            .setCustomCacheKey("local-reload-${SystemClock.elapsedRealtimeNanos()}")
+                            .build()
+                        active.replaceMediaItem(nextIdx, refreshed)
+                    }
+                }
+            }
+        }
+    }
+
     /**
      * The queue and playhead parked while a file-manager song is previewed.
      * The preview temporarily occupies the live player so normal player UI and
@@ -985,6 +1120,7 @@ class PlaybackService : MediaLibraryService() {
             val exoPlayer = player ?: return
             if (isExternalPreviewPlaying(exoPlayer)) return
             if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                com.music.bitchord.playback.smart.PlaybackAnalysisGate.notePlaybackDisruption()
                 exoPlayer.currentMediaItem?.toSong()?.let { song ->
                     if (exoPlayer.currentPosition <= LONG_TRACK_RESUME_START_CLEAR_MS) {
                         LongTrackResumeStore.clear(applicationContext, song)
@@ -1205,6 +1341,7 @@ class PlaybackService : MediaLibraryService() {
             // The player this fired on, which is by definition the one the
             // session is currently pointed at.
             val exoPlayer = player ?: return
+            com.music.bitchord.playback.smart.PlaybackAnalysisGate.setBuffering(state == Player.STATE_BUFFERING)
             if (isExternalPreviewPlaying(exoPlayer)) {
                 if (state == Player.STATE_ENDED) restoreExternalPreview(exoPlayer)
                 return
@@ -1760,6 +1897,7 @@ class PlaybackService : MediaLibraryService() {
         val sparePlayer = buildPlayer(spareAudioChain, ownsSession = false)
         player = exoPlayer
         spare = sparePlayer
+        LocalFileWriteGuard.handler = localFileWriteHandler
         audioManager?.registerAudioDeviceCallback(outputDeviceCallback, null)
         androidx.core.content.ContextCompat.registerReceiver(
             this,
@@ -2652,6 +2790,7 @@ class PlaybackService : MediaLibraryService() {
         // this the second play through is a continuation of the first and is
         // never counted.
         ListeningRecorder.onStopped()
+        com.music.bitchord.playback.smart.PlaybackAnalysisGate.notePlaybackDisruption()
         val newSong = mediaItem?.toSong()
         if (newSong != null && com.music.bitchord.feature.homeai.LocalHomeAi.isModelInstalled(this)) {
             val startIdx = exoPlayer.currentMediaItemIndex.coerceAtLeast(0)
@@ -4714,7 +4853,15 @@ class PlaybackService : MediaLibraryService() {
             /* bufferForPlaybackMs = */ START_PLAYBACK_MS,
             /* bufferForPlaybackAfterRebufferMs = */ RESUME_PLAYBACK_MS,
         )
+        .setBufferDurationsMsForLocalPlayback(
+            DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+            /* maxBufferMs = */ FAR_BUFFER_MS,
+            /* bufferForPlaybackMs = */ START_PLAYBACK_MS,
+            /* bufferForPlaybackAfterRebufferMs = */ RESUME_PLAYBACK_MS,
+        )
         .setTargetBufferBytes(FAR_BUFFER_BYTES)
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .setPrioritizeTimeOverSizeThresholdsForLocalPlayback(true)
         .setBackBuffer(/* backBufferDurationMs = */ BACK_BUFFER_MS, /* retainBackBufferFromKeyframe = */ true)
         .build()
 
@@ -5672,6 +5819,7 @@ class PlaybackService : MediaLibraryService() {
         SpeakerWarningBus.resetSessionApproval()
         VolumeHandoff.update(this, false)
         runCatching { unregisterReceiver(volumeNoisyReceiver) }
+        LocalFileWriteGuard.handler = null
         TrackGain.onGainNeeded = null
         externalAudioPopupWindow?.dismiss()
         externalAudioPopupWindow = null
@@ -6947,8 +7095,8 @@ class PlaybackService : MediaLibraryService() {
         /** Past any song, so the byte ceiling is what stops loading. */
         const val FAR_BUFFER_MS = 15 * 60 * 1000
 
-        /** ~6 minutes at 160kbps: a whole track, for all but the longest. */
-        const val FAR_BUFFER_BYTES = 8 * 1024 * 1024
+        /** ~6 minutes at 320kbps or >30s even on hi-res FLAC before byte ceiling kicks in. */
+        const val FAR_BUFFER_BYTES = 16 * 1024 * 1024
 
         /**
          * A short nudge backwards, and no more: this shares the byte ceiling

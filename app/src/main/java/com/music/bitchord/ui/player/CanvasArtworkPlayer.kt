@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -550,5 +551,63 @@ private fun mimeTypeOf(url: String): String? {
         path.endsWith(".m3u8") -> MimeTypes.APPLICATION_M3U8
         path.endsWith(".mp4") -> MimeTypes.VIDEO_MP4
         else -> null
+    }
+}
+
+/**
+ * Holds a movable [CanvasArtworkPlayer] slot across layout transitions (such as
+ * foldable unfold/fold or `heroMode` toggles) and suppresses periodic frame
+ * capture while bounds are settling, keeping the underlying ExoPlayer alive
+ * without inflating [NowPlayingScreen]'s register frame.
+ */
+@Composable
+internal fun rememberSharedCanvasSlot(
+    canvas: CanvasArtwork?,
+    isPlaying: Boolean,
+    twoColumn: Boolean,
+    landscapeSplit: Boolean,
+    docked: Boolean,
+    dockMoving: Boolean,
+    meshRefreshMs: Long?,
+    heroMode: Boolean,
+    onHeroModeExit: () -> Unit,
+    onRenderedChanged: (Boolean) -> Unit,
+    onFrameCaptured: (Bitmap?) -> Unit,
+): (@Composable (Modifier, Float, (Float) -> Unit) -> Unit)? {
+    var layoutTransitioning by remember { mutableStateOf(false) }
+    var settledLayout by remember { mutableStateOf(Triple(twoColumn, landscapeSplit, docked)) }
+    LaunchedEffect(twoColumn, landscapeSplit, docked) {
+        val current = Triple(twoColumn, landscapeSplit, docked)
+        if (current != settledLayout) {
+            settledLayout = current
+            layoutTransitioning = true
+            delay(450L)
+            layoutTransitioning = false
+        }
+    }
+    val liveOnHeroModeExit by rememberUpdatedState(onHeroModeExit)
+    LaunchedEffect(heroMode) {
+        if (!heroMode) liveOnHeroModeExit()
+    }
+    val effectiveMeshRefreshMs = if (dockMoving || layoutTransitioning) null else meshRefreshMs
+    val liveIsPlaying by rememberUpdatedState(isPlaying)
+    val liveMeshRefreshMs by rememberUpdatedState(effectiveMeshRefreshMs)
+    val liveOnRenderedChanged by rememberUpdatedState(onRenderedChanged)
+    val liveOnFrameCaptured by rememberUpdatedState(onFrameCaptured)
+    return remember(canvas) {
+        canvas?.let { clip ->
+            movableContentOf<Modifier, Float, (Float) -> Unit> { canvasModifier, bottomFade, onCover ->
+                CanvasArtworkPlayer(
+                    canvas = clip,
+                    isPlaying = liveIsPlaying,
+                    onRenderedChanged = { liveOnRenderedChanged(it) },
+                    onFrameCaptured = { liveOnFrameCaptured(it) },
+                    refreshFrameEveryMs = liveMeshRefreshMs,
+                    onCoverChanged = onCover,
+                    bottomFade = bottomFade,
+                    modifier = canvasModifier,
+                )
+            }
+        }
     }
 }

@@ -195,6 +195,13 @@ fun Modifier.lightweightLiquidGlass(
     fallbackColor: Color,
 ): Modifier {
     val useGlass = LocalLiquidGlassEnabled.current && isGlassSupported()
+    // Same answer as [liquidGlass] under "reduce dynamic blur": a solid fill, so
+    // a lightweight surface beside a full one does not look like a different material.
+    val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
+    if (useGlass && reduceDynamicBlur) {
+        return background(MaterialTheme.colorScheme.surface, shape)
+            .border(GLASS_EDGE_WIDTH, GLASS_EDGE_COLOR, shape)
+    }
     val surfaceOpacity by AppSettings.liquidGlassOpacity.collectAsStateWithLifecycle()
     val renderStyle by AppSettings.glassRenderStyle.collectAsStateWithLifecycle()
     val clarity by AppSettings.glassClarity.collectAsStateWithLifecycle()

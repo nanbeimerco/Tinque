@@ -3,7 +3,9 @@ package com.music.bitchord.feature.lyricseditor.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.music.bitchord.R
 import com.music.bitchord.data.lyrics.LyricsSource
+import com.music.bitchord.data.lyrics.align.OnDeviceLyricsAligner
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.settings.AppSettings
@@ -11,6 +13,9 @@ import com.music.bitchord.feature.lyricseditor.data.LocalLyricsManager
 import com.music.bitchord.feature.lyricseditor.domain.model.LyricsEditorSource
 import com.music.bitchord.feature.lyricseditor.domain.model.LyricsSearchResultItem
 import com.music.bitchord.feature.lyricseditor.ui.components.LyricsSelectionMode
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -18,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class LyricsEditorViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -42,6 +48,9 @@ class LyricsEditorViewModel(app: Application) : AndroidViewModel(app) {
     private val _isSearchingResults = MutableStateFlow(false)
     val isSearchingResults: StateFlow<Boolean> = _isSearchingResults.asStateFlow()
 
+    private val _aiAlignProgress = MutableStateFlow<OnDeviceLyricsAligner.AlignProgress?>(null)
+    val aiAlignProgress: StateFlow<OnDeviceLyricsAligner.AlignProgress?> = _aiAlignProgress.asStateFlow()
+
     private val _saveResult = MutableSharedFlow<Boolean>()
     val saveResult: SharedFlow<Boolean> = _saveResult.asSharedFlow()
     private val _saveOutcome = MutableSharedFlow<LocalLyricsManager.LrcSaveResult>()
@@ -53,6 +62,7 @@ class LyricsEditorViewModel(app: Application) : AndroidViewModel(app) {
     private val originalLyricsMap = mutableMapOf<LyricsEditorSource, String>()
     private val editedLyricsMap = mutableMapOf<LyricsEditorSource, String>()
     private var activeSong: Song? = null
+    private var aiAlignJob: Job? = null
 
     var lastSearchTitle: String? = null
         private set
@@ -65,6 +75,7 @@ class LyricsEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun loadSong(song: Song) {
         if (activeSong?.videoId != song.videoId) {
+            cancelAiAlign()
             clearSearchResults()
             lastSearchTitle = null
             lastSearchArtist = null
@@ -228,6 +239,65 @@ class LyricsEditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissCandidateDialog() {
         _candidateResult.value = null
+    }
+
+    fun cancelAiAlign() {
+        aiAlignJob?.cancel()
+        aiAlignJob = null
+        _aiAlignProgress.value = null
+    }
+
+    fun generateAiSyncedLyrics(song: Song) {
+        val rawText = _currentText.value
+        val app = getApplication<Application>()
+        if (rawText.isBlank()) {
+            viewModelScope.launch { _toastMessage.emit(app.getString(R.string.lyrics_ai_failed_toast)) }
+            return
+        }
+        aiAlignJob?.cancel()
+        aiAlignJob = viewModelScope.launch {
+            try {
+                val canAlign = withContext(Dispatchers.IO) {
+                    OnDeviceLyricsAligner.canAlignAudio(app, song)
+                }
+                if (!canAlign) {
+                    _toastMessage.emit(app.getString(R.string.lyrics_ai_no_audio_toast))
+                    return@launch
+                }
+                _aiAlignProgress.value = OnDeviceLyricsAligner.AlignProgress(0f, OnDeviceLyricsAligner.AlignStage.DECODING_VOCALS)
+                val result = OnDeviceLyricsAligner.align(
+                    context = app,
+                    song = song,
+                    plainText = rawText,
+                    abort = { aiAlignJob?.isActive != true },
+                    onProgress = { progress -> _aiAlignProgress.value = progress },
+                )
+                if (result != null) {
+                    val useWordSync = result.mode == OnDeviceLyricsAligner.AlignMode.CTC_WORD_AI && AppSettings.lyricsSaveWordSync.value
+                    val generatedText = if (useWordSync) result.enhancedLrc else result.lineLrc
+                    updateText(generatedText)
+                    val msgRes = if (result.mode == OnDeviceLyricsAligner.AlignMode.CTC_WORD_AI) {
+                        R.string.lyrics_ai_generated_ctc_toast
+                    } else {
+                        R.string.lyrics_ai_generated_vad_toast
+                    }
+                    _toastMessage.emit(app.getString(msgRes))
+                } else {
+                    _toastMessage.emit(app.getString(R.string.lyrics_ai_failed_toast))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                _toastMessage.emit(app.getString(R.string.lyrics_ai_failed_toast))
+            } finally {
+                _aiAlignProgress.value = null
+            }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        cancelAiAlign()
     }
 
     fun saveLyrics(song: Song) {

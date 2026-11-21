@@ -12,9 +12,11 @@ import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.durationMillis
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.stats.heatKey
 import com.music.bitchord.playback.AudioCache
 import com.music.bitchord.playback.smart.AudioDecoder
 import com.music.bitchord.playback.smart.LocalAudioSource
+import com.music.bitchord.playback.smart.PlaybackAnalysisGate
 import com.music.bitchord.playback.smart.VocalDetector
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +47,7 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
 import java.security.MessageDigest
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.exp
 import kotlin.math.min
@@ -67,10 +70,11 @@ object LocalHomeAi {
     private const val MODEL_VERSION = "music2emo-mert95m-jall-v1"
     private const val MERT_EMBEDDING_DIR = "home_ai_mert_v1"
     private const val KEY_MODEL_DECISION = "${MODEL_VERSION}_model_download_decision"
-    private const val KEY_FAILED_TRACKS = "${MODEL_VERSION}_failed_tracks_v2"
+    private const val LEGACY_KEY_FAILED_TRACKS_V2 = "${MODEL_VERSION}_failed_tracks_v2"
+    private const val KEY_FAILED_TRACKS = "${MODEL_VERSION}_failed_tracks_v3"
     private const val MAX_FAILED_TRACKS = 4096
     private const val MAX_MEMORY_EMBEDDINGS = 256
-    private const val MAX_DISK_EMBEDDINGS = 1500
+    private const val MAX_DISK_EMBEDDINGS = 3000
     private const val MAX_CONSECUTIVE_OOM = 2
     private const val OOM_RECOVERY_DELAY_MS = 2_500L
     private val LEGACY_MODEL_VERSIONS = listOf(
@@ -90,7 +94,7 @@ object LocalHomeAi {
     private const val MAJOR_MODE = 0f
     private const val DOWNLOAD_LIMIT_BYTES = 128_000_000L
     private const val ANALYSIS_BATCH_SIZE = 4
-    private const val ANALYSIS_TRACK_TIMEOUT_MS = 30_000L
+    private const val ANALYSIS_TRACK_TIMEOUT_MS = 45_000L
     private const val ANALYSIS_BATCH_PAUSE_MS = 500L
     private const val TAG = "LocalHomeAi"
 
@@ -113,6 +117,12 @@ object LocalHomeAi {
         val finished: Boolean,
         val hasMore: Boolean = false,
         val lowMemory: Boolean = false,
+    )
+
+    data class LibraryAnalysisSummary(
+        val analyzed: Int,
+        val failed: Int,
+        val total: Int,
     )
 
     private data class ModelFile(
@@ -428,6 +438,7 @@ object LocalHomeAi {
                     }.apply()
                     appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                         .remove(KEY_FAILED_TRACKS)
+                        .remove(LEGACY_KEY_FAILED_TRACKS_V2)
                         .putBoolean(KEY_MODEL_DECISION, false)
                         .apply()
                     synchronized(verificationLock) {
@@ -443,6 +454,89 @@ object LocalHomeAi {
         _downloadProgress.value = null
     }
 
+    /** Returns analyzed / failed / total readable library track counts from cached state. */
+    fun analysisSummary(context: Context): LibraryAnalysisSummary {
+        val appContext = context.applicationContext
+        val snapshot = synchronized(analysisLock) { lastLibraryQueue }
+        if (snapshot.isEmpty()) return LibraryAnalysisSummary(0, 0, 0)
+        val readable = snapshot
+            .filter { hasReadableSource(it) && !AppSettings.isSongPathExcludedFromRecommendations(it.localPath) }
+            .distinctBy { cacheKey(it) }
+        if (readable.isEmpty()) return LibraryAnalysisSummary(0, 0, 0)
+        val prefs = appContext.getSharedPreferences(PREFS_MOOD_CACHE, Context.MODE_PRIVATE)
+        val failedSet = failedKeySet(appContext)
+        var analyzed = 0
+        var failed = 0
+        for (song in readable) {
+            if (cachedFeaturesWithPrefs(prefs, song) != null) {
+                analyzed++
+            } else {
+                val key = cacheKey(song)
+                val legacyKey = legacyCacheKey(song)
+                if (key in failedSet || legacyKey in failedSet) failed++
+            }
+        }
+        return LibraryAnalysisSummary(analyzed = analyzed, failed = failed, total = readable.size)
+    }
+
+    /** Clears recorded track failures and re-queues any skipped tracks for analysis. */
+    fun retryFailedAnalysis(context: Context) {
+        val appContext = context.applicationContext
+        synchronized(failedKeysLock) {
+            failedKeysMemory = LinkedHashSet()
+        }
+        appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .remove(KEY_FAILED_TRACKS)
+            .remove(LEGACY_KEY_FAILED_TRACKS_V2)
+            .apply()
+        val queue = synchronized(analysisLock) {
+            completedLibrarySignature = null
+            lowMemoryPausedSignature = null
+            lastLibraryQueue
+        }
+        _cacheRevision.value++
+        if (queue.isNotEmpty() && isModelInstalled(appContext)) {
+            requestAnalysis(appContext, queue)
+        }
+    }
+
+    /**
+     * Deletes cached mood scores, MERT embeddings, and failure markers while keeping
+     * the downloaded ~91 MB models intact, then restarts background analysis.
+     */
+    suspend fun clearAnalysisDataAndRestart(context: Context) {
+        val appContext = context.applicationContext
+        val (runningAnalysis, queueToRestart) = synchronized(analysisLock) {
+            analysisSessionGeneration++
+            queueState.clear()
+            completedLibrarySignature = null
+            lowMemoryPausedSignature = null
+            analysisJob to lastLibraryQueue
+        }
+        runningAnalysis?.cancelAndJoin()
+        classificationMutex.withLock {
+            withContext(Dispatchers.IO) {
+                embeddingDirectory(appContext).deleteRecursively()
+                synchronized(embeddingLock) { embeddingCache.clear() }
+                featuresMemoryCache.clear()
+                synchronized(failedKeysLock) { failedKeysMemory = LinkedHashSet() }
+                val cache = appContext.getSharedPreferences(PREFS_MOOD_CACHE, Context.MODE_PRIVATE)
+                cache.edit().apply {
+                    cache.all.keys.filter { it.startsWith("${MODEL_VERSION}_") }.forEach(::remove)
+                }.apply()
+                appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                    .remove(KEY_FAILED_TRACKS)
+                    .remove(LEGACY_KEY_FAILED_TRACKS_V2)
+                    .apply()
+                _cacheRevision.value++
+            }
+        }
+        _analysisProgress.value = null
+        if (queueToRestart.isNotEmpty() && isModelInstalled(appContext)) {
+            requestAnalysis(appContext, queueToRestart)
+        }
+    }
+
     private fun librarySignature(songs: List<Song>): String {
         val keys = songs.asSequence()
             .filter(::hasReadableSource)
@@ -453,22 +547,99 @@ object LocalHomeAi {
         return digest(keys)
     }
 
+    private fun stableHash64(value: String): Long {
+        var hash = -0x340d631b7bdddcdbL
+        for (i in value.indices) {
+            hash = (hash xor value[i].code.toLong()) * 0x100000001b3L
+        }
+        return hash
+    }
+
+    /**
+     * Orders library tracks for background mood analysis so listened/favorited songs
+     * are analyzed first, followed by unplayed tracks interleaved evenly across albums
+     * instead of clustering newly added tracks.
+     */
+    internal fun prioritizeLibraryForAnalysis(
+        songs: List<Song>,
+        heatLevels: Map<String, Float>,
+        favoriteIds: Set<String>,
+        playCounts: Map<String, Int>,
+    ): List<Song> {
+        if (songs.size <= 1) return songs
+        data class Entry(val song: Song, val heat: Float, val isFav: Boolean, val plays: Int, val idHash: Long)
+        val engaged = ArrayList<Entry>()
+        val unplayed = ArrayList<Song>()
+        for (song in songs) {
+            val heat = heatLevels[song.heatKey()] ?: heatLevels[song.videoId] ?: 0f
+            val isFav = (song.localUri ?: song.videoId) in favoriteIds || song.videoId in favoriteIds
+            val plays = playCounts[song.localUri ?: song.videoId] ?: playCounts[song.videoId] ?: 0
+            if (heat > 0f || isFav || plays > 0) {
+                engaged.add(Entry(song, heat, isFav, plays, stableHash64(songIdentity(song))))
+            } else {
+                unplayed.add(song)
+            }
+        }
+        engaged.sortWith(
+            compareByDescending<Entry> { it.heat }
+                .thenByDescending { if (it.isFav) 1 else 0 }
+                .thenByDescending { it.plays }
+                .thenBy { it.idHash },
+        )
+        val grouped = unplayed.groupBy { s ->
+            s.albumName?.trim()?.lowercase(Locale.ROOT)?.takeIf(String::isNotBlank)
+                ?: s.artist.trim().lowercase(Locale.ROOT).takeIf(String::isNotBlank)
+                ?: songIdentity(s)
+        }
+        val buckets = grouped.entries
+            .sortedBy { stableHash64(it.key) }
+            .map { (_, list) ->
+                list.sortedBy { stableHash64(songIdentity(it)) }
+            }
+        val maxGroupSize = buckets.maxOfOrNull { it.size } ?: 0
+        val interleaved = ArrayList<Song>(unplayed.size)
+        for (round in 0 until maxGroupSize) {
+            for (bucket in buckets) {
+                if (round < bucket.size) interleaved.add(bucket[round])
+            }
+        }
+        val out = ArrayList<Song>(songs.size)
+        engaged.forEach { out.add(it.song) }
+        out.addAll(interleaved)
+        return out
+    }
+
     /** Queues background mood (and optional middle-window vocal) analysis for [prioritizedSongs]. */
     fun requestAnalysis(context: Context, prioritizedSongs: List<Song>) {
         if (!isModelInstalled(context)) return
         val appContext = context.applicationContext
         val readable = prioritizedSongs
-            .filter(::hasReadableSource)
+            .filter { hasReadableSource(it) && !AppSettings.isSongPathExcludedFromRecommendations(it.localPath) }
             .distinctBy { cacheKey(it) }
         if (readable.isEmpty()) return
         val signature = librarySignature(readable)
-        val pending = readable.filter {
-            cachedFeatures(appContext, it) == null && !hasAnalysisFailure(appContext, it)
+        val prefs = appContext.getSharedPreferences(PREFS_MOOD_CACHE, Context.MODE_PRIVATE)
+        val failedSet = failedKeySet(appContext)
+        var cachedCount = 0
+        var alreadyFailed = 0
+        val pending = ArrayList<Song>()
+        for (song in readable) {
+            if (cachedFeaturesWithPrefs(prefs, song) != null) {
+                cachedCount++
+            } else {
+                val key = cacheKey(song)
+                val legacyKey = legacyCacheKey(song)
+                if (key in failedSet || legacyKey in failedSet) {
+                    alreadyFailed++
+                } else {
+                    pending.add(song)
+                }
+            }
         }
-        val alreadyFailed = readable.count { hasAnalysisFailure(appContext, it) }
+        Log.i(TAG, "requestAnalysis: total=${readable.size} cached=$cachedCount failed=$alreadyFailed pending=${pending.size}")
 
         synchronized(analysisLock) {
-            if (prioritizedSongs.size >= lastLibraryQueue.size && prioritizedSongs.isNotEmpty()) {
+            if (prioritizedSongs.isNotEmpty()) {
                 lastLibraryQueue = prioritizedSongs
             }
             activeContext = appContext
@@ -509,7 +680,7 @@ object LocalHomeAi {
         if (!isModelInstalled(context) || playbackSongs.isEmpty()) return
         val appContext = context.applicationContext
         val readablePlayback = playbackSongs
-            .filter(::hasReadableSource)
+            .filter { hasReadableSource(it) && !AppSettings.isSongPathExcludedFromRecommendations(it.localPath) }
             .distinctBy { cacheKey(it) }
         if (readablePlayback.isEmpty()) return
         val pendingPlayback = readablePlayback.filter {
@@ -537,6 +708,7 @@ object LocalHomeAi {
         var consecutiveOom = 0
         try {
             while (currentCoroutineContext().isActive) {
+                PlaybackAnalysisGate.awaitQuietWindow()
                 val next = synchronized(analysisLock) {
                     if (generation != analysisSessionGeneration) return@synchronized null
                     val ctx = activeContext ?: return@synchronized null
@@ -544,7 +716,10 @@ object LocalHomeAi {
                 } ?: break
 
                 val (appContext, key, song) = next
-                if (cachedFeatures(appContext, song) != null || hasAnalysisFailure(appContext, song)) {
+                if (AppSettings.isSongPathExcludedFromRecommendations(song.localPath) ||
+                    cachedFeatures(appContext, song) != null ||
+                    hasAnalysisFailure(appContext, song)
+                ) {
                     val stillRunning = synchronized(analysisLock) {
                         if (generation != analysisSessionGeneration) return@synchronized false
                         queueState.markTrackDone(key, succeeded = true, wasLowMemory = false)
@@ -569,7 +744,6 @@ object LocalHomeAi {
                         consecutiveOom = 0
                     }
                 } catch (_: TimeoutCancellationException) {
-                    markAnalysisFailure(appContext, song)
                     consecutiveOom = 0
                     Log.w(TAG, "Mood analysis timed out for a track")
                 } catch (cancelled: CancellationException) {
@@ -577,7 +751,6 @@ object LocalHomeAi {
                 } catch (_: OutOfMemoryError) {
                     trackLowMemory = true
                     consecutiveOom++
-                    markAnalysisFailure(appContext, song)
                 } catch (error: Exception) {
                     markAnalysisFailure(appContext, song)
                     consecutiveOom = 0
@@ -728,6 +901,10 @@ object LocalHomeAi {
         }
         val bytes = runCatching { file.readBytes() }.getOrNull() ?: return null
         if (bytes.size != MERT_EMBEDDING_DIM * 4) return null
+        val nowMs = System.currentTimeMillis()
+        if (nowMs - file.lastModified() > 24L * 60L * 60L * 1000L) {
+            runCatching { file.setLastModified(nowMs) }
+        }
         val buf = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
         val vec = FloatArray(MERT_EMBEDDING_DIM)
         buf.get(vec)
@@ -773,9 +950,12 @@ object LocalHomeAi {
 
     private fun failedKeySet(context: Context): LinkedHashSet<String> = synchronized(failedKeysLock) {
         failedKeysMemory?.let { return LinkedHashSet(it) }
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.contains(LEGACY_KEY_FAILED_TRACKS_V2)) {
+            prefs.edit().remove(LEGACY_KEY_FAILED_TRACKS_V2).apply()
+        }
         val loaded = LinkedHashSet(
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getStringSet(KEY_FAILED_TRACKS, emptySet()).orEmpty(),
+            prefs.getStringSet(KEY_FAILED_TRACKS, emptySet()).orEmpty(),
         )
         failedKeysMemory = loaded
         LinkedHashSet(loaded)
@@ -824,22 +1004,26 @@ object LocalHomeAi {
             runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND) }
             try {
                 cachedFeatures(context, song)?.let { return@withContext it }
-                val source = openReadableSource(context, song) ?: return@withContext null
+                val initialSource = openReadableSource(context, song) ?: return@withContext null
                 val operationContext = currentCoroutineContext()
                 val start = (song.localStartMs ?: 0L).coerceAtLeast(0L) / 1000.0
                 val cueEnd = song.localEndMs?.takeIf { it > (song.localStartMs ?: 0L) }?.div(1000.0)
                 val metadataDuration = song.durationMillis().takeIf { it > 0L }?.div(1000.0)
 
-                val audioSegments = source.use { dataSource ->
-                    val containerDuration = AudioDecoder.containerDurationSeconds(dataSource)
-                    val end = listOfNotNull(containerDuration, cueEnd, metadataDuration?.let { start + it })
-                        .minOrNull() ?: (start + ANALYSIS_WINDOW_SECONDS)
-                    val windows = analysisWindows(start, end)
-                    val midIndex = windows.size / 2
-                    val needVocal = VocalDetector.needsAnalysis(context, song)
+                val containerDuration = initialSource.use { AudioDecoder.containerDurationSeconds(it) }
+                val end = listOfNotNull(containerDuration, cueEnd, metadataDuration?.let { start + it })
+                    .minOrNull() ?: (start + ANALYSIS_WINDOW_SECONDS)
+                val windows = analysisWindows(start, end)
+                val midIndex = windows.size / 2
+                val needVocal = VocalDetector.needsAnalysis(context, song)
 
-                    windows.mapIndexedNotNull { idx, (regionStart, regionEnd) ->
-                        operationContext.ensureActive()
+                // Open a dedicated MediaDataSource per MediaExtractor pass because platform
+                // MediaExtractor.release() closes its MediaDataSource FD (avoiding EBADF).
+                val audioSegments = windows.mapIndexedNotNull { idx, (regionStart, regionEnd) ->
+                    operationContext.ensureActive()
+                    PlaybackAnalysisGate.awaitQuietWindow()
+                    val windowSource = openReadableSource(context, song) ?: return@mapIndexedNotNull null
+                    windowSource.use { dataSource ->
                         if (needVocal && idx == midIndex) {
                             val stereo = AudioDecoder.decodeRegionStereo(dataSource, regionStart, regionEnd) {
                                 !operationContext.isActive
@@ -849,7 +1033,10 @@ object LocalHomeAi {
                             runCatching {
                                 VocalDetector.classifyStereoWindow(context, song, pcm.left, pcm.right, pcm.sampleRate)
                             }
-                            val mono = FloatArray(pcm.left.size) { i -> (pcm.left[i] + pcm.right[i]) * 0.5f }
+                            val mono = pcm.left
+                            for (i in mono.indices) {
+                                mono[i] = (mono[i] + pcm.right[i]) * 0.5f
+                            }
                             AudioDecoder.resampleLinear(mono, pcm.sampleRate, SAMPLE_RATE.toDouble())
                         } else {
                             val mono = AudioDecoder.decodeRegion(dataSource, regionStart, regionEnd) {
@@ -865,6 +1052,7 @@ object LocalHomeAi {
                     markAnalysisFailure(context, song)
                     return@withContext null
                 }
+                PlaybackAnalysisGate.awaitQuietWindow()
                 val prediction = withModels(context) { runtime -> runtime.predict(audioSegments) }
                 saveFeatures(context, song, prediction.features)
                 saveEmbedding(context, song, prediction.mertEmbedding)
@@ -1012,15 +1200,22 @@ object LocalHomeAi {
 
         private fun inferMert(env: OrtEnvironment, samples: FloatArray): FloatArray? {
             if (samples.isEmpty()) return null
-            val normalized = normalizeWaveform(samples)
+            val normalized = normalizeWaveformInPlace(samples)
             return OnnxTensor.createTensor(env, FloatBuffer.wrap(normalized), longArrayOf(1L, normalized.size.toLong())).use { input ->
                 mert.run(mapOf("input_values" to input)).use { result ->
                     val layer5Index = mert.outputNames.indexOf("layer_norm_13")
                     val layer6Index = mert.outputNames.indexOf("layer_norm_15")
                     check(layer5Index >= 0 && layer6Index >= 0) { "MERT output layer order is invalid" }
-                    val first = meanFrameEmbedding(result[layer5Index].value)
-                    val second = meanFrameEmbedding(result[layer6Index].value)
-                    if (first == null || second == null) null else first + second
+                    val first = meanFrameEmbedding(result[layer5Index])
+                    val second = meanFrameEmbedding(result[layer6Index])
+                    if (first == null || second == null) {
+                        null
+                    } else {
+                        FloatArray(MERT_EMBEDDING_DIM).also { combined ->
+                            first.copyInto(combined, destinationOffset = 0)
+                            second.copyInto(combined, destinationOffset = MERT_FEATURE_SIZE)
+                        }
+                    }
                 }
             }
         }
@@ -1047,45 +1242,117 @@ object LocalHomeAi {
                     check(moodsIndex >= 0) { "Music2Emo mood output is missing" }
                     val outputIndex = music2emo.outputNames.indexOf("valence_arousal")
                     check(outputIndex >= 0) { "Music2Emo valence/arousal output is missing" }
-                    val moods = flattenFloat(result[moodsIndex].value)
+                    val moods = readOutputFloats(result[moodsIndex])
                     check(moods.size == 56) { "Music2Emo mood output has an unexpected label count" }
-                    val valenceArousal = flattenFloat(result[outputIndex].value)
+                    val valenceArousal = readOutputFloats(result[outputIndex])
                     check(valenceArousal.size >= 2) { "Music2Emo returned no valence/arousal scores" }
                     Music2EmoOutput(moods, valenceArousal)
                 }
             } } } }
         }
 
-        private fun meanFrameEmbedding(value: Any?): FloatArray? {
-            val flattened = flattenFloat(value)
-            if (flattened.isEmpty() || flattened.size % MERT_FEATURE_SIZE != 0) return null
-            val frames = flattened.size / MERT_FEATURE_SIZE
-            if (frames <= 0) return null
-            val mean = FloatArray(MERT_FEATURE_SIZE)
-            for (frame in 0 until frames) {
-                val offset = frame * MERT_FEATURE_SIZE
-                for (dimension in 0 until MERT_FEATURE_SIZE) mean[dimension] += flattened[offset + dimension]
+        private fun meanFrameEmbedding(output: ai.onnxruntime.OnnxValue): FloatArray? {
+            (output as? OnnxTensor)?.floatBuffer?.let { buf ->
+                val total = buf.remaining()
+                if (total <= 0 || total % MERT_FEATURE_SIZE != 0) return null
+                val frames = total / MERT_FEATURE_SIZE
+                val mean = FloatArray(MERT_FEATURE_SIZE)
+                val base = buf.position()
+                for (frame in 0 until frames) {
+                    val offset = base + frame * MERT_FEATURE_SIZE
+                    for (dimension in 0 until MERT_FEATURE_SIZE) {
+                        mean[dimension] += buf.get(offset + dimension)
+                    }
+                }
+                for (dimension in mean.indices) mean[dimension] /= frames
+                return mean
             }
-            for (dimension in mean.indices) mean[dimension] /= frames
-            return mean
+            return meanFrameEmbeddingFromValue(output.value)
         }
 
         companion object {
-            private fun normalizeWaveform(samples: FloatArray): FloatArray {
-                val mean = samples.average().toFloat()
+            private fun normalizeWaveformInPlace(samples: FloatArray): FloatArray {
+                var sum = 0.0
+                for (sample in samples) sum += sample
+                val mean = (sum / samples.size).toFloat()
                 var variance = 0.0
-                samples.forEach { sample ->
+                for (sample in samples) {
                     val centered = sample - mean
                     variance += centered * centered
                 }
                 val scale = sqrt(variance / samples.size + 1e-7).toFloat()
-                return FloatArray(samples.size) { (samples[it] - mean) / scale }
+                for (i in samples.indices) {
+                    samples[i] = (samples[i] - mean) / scale
+                }
+                return samples
             }
 
-            private fun flattenFloat(value: Any?): FloatArray = when (value) {
-                is FloatArray -> value
-                is Array<*> -> value.flatMap { flattenFloat(it).asIterable() }.toFloatArray()
-                else -> FloatArray(0)
+            private fun meanFrameEmbeddingFromValue(value: Any?): FloatArray? {
+                val mean = FloatArray(MERT_FEATURE_SIZE)
+                var frames = 0
+                fun accumulate(node: Any?): Boolean = when (node) {
+                    is FloatArray -> {
+                        if (node.isEmpty() || node.size % MERT_FEATURE_SIZE != 0) {
+                            false
+                        } else {
+                            val localFrames = node.size / MERT_FEATURE_SIZE
+                            for (frame in 0 until localFrames) {
+                                val offset = frame * MERT_FEATURE_SIZE
+                                for (d in 0 until MERT_FEATURE_SIZE) {
+                                    mean[d] += node[offset + d]
+                                }
+                            }
+                            frames += localFrames
+                            true
+                        }
+                    }
+                    is Array<*> -> {
+                        for (child in node) {
+                            if (!accumulate(child)) return false
+                        }
+                        true
+                    }
+                    else -> false
+                }
+                if (!accumulate(value) || frames <= 0) return null
+                for (d in mean.indices) mean[d] /= frames
+                return mean
+            }
+
+            private fun readOutputFloats(output: ai.onnxruntime.OnnxValue): FloatArray {
+                (output as? OnnxTensor)?.floatBuffer?.let { buf ->
+                    val dup = buf.duplicate()
+                    return FloatArray(dup.remaining()).also { dup.get(it) }
+                }
+                val value = output.value
+                val count = countFloats(value)
+                if (count <= 0) return FloatArray(0)
+                val out = FloatArray(count)
+                copyFloats(value, out, 0)
+                return out
+            }
+
+            private fun countFloats(node: Any?): Int = when (node) {
+                is FloatArray -> node.size
+                is Array<*> -> {
+                    var sum = 0
+                    for (child in node) sum += countFloats(child)
+                    sum
+                }
+                else -> 0
+            }
+
+            private fun copyFloats(node: Any?, out: FloatArray, start: Int): Int = when (node) {
+                is FloatArray -> {
+                    node.copyInto(out, start)
+                    start + node.size
+                }
+                is Array<*> -> {
+                    var cursor = start
+                    for (child in node) cursor = copyFloats(child, out, cursor)
+                    cursor
+                }
+                else -> start
             }
         }
     }

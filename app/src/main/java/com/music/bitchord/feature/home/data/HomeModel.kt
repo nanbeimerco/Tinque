@@ -84,6 +84,72 @@ data class HomeContent(
  */
 object HomeModel {
     private const val DAY_MS = 24L * 60 * 60 * 1000
+    private const val MAX_PROFILE_EMBEDDINGS = 50
+    private const val MAX_DISCOVERY_EMBEDDINGS = 100
+    private const val MIN_AI_SHELF_SONGS = 2
+    private const val MIN_AI_MIX_SONGS = 6
+    private const val RECENT_ADDITION_DAYS = 30L
+
+    @Volatile
+    private var cachedSnapshot: HomeContent? = null
+
+    @Volatile
+    private var cachedWithSongs: Boolean = false
+
+    @Volatile
+    private var cachedSettingsSignature: String? = null
+
+    fun latestContent(): HomeContent? = cachedSnapshot
+
+    fun latestHadSongs(): Boolean = cachedWithSongs
+
+    private fun settingsSignature(
+        dailyMixBoost: Boolean,
+        excludeInstrumentalsInMixes: Boolean,
+        excludeInstrumentalsInAiShelves: Boolean,
+        excludedFolders: Set<String>,
+    ): String = buildString {
+        append(dailyMixBoost).append('|')
+        append(excludeInstrumentalsInMixes).append('|')
+        append(excludeInstrumentalsInAiShelves).append('|')
+        excludedFolders.sorted().forEach { append(it).append('\n') }
+    }
+
+    fun warm(
+        context: Context,
+        songs: List<Song>,
+        heat: Map<String, HeatInfo>,
+        playlists: List<LocalPlaylist>,
+        favoriteIds: Set<String>,
+        favoritesName: String,
+        libraryEntries: List<com.music.bitchord.feature.library.data.LibraryEntry> = emptyList(),
+        dailyMixBoost: Boolean = AppSettings.homeHeatDailyMixBoost.value,
+        excludeInstrumentalsInMixes: Boolean = AppSettings.excludeInstrumentalsInHomeMixes.value,
+        excludeInstrumentalsInAiShelves: Boolean = AppSettings.excludeInstrumentalsInHomeAiShelves.value,
+        excludedFolders: Set<String> = AppSettings.recommendationExcludedFolders.value,
+    ): HomeContent {
+        val signature = settingsSignature(
+            dailyMixBoost = dailyMixBoost,
+            excludeInstrumentalsInMixes = excludeInstrumentalsInMixes,
+            excludeInstrumentalsInAiShelves = excludeInstrumentalsInAiShelves,
+            excludedFolders = excludedFolders,
+        )
+        val current = cachedSnapshot
+        if (current != null && (cachedWithSongs || songs.isEmpty()) && cachedSettingsSignature == signature) return current
+        return compute(
+            context = context,
+            songs = songs,
+            heat = heat,
+            playlists = playlists,
+            favoriteIds = favoriteIds,
+            favoritesName = favoritesName,
+            libraryEntries = libraryEntries,
+            dailyMixBoost = dailyMixBoost,
+            excludeInstrumentalsInMixes = excludeInstrumentalsInMixes,
+            excludeInstrumentalsInAiShelves = excludeInstrumentalsInAiShelves,
+            excludedFolders = excludedFolders,
+        )
+    }
 
     /**
      * Every song the Library holds, once: songs added (stars included — a
@@ -141,23 +207,78 @@ object HomeModel {
         dailyMixBoost: Boolean = AppSettings.homeHeatDailyMixBoost.value,
         today: LocalDate = LocalDate.now(),
         now: Long = System.currentTimeMillis(),
+        excludeInstrumentalsInMixes: Boolean = AppSettings.excludeInstrumentalsInHomeMixes.value,
+        excludeInstrumentalsInAiShelves: Boolean = AppSettings.excludeInstrumentalsInHomeAiShelves.value,
+        excludedFolders: Set<String> = AppSettings.recommendationExcludedFolders.value,
     ): HomeContent {
+        val recSongs = if (excludedFolders.isEmpty()) {
+            songs
+        } else {
+            songs.filterNot { AppSettings.isSongPathExcludedFromRecommendations(it.localPath, excludedFolders) }
+        }
         val aiReady = LocalHomeAi.isModelInstalled(context)
-        val moodFeatures = if (aiReady) LocalHomeAi.cachedFeaturesByVideoId(context, songs) else emptyMap()
-        val embeddingsByKey = if (aiReady && moodFeatures.size >= 4) {
-            songs.asSequence()
-                .filter { moodFeatures.containsKey(it.videoId) }
-                .sortedByDescending { s ->
-                    val h = heat[s.heatKey()]
-                    val isFav = (s.localUri ?: s.videoId) in favoriteIds || s.videoId in favoriteIds
-                    (if (isFav) 100f else 0f) + (h?.level ?: 0f) * 10f + if ((h?.plays ?: 0) == 0) 5f else 0f
+        val moodFeatures = if (aiReady) LocalHomeAi.cachedFeaturesByVideoId(context, recSongs) else emptyMap()
+        val statsBySong = songs.associateWith { LocalPlayStatsStore.getStats(context, it.localUri ?: it.videoId) }
+        val instrumentalIds = if (excludeInstrumentalsInMixes || excludeInstrumentalsInAiShelves) {
+            buildSet {
+                for (song in recSongs) {
+                    if (com.music.bitchord.playback.isTier1OrCachedInstrumental(context, song)) {
+                        add(song.videoId)
+                        add(song.heatKey())
+                    }
                 }
-                .take(150)
+            }
+        } else {
+            emptySet()
+        }
+        val embeddingsByKey = if (aiReady && moodFeatures.size >= 4) {
+            val seed = today.toEpochDay()
+            val analyzedSongs = recSongs.filter { moodFeatures.containsKey(it.videoId) }
+            val profileSongs = analyzedSongs.asSequence()
+                .mapNotNull { s ->
+                    val h = heat[s.heatKey()]
+                    val st = statsBySong[s]
+                    val isFav = (s.localUri ?: s.videoId) in favoriteIds || s.videoId in favoriteIds
+                    val plays = h?.plays ?: st?.playedCount ?: 0
+                    val level = h?.level ?: 0f
+                    if (!(isFav || level >= 1.2f || plays >= 2)) return@mapNotNull null
+                    val score = (if (isFav) 100f else 0f) + level * 10f + minOf(plays, 10) * 1.5f
+                    s to score
+                }
+                .sortedByDescending { it.second }
+                .take(MAX_PROFILE_EMBEDDINGS)
+                .map { it.first }
+                .toList()
+            val profileIds = profileSongs.mapTo(HashSet()) { it.videoId }
+            val skipInstrumentalDiscovery = excludeInstrumentalsInMixes && excludeInstrumentalsInAiShelves
+            val discoverySongs = analyzedSongs.asSequence()
+                .filter { s ->
+                    if (s.videoId in profileIds) return@filter false
+                    if (skipInstrumentalDiscovery && (s.videoId in instrumentalIds || s.heatKey() in instrumentalIds)) {
+                        return@filter false
+                    }
+                    val h = heat[s.heatKey()]
+                    val st = statsBySong[s]
+                    val isFav = (s.localUri ?: s.videoId) in favoriteIds || s.videoId in favoriteIds
+                    val plays = h?.plays ?: st?.playedCount ?: 0
+                    val level = h?.level ?: 0f
+                    !isFav && plays <= 5 && level < 3.0f && (h?.skips ?: 0) < 2
+                }
+                .sortedByDescending { s -> dailyJitter(seed, "emb:${s.videoId}", 1f) }
+                .take(MAX_DISCOVERY_EMBEDDINGS)
+                .toList()
+            (profileSongs + discoverySongs)
                 .mapNotNull { song -> LocalHomeAi.loadEmbedding(context, song)?.let { song.videoId to it } }
                 .toMap()
         } else {
             emptyMap()
         }
+        val signature = settingsSignature(
+            dailyMixBoost = dailyMixBoost,
+            excludeInstrumentalsInMixes = excludeInstrumentalsInMixes,
+            excludeInstrumentalsInAiShelves = excludeInstrumentalsInAiShelves,
+            excludedFolders = excludedFolders,
+        )
         return computeWithStats(
             songs = songs,
             heat = heat,
@@ -170,8 +291,16 @@ object HomeModel {
             now = now,
             moodFeatures = moodFeatures,
             embeddingsByKey = embeddingsByKey,
-            statsProvider = { song -> LocalPlayStatsStore.getStats(context, song.localUri ?: song.videoId) },
-        )
+            statsProvider = { song -> statsBySong[song] ?: com.music.bitchord.feature.localsongactions.domain.model.LocalPlayStats.Empty },
+            excludeInstrumentalsInMixes = excludeInstrumentalsInMixes,
+            excludeInstrumentalsInAiShelves = excludeInstrumentalsInAiShelves,
+            instrumentalIds = instrumentalIds,
+            excludedFolders = excludedFolders,
+        ).also { computed ->
+            cachedSnapshot = computed
+            cachedWithSongs = songs.isNotEmpty()
+            cachedSettingsSignature = signature
+        }
     }
 
     internal fun computeWithStats(
@@ -189,10 +318,23 @@ object HomeModel {
         statsProvider: (Song) -> com.music.bitchord.feature.localsongactions.domain.model.LocalPlayStats = {
             com.music.bitchord.feature.localsongactions.domain.model.LocalPlayStats.Empty
         },
+        excludeInstrumentalsInMixes: Boolean = false,
+        excludeInstrumentalsInAiShelves: Boolean = false,
+        instrumentalIds: Set<String> = emptySet(),
+        excludedFolders: Set<String> = emptySet(),
     ): HomeContent {
         if (songs.isEmpty()) return HomeContent(week = ListeningStats.recentDays(7))
         val seed = today.toEpochDay()
-        val byKey = songs.associateBy { it.heatKey() }
+        val recSongs = if (excludedFolders.isEmpty()) {
+            songs
+        } else {
+            songs.filterNot { AppSettings.isSongPathExcludedFromRecommendations(it.localPath, excludedFolders) }
+        }
+        fun isInstrumentalSong(song: Song): Boolean =
+            song.videoId in instrumentalIds ||
+                song.heatKey() in instrumentalIds ||
+                com.music.bitchord.playback.isMetadataOrCachedInstrumental(song)
+        val byKey = recSongs.associateBy { it.heatKey() }
         fun levelOf(song: Song): Float = heat[song.heatKey()]?.level ?: 0f
         val stats = songs.associateWith(statsProvider)
         fun played(song: Song): Boolean = (stats[song]?.playedCount ?: 0) > 0 || (heat[song.heatKey()]?.plays ?: 0) > 0
@@ -227,7 +369,7 @@ object HomeModel {
             (info.trend < 0 || now - info.lastPlayed > 14L * DAY_MS) && info.peak >= 2.5f && info.level < info.peak - 0.6f
         }.sortedByDescending { it.second.peak }.map { it.first }.take(20)
 
-        val albums = songs.filter { !it.albumName.isNullOrBlank() }
+        val albums = recSongs.filter { !it.albumName.isNullOrBlank() }
             .groupBy { it.albumName!!.trim().lowercase(Locale.ROOT) }
         val albumLevels = albums.mapValues { (_, list) -> HeatStore.groupLevel(list.map(::levelOf)) }
         val heatAlbums = albums.entries
@@ -247,7 +389,7 @@ object HomeModel {
                     level = albumLevels[key] ?: 0f,
                 )
             }
-        val artists = songs.filter { it.artist.isNotBlank() }.groupBy { it.artist.trim().lowercase(Locale.ROOT) }
+        val artists = recSongs.filter { it.artist.isNotBlank() }.groupBy { it.artist.trim().lowercase(Locale.ROOT) }
         val heatArtists = artists.entries
             .map { (key, list) -> Triple(key, list, HeatStore.groupLevel(list.map(::levelOf))) }
             .filter { it.third >= 0.8f }
@@ -264,14 +406,14 @@ object HomeModel {
                     level = level,
                 )
             }
-        val favoriteSongs = songs.filter { (it.localUri ?: it.videoId) in favoriteIds || it.videoId in favoriteIds }
+        val favoriteSongs = recSongs.filter { (it.localUri ?: it.videoId) in favoriteIds || it.videoId in favoriteIds }
         val heatPlaylists = buildList {
             if (favoriteSongs.isNotEmpty()) {
                 add(HomePlaylist(null, favoritesName, null, favoriteSongs,
                     HeatStore.playlistLevel(PlaySource.FAVORITES_KEY, favoriteSongs.map(::levelOf))))
             }
             playlists.forEach { p ->
-                val list = resolvePlaylistSongs(p, songs)
+                val list = resolvePlaylistSongs(p, recSongs)
                 if (list.isEmpty()) return@forEach
                 add(HomePlaylist(p.id, p.name, p.customCoverUrl ?: p.coverUrl ?: list.firstNotNullOfOrNull { it.thumbnailUrl },
                     list, HeatStore.playlistLevel(PlaySource.playlistKey(p.id), list.map(::levelOf))))
@@ -322,7 +464,7 @@ object HomeModel {
         val capsule = listOf(12, 6, 3).firstNotNullOfOrNull { back ->
             val month = thisMonth.minusMonths(back.toLong())
             if (month !in months) return@firstNotNullOfOrNull null
-            val byVideoId = songs.associateBy { it.videoId }
+            val byVideoId = recSongs.associateBy { it.videoId }
             val list = ListeningStats.tracksOf(month)
                 .filter { it.ms >= 60_000L }
                 .mapNotNull { byVideoId[it.id] }
@@ -338,7 +480,7 @@ object HomeModel {
         ) { (key, _) ->
             ((albumLevels[key] ?: 2.5f) - 2.0f).coerceAtLeast(0.3f).toDouble().pow(1.4)
         }
-        val deepCuts = warmAlbums
+        val allDeepCuts = warmAlbums
             .flatMap { (key, list) ->
                 val plays = list.associateWith { heat[it.heatKey()]?.plays ?: stats[it]?.playedCount ?: 0 }
                 val average = plays.values.average()
@@ -349,7 +491,7 @@ object HomeModel {
                     playedLowTracks.shuffled(trackRnd).sortedBy { plays[it] ?: 0 }
                 picked.take(2).map { DeepCut(it, it.albumName!!.trim()) }
             }
-            .take(20)
+        val deepCuts = allDeepCuts.take(20)
 
         // ── This time of day ──
         val slot = HeatStore.slotOf(now)
@@ -360,10 +502,10 @@ object HomeModel {
             }
             .sortedByDescending { it.second.slots[slot] }
             .map { it.first }
-        val slotMoodCentroid = computeSlotMoodCentroid(songs, heat, moodFeatures, slot)
-        val timeOfDay = if (slotMoodCentroid != null && moodFeatures.size >= 4) {
+        val slotMoodCentroid = computeSlotMoodCentroid(recSongs, heat, moodFeatures, slot)
+        val aiTimePicksAll = if (slotMoodCentroid != null && moodFeatures.size >= 4) {
             val habitIds = slotHabit.mapTo(HashSet()) { it.videoId }
-            val aiTimePicks = songs.asSequence()
+            recSongs.asSequence()
                 .filter { it.videoId !in habitIds }
                 .mapNotNull { song ->
                     val feat = moodFeatures[song.videoId] ?: return@mapNotNull null
@@ -384,34 +526,94 @@ object HomeModel {
                 .sortedByDescending { it.second }
                 .map { it.first }
                 .toList()
-            (slotHabit + aiTimePicks).take(30)
+        } else {
+            emptyList()
+        }
+        val timeOfDay = if (aiTimePicksAll.isNotEmpty()) {
+            val shelfCandidates = if (excludeInstrumentalsInAiShelves) {
+                aiTimePicksAll.filterNot(::isInstrumentalSong)
+            } else {
+                aiTimePicksAll
+            }
+            val diversifiedAiPicks = selectWithDiversity(
+                shelfCandidates,
+                limit = 30,
+                maxPerAlbum = 2,
+                maxPerArtist = 3,
+            )
+            (slotHabit + diversifiedAiPicks).take(30)
         } else {
             slotHabit.take(30)
         }
 
         // ── Music2EMO Mood Shelves & Mixes (hidden until >= 4 analyzed tracks) ──
+        val warmIds = heatSongs.take(8).mapTo(HashSet()) { it.videoId }
         val (forYouSongs, upliftingSongs, calmSongs) = computeAiRecommendations(
-            songs = songs,
+            songs = recSongs,
             heat = heat,
             stats = stats,
             favoriteIds = favoriteIds,
             moodFeatures = moodFeatures,
             embeddingsByKey = embeddingsByKey,
             seed = seed,
+            now = now,
             dailyMixBoost = dailyMixBoost,
-            warmIds = heatSongs.take(8).mapTo(HashSet()) { it.videoId },
+            warmIds = warmIds,
+            excludeInstrumentals = excludeInstrumentalsInAiShelves,
+            isInstrumental = ::isInstrumentalSong,
         )
+
+        val (mixForYouSongs, mixUpliftingSongs, mixCalmSongs) = if (
+            excludeInstrumentalsInMixes == excludeInstrumentalsInAiShelves
+        ) {
+            AiShelves(forYouSongs, upliftingSongs, calmSongs)
+        } else {
+            computeAiRecommendations(
+                songs = recSongs,
+                heat = heat,
+                stats = stats,
+                favoriteIds = favoriteIds,
+                moodFeatures = moodFeatures,
+                embeddingsByKey = embeddingsByKey,
+                seed = seed,
+                now = now,
+                dailyMixBoost = dailyMixBoost,
+                warmIds = warmIds,
+                excludeInstrumentals = excludeInstrumentalsInMixes,
+                isInstrumental = ::isInstrumentalSong,
+            )
+        }
 
         // ── Coverage: how much of the *Library* (what was added to it, not every
         // file on the device) the last three months reached ──
         val since = now - 90L * DAY_MS
-        val librarySongs = librarySongsOf(libraryEntries, songs)
+        val librarySongs = librarySongsOf(libraryEntries, recSongs)
         val coverage = if (librarySongs.isEmpty()) null else {
             val stale = librarySongs.filter { lastPlayed(it) < since }
             Coverage(((librarySongs.size - stale.size) * 100 / librarySongs.size), stale)
         }
 
         // ── Mixes ──
+        fun mixFilter(list: List<Song>): List<Song> =
+            if (excludeInstrumentalsInMixes) list.filterNot(::isInstrumentalSong) else list
+
+        val timeMixSongs = if (aiTimePicksAll.isNotEmpty()) {
+            val mixAiCandidates = if (excludeInstrumentalsInMixes) {
+                aiTimePicksAll.filterNot(::isInstrumentalSong)
+            } else {
+                aiTimePicksAll
+            }
+            val diversifiedMixAi = selectWithDiversity(
+                mixAiCandidates,
+                limit = 30,
+                maxPerAlbum = 2,
+                maxPerArtist = 3,
+            )
+            (mixFilter(slotHabit) + diversifiedMixAi).take(30)
+        } else {
+            mixFilter(slotHabit).take(30)
+        }
+
         fun pick(kind: MixKind, list: List<Song>, min: Int): HomeMix? {
             if (list.size < min) return null
             val rnd = Random(seed * 31 + kind.ordinal)
@@ -430,18 +632,20 @@ object HomeModel {
             }
             return HomeMix(kind, ordered.take(50), slot)
         }
-        val newSongs = songs.filter { ((it.localDateAddedSeconds ?: 0L) * 1000L) >= now - 30L * DAY_MS }
+        val newSongs = recSongs.filter { ((it.localDateAddedSeconds ?: 0L) * 1000L) >= now - 30L * DAY_MS }
         val rediscover = songHeat.filter { (_, i) -> i.plays >= 3 && now - i.lastPlayed > 30L * DAY_MS }.map { it.first }
+        val hotMixPool = songHeat.filter { it.second.level >= 3.5f }.sortedByDescending { it.second.level }.map { it.first }
+        val deepCutsMixPool = if (excludeInstrumentalsInMixes) allDeepCuts.map { it.song } else deepCuts.map { it.song }
         val mixes = listOfNotNull(
-            pick(MixKind.HOT, songHeat.filter { it.second.level >= 3.5f }.sortedByDescending { it.second.level }.map { it.first }, 8),
-            pick(MixKind.REDISCOVER, rediscover, 10),
-            pick(MixKind.NEW, newSongs, 5),
-            pick(MixKind.DEEP_CUTS, deepCuts.map { it.song }, 8),
-            pick(MixKind.TIME, timeOfDay, 10),
-            pick(MixKind.FOR_YOU, forYouSongs, 10),
-            pick(MixKind.UPLIFTING, upliftingSongs, 10),
-            pick(MixKind.CALM, calmSongs, 10),
-            pick(MixKind.UNPLAYED, songs.filterNot(::played), 10),
+            pick(MixKind.HOT, mixFilter(hotMixPool), 8),
+            pick(MixKind.REDISCOVER, mixFilter(rediscover), 10),
+            pick(MixKind.NEW, mixFilter(newSongs), 5),
+            pick(MixKind.DEEP_CUTS, mixFilter(deepCutsMixPool), 8),
+            pick(MixKind.TIME, timeMixSongs, 10),
+            pick(MixKind.FOR_YOU, mixForYouSongs, MIN_AI_MIX_SONGS),
+            pick(MixKind.UPLIFTING, mixUpliftingSongs, MIN_AI_MIX_SONGS),
+            pick(MixKind.CALM, mixCalmSongs, MIN_AI_MIX_SONGS),
+            pick(MixKind.UNPLAYED, mixFilter(recSongs.filterNot(::played)), 10),
         )
 
         return HomeContent(
@@ -502,6 +706,124 @@ object HomeModel {
         val calm: List<Song>,
     )
 
+    private fun isRecentlyAdded(song: Song, now: Long): Boolean {
+        val addedSec = song.localDateAddedSeconds ?: 0L
+        return addedSec > 0L && addedSec * 1000L >= now - RECENT_ADDITION_DAYS * DAY_MS
+    }
+
+    private fun effectiveCalmScore(feat: LocalHomeAi.TrackMoodFeatures): Float {
+        val lowArousalRescue = if (feat.arousal <= 0.45f) {
+            (1f - feat.arousal) * 0.65f + feat.calm * 0.35f
+        } else {
+            feat.calm
+        }
+        return maxOf(feat.calm, lowArousalRescue).coerceIn(0f, 1f)
+    }
+
+    private fun selectWithDiversity(
+        ranked: List<Song>,
+        limit: Int,
+        maxPerAlbum: Int = 2,
+        maxPerArtist: Int = 3,
+        maxRecent: Int? = null,
+        isRecent: (Song) -> Boolean = { false },
+    ): List<Song> {
+        if (ranked.size <= 1 || limit <= 0) return ranked.take(limit)
+        val picked = ArrayList<Song>(minOf(limit, ranked.size))
+        val overflow = ArrayList<Song>()
+        val overflow2 = ArrayList<Song>()
+        val albumCounts = HashMap<String, Int>()
+        val artistCounts = HashMap<String, Int>()
+        var recentCount = 0
+
+        fun albumKey(song: Song): String? =
+            song.albumName?.trim()?.lowercase(Locale.ROOT)?.takeIf(String::isNotBlank)
+
+        fun artistKey(song: Song): String? =
+            song.artist.trim().lowercase(Locale.ROOT)
+                .takeIf { it.isNotBlank() && it != "unknown artist" }
+
+        fun accept(song: Song, albumCap: Int, artistCap: Int, recentCap: Int?): Boolean {
+            val alb = albumKey(song)
+            val art = artistKey(song)
+            if (alb != null && (albumCounts[alb] ?: 0) >= albumCap) return false
+            if (art != null && (artistCounts[art] ?: 0) >= artistCap) return false
+            if (recentCap != null && isRecent(song) && recentCount >= recentCap) return false
+            if (alb != null) albumCounts[alb] = (albumCounts[alb] ?: 0) + 1
+            if (art != null) artistCounts[art] = (artistCounts[art] ?: 0) + 1
+            if (isRecent(song)) recentCount++
+            picked.add(song)
+            return true
+        }
+
+        for (song in ranked) {
+            if (picked.size >= limit) break
+            if (!accept(song, maxPerAlbum, maxPerArtist, maxRecent)) overflow.add(song)
+        }
+        if (picked.size < limit) {
+            for (song in overflow) {
+                if (picked.size >= limit) break
+                if (!accept(song, maxPerAlbum * 2, maxPerArtist * 2, null)) overflow2.add(song)
+            }
+        }
+        if (picked.size < limit) {
+            for (song in overflow2) {
+                if (picked.size >= limit) break
+                picked.add(song)
+            }
+        }
+        return picked
+    }
+
+    private fun pickMoodShelf(
+        songs: List<Song>,
+        heat: Map<String, HeatInfo>,
+        moodFeatures: Map<String, LocalHomeAi.TrackMoodFeatures>,
+        seed: Long,
+        dailyMixBoost: Boolean,
+        jitterPrefix: String,
+        primaryOf: (LocalHomeAi.TrackMoodFeatures) -> Float,
+        secondaryOf: (LocalHomeAi.TrackMoodFeatures) -> Float,
+        excludeInstrumentals: Boolean = false,
+        isInstrumental: (Song) -> Boolean = { false },
+    ): List<Song> {
+        fun scoreSong(song: Song, primary: Float, margin: Float): Double {
+            val info = heat[song.heatKey()]
+            val crBoost = ((info?.completionRate ?: 0.55f) - 0.5f) * 0.18
+            val heatBoost = (info?.level ?: 0f).coerceAtMost(5f) / 5f * 0.16
+            val jitter = if (dailyMixBoost) dailyJitter(seed, "$jitterPrefix:${song.videoId}", 0.08f) else 0f
+            return primary * 0.65 + margin * 0.25 + heatBoost + crBoost + jitter
+        }
+
+        val stage1 = songs.mapNotNull { song ->
+            if (excludeInstrumentals && isInstrumental(song)) return@mapNotNull null
+            val feat = moodFeatures[song.videoId] ?: return@mapNotNull null
+            val primary = primaryOf(feat)
+            val margin = primary - secondaryOf(feat)
+            if (primary < 0.42f || margin < 0.08f) return@mapNotNull null
+            song to scoreSong(song, primary, margin)
+        }.sortedByDescending { it.second }.map { it.first }
+
+        val combined = if (stage1.size >= 4) {
+            stage1
+        } else {
+            val stage1Ids = stage1.mapTo(HashSet()) { it.videoId }
+            val stage2 = songs.mapNotNull { song ->
+                if (song.videoId in stage1Ids) return@mapNotNull null
+                if (excludeInstrumentals && isInstrumental(song)) return@mapNotNull null
+                val feat = moodFeatures[song.videoId] ?: return@mapNotNull null
+                val primary = primaryOf(feat)
+                val margin = primary - secondaryOf(feat)
+                if (primary < 0.36f || margin < 0.04f) return@mapNotNull null
+                song to scoreSong(song, primary, margin)
+            }.sortedByDescending { it.second }.map { it.first }
+            stage1 + stage2
+        }
+
+        val selected = selectWithDiversity(combined, limit = 24, maxPerAlbum = 2, maxPerArtist = 3)
+        return if (selected.size >= MIN_AI_SHELF_SONGS) selected else emptyList()
+    }
+
     private fun computeAiRecommendations(
         songs: List<Song>,
         heat: Map<String, HeatInfo>,
@@ -510,8 +832,11 @@ object HomeModel {
         moodFeatures: Map<String, LocalHomeAi.TrackMoodFeatures>,
         embeddingsByKey: Map<String, FloatArray>,
         seed: Long,
+        now: Long,
         dailyMixBoost: Boolean,
         warmIds: Set<String>,
+        excludeInstrumentals: Boolean = false,
+        isInstrumental: (Song) -> Boolean = { false },
     ): AiShelves {
         if (moodFeatures.size < 4) return AiShelves(emptyList(), emptyList(), emptyList())
 
@@ -564,11 +889,19 @@ object HomeModel {
         }
 
         val forYou = if (listenerCentroid != null) {
-            val strict = songs.filter { moodFeatures.containsKey(it.videoId) && isDiscoveryCandidate(it, maxPlays = 2, maxLevel = 2.2f) }
-            val pool = if (strict.size >= 4) strict else {
-                songs.filter { moodFeatures.containsKey(it.videoId) && isDiscoveryCandidate(it, maxPlays = 5, maxLevel = 3.0f) }
+            val strict = songs.filter {
+                (!excludeInstrumentals || !isInstrumental(it)) &&
+                    moodFeatures.containsKey(it.videoId) &&
+                    isDiscoveryCandidate(it, maxPlays = 2, maxLevel = 2.2f)
             }
-            val scored = pool.mapNotNull { song ->
+            val pool = if (strict.size >= 4) strict else {
+                songs.filter {
+                    (!excludeInstrumentals || !isInstrumental(it)) &&
+                        moodFeatures.containsKey(it.videoId) &&
+                        isDiscoveryCandidate(it, maxPlays = 5, maxLevel = 3.0f)
+                }
+            }
+            val ranked = pool.mapNotNull { song ->
                 val feat = moodFeatures[song.videoId] ?: return@mapNotNull null
                 val dv = (feat.valence - listenerCentroid.first).toDouble()
                 val da = (feat.arousal - listenerCentroid.second).toDouble()
@@ -579,40 +912,51 @@ object HomeModel {
                 } else {
                     vaScore
                 }
+                val recentPenalty = if (isRecentlyAdded(song, now)) 0.14 else 0.0
                 val jitter = if (dailyMixBoost) dailyJitter(seed, "foryou:${song.videoId}", 0.10f) else 0f
-                song to (baseScore + jitter)
-            }.sortedByDescending { it.second }.map { it.first }.take(24)
-            if (scored.size >= 4) scored else emptyList()
+                song to (baseScore - recentPenalty + jitter)
+            }.sortedByDescending { it.second }.map { it.first }
+            val selected = selectWithDiversity(
+                ranked = ranked,
+                limit = 24,
+                maxPerAlbum = 2,
+                maxPerArtist = 3,
+                maxRecent = 8,
+                isRecent = { isRecentlyAdded(it, now) },
+            )
+            if (selected.size >= MIN_AI_SHELF_SONGS) selected else emptyList()
         } else emptyList()
 
-        val upliftingRaw = songs.mapNotNull { song ->
-            val feat = moodFeatures[song.videoId] ?: return@mapNotNull null
-            val margin = feat.uplifting - feat.calm
-            if (feat.uplifting < 0.45f || margin < 0.10f) return@mapNotNull null
-            val info = heat[song.heatKey()]
-            val crBoost = ((info?.completionRate ?: 0.55f) - 0.5f) * 0.18
-            val heatBoost = (info?.level ?: 0f).coerceAtMost(5f) / 5f * 0.16
-            val jitter = if (dailyMixBoost) dailyJitter(seed, "up:${song.videoId}", 0.08f) else 0f
-            val score = feat.uplifting * 0.65 + margin * 0.25 + heatBoost + crBoost + jitter
-            song to score
-        }.sortedByDescending { it.second }.map { it.first }.take(24)
+        val uplifting = pickMoodShelf(
+            songs = songs,
+            heat = heat,
+            moodFeatures = moodFeatures,
+            seed = seed,
+            dailyMixBoost = dailyMixBoost,
+            jitterPrefix = "up",
+            primaryOf = { it.uplifting },
+            secondaryOf = ::effectiveCalmScore,
+            excludeInstrumentals = excludeInstrumentals,
+            isInstrumental = isInstrumental,
+        )
 
-        val calmRaw = songs.mapNotNull { song ->
-            val feat = moodFeatures[song.videoId] ?: return@mapNotNull null
-            val margin = feat.calm - feat.uplifting
-            if (feat.calm < 0.45f || margin < 0.10f) return@mapNotNull null
-            val info = heat[song.heatKey()]
-            val crBoost = ((info?.completionRate ?: 0.55f) - 0.5f) * 0.18
-            val heatBoost = (info?.level ?: 0f).coerceAtMost(5f) / 5f * 0.16
-            val jitter = if (dailyMixBoost) dailyJitter(seed, "calm:${song.videoId}", 0.08f) else 0f
-            val score = feat.calm * 0.65 + margin * 0.25 + heatBoost + crBoost + jitter
-            song to score
-        }.sortedByDescending { it.second }.map { it.first }.take(24)
+        val calm = pickMoodShelf(
+            songs = songs,
+            heat = heat,
+            moodFeatures = moodFeatures,
+            seed = seed,
+            dailyMixBoost = dailyMixBoost,
+            jitterPrefix = "calm",
+            primaryOf = ::effectiveCalmScore,
+            secondaryOf = { it.uplifting },
+            excludeInstrumentals = excludeInstrumentals,
+            isInstrumental = isInstrumental,
+        )
 
         return AiShelves(
             forYou = forYou,
-            uplifting = if (upliftingRaw.size >= 4) upliftingRaw else emptyList(),
-            calm = if (calmRaw.size >= 4) calmRaw else emptyList(),
+            uplifting = uplifting,
+            calm = calm,
         )
     }
 
