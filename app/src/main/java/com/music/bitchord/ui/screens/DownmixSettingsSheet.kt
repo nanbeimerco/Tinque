@@ -108,7 +108,7 @@ import kotlin.math.roundToInt
 private const val METER_MIN_DB = -60f
 private const val METER_MAX_DB = 6f
 private const val METER_FLOOR_DB = -90f
-private const val METER_STALE_TIMEOUT_MS = 140f
+private const val METER_STALE_TIMEOUT_MS = 600f
 private const val METER_PEAK_FALL_DB_PER_SEC = 28f
 private const val METER_HOLD_DURATION_MS = 1500f
 private const val METER_HOLD_FALL_DB_PER_SEC = 18f
@@ -201,9 +201,11 @@ private class SmoothedMeterLevel {
     fun step(targetPeakRaw: Float, targetRmsRaw: Float, targetContribRaw: Float, dtSec: Float, dtMs: Float): Boolean {
         val targetPeak = normalizeDb(targetPeakRaw)
         val targetRms = normalizeDb(targetRmsRaw)
-        contribPeakDb = normalizeDb(targetContribRaw)
+        val targetContrib = normalizeDb(targetContribRaw)
 
         val nextPeak = max(targetPeak, peakDb - METER_PEAK_FALL_DB_PER_SEC * dtSec)
+            .coerceAtLeast(METER_FLOOR_DB)
+        val nextContrib = max(targetContrib, contribPeakDb - METER_PEAK_FALL_DB_PER_SEC * dtSec)
             .coerceAtLeast(METER_FLOOR_DB)
         val rmsTau = if (targetRms >= rmsDb) 0.035f else 0.140f
         val rmsAlpha = 1f - exp(-dtSec / rmsTau)
@@ -227,10 +229,11 @@ private class SmoothedMeterLevel {
             holdDb = max(holdDb, nextPeak)
         }
 
-        val moved = nextPeak != peakDb || nextRms != rmsDb || holdDb != nextPeak
+        val moved = nextPeak != peakDb || nextRms != rmsDb || holdDb != nextPeak || nextContrib != contribPeakDb
         peakDb = nextPeak
         rmsDb = nextRms
-        return moved || nextPeak > METER_FLOOR_DB || nextRms > METER_FLOOR_DB || holdDb > METER_FLOOR_DB
+        contribPeakDb = nextContrib
+        return moved || nextPeak > METER_FLOOR_DB || nextRms > METER_FLOOR_DB || holdDb > METER_FLOOR_DB || nextContrib > METER_FLOOR_DB
     }
 
     private fun normalizeDb(db: Float): Float =

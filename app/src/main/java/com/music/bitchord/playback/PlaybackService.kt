@@ -5124,9 +5124,7 @@ class PlaybackService : MediaLibraryService() {
             QueueShuffle.setEnabled(true)
         }
         player.repeatMode = AppSettings.repeatMode.value
-        player.setPauseAtEndOfMediaItems(
-            AppSettings.repeatMode.value == Player.REPEAT_MODE_OFF || SingleSongPlaybackManager.enabled.value,
-        )
+        player.setPauseAtEndOfMediaItems(SingleSongPlaybackManager.enabled.value)
     }
 
     /**
