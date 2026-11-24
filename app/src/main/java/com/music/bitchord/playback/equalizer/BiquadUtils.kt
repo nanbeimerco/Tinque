@@ -170,6 +170,23 @@ object BiquadUtils {
     }
 
     /**
+     * Computes normalized RBJ 2nd-order All-Pass filter coefficients (unity magnitude across all
+     * frequencies; phase response matches a cascaded 4th-order Linkwitz-Riley section at the same
+     * cutoff frequency when Q = 1 / sqrt(2)).
+     */
+    fun computeAllPassCoefficients(
+        frequency: Double,
+        q: Double,
+        sampleRate: Double = 48_000.0,
+    ): BiquadCoefficients = computeCoefficients(
+        frequency = frequency,
+        gainDb = 0.0,
+        q = q,
+        filterType = ParametricEqFilterType.ALL_PASS,
+        sampleRate = sampleRate,
+    )
+
+    /**
      * Evaluates |H(e^(j*w))| in dB at [frequency] Hz.
      */
     fun magnitudeResponse(

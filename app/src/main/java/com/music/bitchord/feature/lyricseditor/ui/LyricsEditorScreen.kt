@@ -42,6 +42,7 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Sync
+import androidx.compose.material3.Button
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -62,6 +63,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,11 +78,15 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.music.bitchord.data.LocalMediaRepository
 import com.music.bitchord.data.lyrics.align.OnDeviceLyricsAligner
+import com.music.bitchord.data.lyrics.align.OnDeviceLyricsAlignerModel
 import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.music.bitchord.R
 import com.music.bitchord.feature.lyricseditor.data.LocalLyricsManager
@@ -132,7 +138,21 @@ fun LyricsEditorScreen(
     val searchResults by viewModel.searchResults.collectAsState()
     val isSearchingResults by viewModel.isSearchingResults.collectAsState()
     val aiAlignProgress by viewModel.aiAlignProgress.collectAsState()
+    val aiAlignQueuedAhead by viewModel.aiAlignQueuedAhead.collectAsState()
     val isAligningAi = aiAlignProgress != null
+    val scope = rememberCoroutineScope()
+    val offlineMode by AppSettings.offlineMode.collectAsStateWithLifecycle()
+    val aiModelInstalledState by OnDeviceLyricsAlignerModel.modelInstalled.collectAsStateWithLifecycle()
+    val aiDownloadProgress by OnDeviceLyricsAlignerModel.downloadProgress.collectAsStateWithLifecycle()
+    val downloadSupported = remember(context) { OnDeviceLyricsAlignerModel.isDownloadSupported(context) }
+    var aiModelInstalled by remember { mutableStateOf(aiModelInstalledState) }
+    LaunchedEffect(aiModelInstalledState) {
+        aiModelInstalled = withContext(Dispatchers.IO) {
+            OnDeviceLyricsAlignerModel.isModelInstalled(context)
+        }
+    }
+    var showAiDownloadConfirm by remember { mutableStateOf(false) }
+    var aiDownloadError by remember { mutableStateOf<String?>(null) }
     val canAlignAudio by produceState(false, song.videoId, song.localUri, song.localPath) {
         value = withContext(Dispatchers.IO) {
             OnDeviceLyricsAligner.canAlignAudio(context, song)
@@ -163,6 +183,9 @@ fun LyricsEditorScreen(
     }
     val isTimeSynced = remember(currentText) {
         currentText.contains(Regex("""\[\d{1,3}:\d{2}"""))
+    }
+    val isWordSynced = remember(currentText) {
+        currentText.contains(Regex("""<\d{1,3}:\d{2}[.:]\d{2,3}>"""))
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -475,57 +498,144 @@ fun LyricsEditorScreen(
                     enabled = !isLoading && !isSaving && !isAligningAi,
                 )
 
+                val showAiUpgradeBanner = currentText.isNotBlank() && canAlignAudio && (
+                    !isTimeSynced ||
+                        (!isWordSynced && (aiModelInstalled || (downloadSupported && !offlineMode)))
+                    )
                 AnimatedVisibility(
-                    visible = isAligningAi || (currentText.isNotBlank() && !isTimeSynced && canAlignAudio),
+                    visible = isAligningAi || aiDownloadProgress != null || showAiUpgradeBanner,
                     enter = fadeIn(),
                     exit = fadeOut(),
                 ) {
+                    val dp = aiDownloadProgress
                     val progress = aiAlignProgress
-                    if (progress != null) {
-                        val stageLabel = when (progress.stage) {
-                            OnDeviceLyricsAligner.AlignStage.DECODING_VOCALS -> stringResource(R.string.lyrics_ai_stage_decoding)
-                            OnDeviceLyricsAligner.AlignStage.CTC_INFERENCE -> stringResource(R.string.lyrics_ai_stage_ctc)
-                            OnDeviceLyricsAligner.AlignStage.ALIGNING -> stringResource(R.string.lyrics_ai_stage_aligning)
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                    when {
+                        dp != null -> {
+                            val totalMb = dp.totalBytes.coerceAtLeast(1L) / (1024f * 1024f)
+                            val doneMb = dp.bytes / (1024f * 1024f)
+                            val frac = (dp.bytes.toFloat() / dp.totalBytes.coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically,
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
                                 ) {
                                     Text(
-                                        text = stageLabel,
+                                        text = stringResource(R.string.lyrics_ai_download_progress, doneMb, totalMb),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.weight(1f),
                                     )
-                                    TextButton(onClick = { viewModel.cancelAiAlign() }) {
-                                        Text(stringResource(R.string.lyrics_ai_cancel))
-                                    }
+                                    LinearProgressIndicator(
+                                        progress = { frac },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
                                 }
-                                LinearProgressIndicator(
-                                    progress = { progress.fraction.coerceIn(0f, 1f) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
                             }
                         }
-                    } else {
-                        FilledTonalButton(
-                            onClick = { viewModel.generateAiSyncedLyrics(song) },
-                            enabled = !isLoading && !isSaving,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text(stringResource(R.string.lyrics_ai_generate_button))
+                        progress != null -> {
+                            val queuedAhead = aiAlignQueuedAhead
+                            val stageLabel = when {
+                                queuedAhead != null -> stringResource(R.string.lyrics_ai_bg_queued, queuedAhead.coerceAtLeast(1))
+                                progress.stage == OnDeviceLyricsAligner.AlignStage.DECODING_VOCALS ->
+                                    stringResource(R.string.lyrics_ai_stage_decoding)
+                                progress.stage == OnDeviceLyricsAligner.AlignStage.CTC_INFERENCE ->
+                                    stringResource(R.string.lyrics_ai_stage_ctc)
+                                else -> stringResource(R.string.lyrics_ai_stage_aligning)
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Text(
+                                            text = stageLabel,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        TextButton(onClick = { viewModel.cancelAiAlign() }) {
+                                            Text(stringResource(R.string.lyrics_ai_cancel))
+                                        }
+                                    }
+                                    LinearProgressIndicator(
+                                        progress = { progress.fraction.coerceIn(0f, 1f) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.lyrics_ai_bg_running_hint),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                        isTimeSynced && !isWordSynced && !aiModelInstalled -> {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.lyrics_editor_ai_word_upgrade_hint),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    FilledTonalButton(
+                                        onClick = { showAiDownloadConfirm = true },
+                                        enabled = !isLoading && !isSaving,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(stringResource(R.string.lyrics_ai_download_model_cta))
+                                    }
+                                }
+                            }
+                        }
+                        else -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                FilledTonalButton(
+                                    onClick = { viewModel.generateAiSyncedLyrics(song) },
+                                    enabled = !isLoading && !isSaving,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        stringResource(
+                                            if (isTimeSynced && aiModelInstalled) {
+                                                R.string.lyrics_ai_upgrade_word_button
+                                            } else {
+                                                R.string.lyrics_ai_generate_button
+                                            },
+                                        ),
+                                    )
+                                }
+                                if (!aiModelInstalled && downloadSupported && !offlineMode) {
+                                    TextButton(
+                                        onClick = { showAiDownloadConfirm = true },
+                                        modifier = Modifier.align(Alignment.End),
+                                    ) {
+                                        Text(stringResource(R.string.lyrics_ai_download_model_cta))
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -753,6 +863,47 @@ fun LyricsEditorScreen(
             onDismissRequest = { viewModel.dismissCandidateDialog() },
             onModeSelected = { mode ->
                 viewModel.applyCandidateSelection(mode)
+            },
+        )
+    }
+
+    if (showAiDownloadConfirm) {
+        GlassAlertDialog(
+            onDismissRequest = { showAiDownloadConfirm = false },
+            title = { Text(stringResource(R.string.lyrics_ai_download_confirm_title)) },
+            text = { Text(stringResource(R.string.lyrics_ai_download_confirm_message)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showAiDownloadConfirm = false
+                        scope.launch {
+                            val res = OnDeviceLyricsAlignerModel.downloadModel(context)
+                            res.onFailure { err ->
+                                aiDownloadError = err.localizedMessage ?: "Download failed"
+                            }
+                        }
+                    },
+                ) {
+                    Text(stringResource(R.string.lyrics_ai_download_confirm_button))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAiDownloadConfirm = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    aiDownloadError?.let { err ->
+        GlassAlertDialog(
+            onDismissRequest = { aiDownloadError = null },
+            title = { Text(stringResource(R.string.lyrics_ai_download_failed)) },
+            text = { Text(err) },
+            confirmButton = {
+                TextButton(onClick = { aiDownloadError = null }) {
+                    Text(stringResource(android.R.string.ok))
+                }
             },
         )
     }

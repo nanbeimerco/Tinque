@@ -16,9 +16,11 @@ internal object AudioOutputPolicy {
         requestedMode: OutputPcmMode,
         isPreferredUsbRoute: Boolean,
         advertisesPcmFloat: Boolean,
+        multichannelDownmixEnabled: Boolean = false,
     ): Boolean = requestedMode == OutputPcmMode.FLOAT_32 &&
         isPreferredUsbRoute &&
-        advertisesPcmFloat
+        advertisesPcmFloat &&
+        !multichannelDownmixEnabled
 
     /** Samsung's vendor FLAC decoder emits invalid timestamps with PCM float. */
     fun isUnsafeFloatFlacDecoder(name: String): Boolean {

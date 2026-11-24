@@ -260,6 +260,51 @@ object LyricsCatalog {
     }
 
     /**
+     * Builds a catalog [LyricsCandidate] from locally stored lyrics (embedded audio tag
+     * or companion `.lrc` file) without network-provider filtering heuristics that could
+     * reject valid song lyrics containing words like "error".
+     */
+    fun localCandidate(
+        id: String,
+        source: LyricsSource,
+        title: String,
+        artist: String,
+        album: String?,
+        durationSec: Int,
+        raw: String,
+    ): LyricsCandidate? {
+        val cleaned = raw.replace("\uFEFF", "").trim()
+        if (cleaned.isEmpty()) return null
+        val parsed = when {
+            cleaned.contains(Regex("""<tt(?:\s|>)""", RegexOption.IGNORE_CASE)) ||
+                cleaned.contains("http://www.w3.org/ns/ttml", ignoreCase = true) -> TtmlLyrics.parse(cleaned)
+            KaraokeLrc.looksLike(cleaned) -> KaraokeLrc.parse(cleaned)
+            else -> EnhancedLrc.parse(cleaned).ifEmpty { EmbeddedLyrics.parseLyrics(cleaned) }
+        }
+        val lines = parsed
+            .map { it.withDecodedEntities() }
+            .withBackgroundVocals()
+            .takeIf { found -> found.any { it.text.isNotBlank() } }
+            ?: return null
+        val format = formatOf(lines)
+        return LyricsCandidate(
+            id = id,
+            source = source,
+            title = HtmlEntities.decode(title),
+            artist = HtmlEntities.decode(artist),
+            album = album?.let(HtmlEntities::decode),
+            durationSec = durationSec.coerceAtLeast(0),
+            raw = cleaned,
+            lines = lines,
+            format = format,
+            hasTranslation = lines.any { it.timingSource != null },
+            hasFurigana = lines.any { furiganaPattern.containsMatchIn(it.text) },
+            hasBackgroundVocals = lines.any { it.background != null },
+            match = 1f,
+        )
+    }
+
+    /**
      * How well a result matches the song, 0..1: the title counts most, then
      * the artist, the album and the length (when the result gives them).
      */

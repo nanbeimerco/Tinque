@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -130,6 +131,11 @@ internal object LyricsCatalogAiSessionCache {
     }
 
     @Synchronized
+    fun remove(songKey: String, candidateId: String) {
+        map.remove(songKey to candidateId)
+    }
+
+    @Synchronized
     fun allForSong(songKey: String): List<LyricsCandidate> =
         map.entries.filter { it.key.first == songKey }.map { it.value }
 
@@ -138,6 +144,12 @@ internal object LyricsCatalogAiSessionCache {
         map.clear()
     }
 }
+
+private const val LOCAL_EMBEDDED_CANDIDATE_ID = "local:embedded"
+private const val LOCAL_LRC_CANDIDATE_ID = "local:lrc"
+
+internal fun isLocalCatalogCandidateId(id: String): Boolean =
+    id == LOCAL_EMBEDDED_CANDIDATE_ID || id == LOCAL_LRC_CANDIDATE_ID
 
 private fun LyricsFormat.label(): Int = when (this) {
     LyricsFormat.PLAIN -> R.string.lyrics_format_plain
@@ -174,13 +186,77 @@ fun LyricsCatalogScreen(
     var tolerance by remember { mutableIntStateOf(10) }
     var formatFilter by remember { mutableStateOf<LyricsFormat?>(null) }
 
+    val overrideKey = remember(song) { LyricsOverrideStore.keyFor(song.videoId, song.localUri) }
     val candidates = remember { mutableStateListOf<LyricsCandidate>() }
+    val localCandidates = remember(overrideKey) { mutableStateListOf<LyricsCandidate>() }
+    var localReloadTick by remember(overrideKey) { mutableIntStateOf(0) }
     val statuses = remember { mutableStateMapOf<String, SourceStatus>() }
     var searchJob by remember { mutableStateOf<Job?>(null) }
     var preview by remember { mutableStateOf<LyricsCandidate?>(null) }
-    val overrideKey = remember(song) { LyricsOverrideStore.keyFor(song.videoId, song.localUri) }
     var hasOverride by remember { mutableStateOf(LyricsOverrideStore.get(overrideKey) != null) }
     val alignSnapshot by LyricsAlignTaskManager.state.collectAsStateWithLifecycle()
+    val aiModelInstalledState by OnDeviceLyricsAlignerModel.modelInstalled.collectAsStateWithLifecycle()
+    var aiModelInstalled by remember { mutableStateOf(aiModelInstalledState) }
+    LaunchedEffect(aiModelInstalledState) {
+        aiModelInstalled = withContext(Dispatchers.IO) {
+            OnDeviceLyricsAlignerModel.isModelInstalled(context)
+        }
+    }
+    val canAlignAudio by produceState(false, song.videoId, song.localUri, song.localPath) {
+        value = withContext(Dispatchers.IO) { OnDeviceLyricsAligner.canAlignAudio(context, song) }
+    }
+
+    LaunchedEffect(song.videoId, song.localUri, song.localPath, overrideKey, localReloadTick) {
+        val loaded = withContext(Dispatchers.IO) {
+            val found = mutableListOf<LyricsCandidate>()
+            val durationSec = (song.durationMillis() / 1000L).toInt().coerceAtLeast(0)
+            val embeddedRaw = runCatching {
+                LocalLyricsManager.readLyrics(context, song, LyricsEditorSource.Embedded)
+            }.getOrDefault("").trim()
+            if (embeddedRaw.isNotEmpty()) {
+                val id = LOCAL_EMBEDDED_CANDIDATE_ID
+                val resolved = LyricsCatalogAiSessionCache.get(overrideKey, id)
+                    ?: LyricsCatalog.localCandidate(
+                        id = id,
+                        source = LyricsSource(
+                            id = "local_embedded",
+                            label = context.getString(R.string.lyrics_local_embedded_source),
+                            wordSynced = false,
+                        ),
+                        title = song.title,
+                        artist = song.artist,
+                        album = song.albumName,
+                        durationSec = durationSec,
+                        raw = embeddedRaw,
+                    )
+                if (resolved != null) found += resolved
+            }
+            val fileRaw = runCatching {
+                LocalLyricsManager.readLyrics(context, song, LyricsEditorSource.File)
+            }.getOrDefault("").trim()
+            if (fileRaw.isNotEmpty() && fileRaw != embeddedRaw) {
+                val id = LOCAL_LRC_CANDIDATE_ID
+                val resolved = LyricsCatalogAiSessionCache.get(overrideKey, id)
+                    ?: LyricsCatalog.localCandidate(
+                        id = id,
+                        source = LyricsSource(
+                            id = "local_lrc",
+                            label = context.getString(R.string.lyrics_local_lrc_source),
+                            wordSynced = false,
+                        ),
+                        title = song.title,
+                        artist = song.artist,
+                        album = song.albumName,
+                        durationSec = durationSec,
+                        raw = fileRaw,
+                    )
+                if (resolved != null) found += resolved
+            }
+            found
+        }
+        localCandidates.clear()
+        localCandidates.addAll(loaded)
+    }
 
     LaunchedEffect(alignSnapshot.completed, overrideKey) {
         val doneForSong = alignSnapshot.completed
@@ -188,6 +264,10 @@ fun LyricsCatalogScreen(
             .mapNotNull { it.resultCandidate }
         if (doneForSong.isNotEmpty()) {
             doneForSong.forEach { updated ->
+                val localIdx = localCandidates.indexOfFirst { it.id == updated.id }
+                if (localIdx >= 0) {
+                    localCandidates[localIdx] = updated
+                }
                 val idx = candidates.indexOfFirst { it.id == updated.id }
                 if (idx >= 0) {
                     candidates[idx] = updated
@@ -216,6 +296,7 @@ fun LyricsCatalogScreen(
         searchJob?.cancel()
         candidates.clear()
         val cachedForSong = LyricsCatalogAiSessionCache.allForSong(overrideKey)
+            .filterNot { isLocalCatalogCandidateId(it.id) }
         if (cachedForSong.isNotEmpty()) {
             candidates.addAll(cachedForSong.sortedByDescending { it.match })
         }
@@ -316,6 +397,46 @@ fun LyricsCatalogScreen(
                         }
                     }
                 }
+                if (localCandidates.isNotEmpty()) {
+                    items(localCandidates, key = { it.id }) { localCandidate ->
+                        val activeTask = alignSnapshot.active?.takeIf {
+                            it.songKey == overrideKey && it.candidateId == localCandidate.id
+                        }
+                        val queuedTask = alignSnapshot.queued.firstOrNull {
+                            it.songKey == overrideKey && it.candidateId == localCandidate.id
+                        }
+                        val queuedAhead = queuedTask?.let { qt ->
+                            alignSnapshot.queued.indexOfFirst { it.taskId == qt.taskId } +
+                                if (alignSnapshot.active != null) 1 else 0
+                        } ?: 0
+                        LocalLyricsAiCard(
+                            candidate = localCandidate,
+                            canAlignAudio = canAlignAudio,
+                            aiModelInstalled = aiModelInstalled,
+                            activeTask = activeTask,
+                            queuedTask = queuedTask,
+                            queuedAhead = queuedAhead,
+                            onPreviewClick = { preview = localCandidate },
+                            onAiSyncClick = {
+                                val plainForAi = localCandidate.lines
+                                    .filter { it.timingSource == null && it.text.isNotBlank() }
+                                    .joinToString("\n") { it.text }
+                                if (plainForAi.isNotBlank()) {
+                                    LyricsAlignTaskManager.enqueue(
+                                        context = context,
+                                        song = song,
+                                        candidate = localCandidate,
+                                        plainText = plainForAi,
+                                        forceReanalyze = localCandidate.source.id == "on_device_ai",
+                                    )
+                                }
+                            },
+                            onCancelAiSync = {
+                                LyricsAlignTaskManager.cancelForCandidate(overrideKey, localCandidate.id)
+                            },
+                        )
+                    }
+                }
                 item {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         sources.forEach { source ->
@@ -373,11 +494,20 @@ fun LyricsCatalogScreen(
             onDismiss = { preview = null },
             onCandidateUpdated = { updated ->
                 LyricsCatalogAiSessionCache.put(overrideKey, updated.id, updated)
-                val idx = candidates.indexOfFirst { it.id == updated.id }
-                if (idx >= 0) {
-                    candidates[idx] = updated
+                if (isLocalCatalogCandidateId(updated.id)) {
+                    val localIdx = localCandidates.indexOfFirst { it.id == updated.id }
+                    if (localIdx >= 0) {
+                        localCandidates[localIdx] = updated
+                    } else {
+                        localCandidates.add(0, updated)
+                    }
                 } else {
-                    candidates.add(0, updated)
+                    val idx = candidates.indexOfFirst { it.id == updated.id }
+                    if (idx >= 0) {
+                        candidates[idx] = updated
+                    } else {
+                        candidates.add(0, updated)
+                    }
                 }
                 preview = updated
             },
@@ -418,7 +548,9 @@ fun LyricsCatalogScreen(
                 null
             },
             onSaved = {
+                LyricsCatalogAiSessionCache.remove(overrideKey, candidate.id)
                 preview = null
+                localReloadTick++
                 onApplied(song)
             },
         )
@@ -463,6 +595,180 @@ private fun Badge(text: String, primary: Boolean = false) {
             color = if (primary) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
         )
+    }
+}
+
+@Composable
+private fun LocalLyricsAiCard(
+    candidate: LyricsCandidate,
+    canAlignAudio: Boolean,
+    aiModelInstalled: Boolean,
+    activeTask: LyricsAlignTaskManager.AlignTask?,
+    queuedTask: LyricsAlignTaskManager.AlignTask?,
+    queuedAhead: Int,
+    onPreviewClick: () -> Unit,
+    onAiSyncClick: () -> Unit,
+    onCancelAiSync: () -> Unit,
+) {
+    val isPending = activeTask != null || queuedTask != null
+    val isAiSynced = candidate.source.id == "on_device_ai"
+    val isEmbedded = candidate.id == LOCAL_EMBEDDED_CANDIDATE_ID
+    val canUpgrade = canAlignAudio && !isAiSynced && (
+        candidate.format == LyricsFormat.PLAIN || candidate.format == LyricsFormat.LINE
+    )
+    val headline = when {
+        isAiSynced -> stringResource(R.string.lyrics_local_ai_ready_headline)
+        isEmbedded && candidate.format == LyricsFormat.PLAIN ->
+            stringResource(
+                if (aiModelInstalled) R.string.lyrics_local_embedded_plain_ctc_hint
+                else R.string.lyrics_local_embedded_plain_vad_hint,
+            )
+        isEmbedded && candidate.format == LyricsFormat.LINE ->
+            stringResource(
+                if (aiModelInstalled) R.string.lyrics_local_embedded_line_ctc_hint
+                else R.string.lyrics_local_embedded_line_download_hint,
+            )
+        !isEmbedded && candidate.format == LyricsFormat.PLAIN ->
+            stringResource(
+                if (aiModelInstalled) R.string.lyrics_local_lrc_plain_ctc_hint
+                else R.string.lyrics_local_lrc_plain_vad_hint,
+            )
+        !isEmbedded && candidate.format == LyricsFormat.LINE ->
+            stringResource(
+                if (aiModelInstalled) R.string.lyrics_local_lrc_line_ctc_hint
+                else R.string.lyrics_local_lrc_line_download_hint,
+            )
+        else -> stringResource(
+            if (isEmbedded) R.string.lyrics_local_embedded_word_ready else R.string.lyrics_local_lrc_word_ready,
+        )
+    }
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = if (canUpgrade || isAiSynced) {
+            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f)
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        },
+        border = if (canUpgrade || isAiSynced) {
+            BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f))
+        } else {
+            null
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onPreviewClick),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AutoAwesome,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    text = candidate.source.label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Badge(stringResource(candidate.format.label()), primary = true)
+            }
+
+            Text(
+                text = headline,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+
+            val firstLines = candidate.lines.filter { it.text.isNotBlank() && it.timingSource == null }.take(2)
+            if (firstLines.isNotEmpty()) {
+                Text(
+                    text = firstLines.joinToString("\n") { it.text },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            when {
+                isPending -> {
+                    val ap = activeTask?.progress
+                    val stageLabel = when {
+                        queuedTask != null -> stringResource(R.string.lyrics_ai_bg_queued, queuedAhead.coerceAtLeast(1))
+                        ap?.stage == OnDeviceLyricsAligner.AlignStage.DECODING_VOCALS ->
+                            stringResource(R.string.lyrics_ai_stage_decoding)
+                        ap?.stage == OnDeviceLyricsAligner.AlignStage.CTC_INFERENCE ->
+                            stringResource(R.string.lyrics_ai_stage_ctc)
+                        else -> stringResource(R.string.lyrics_ai_stage_aligning)
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(
+                                text = stageLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(
+                                onClick = onCancelAiSync,
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                            ) {
+                                Text(stringResource(R.string.lyrics_ai_cancel))
+                            }
+                        }
+                        LinearProgressIndicator(
+                            progress = { (ap?.fraction ?: 0f).coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                canUpgrade -> {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        val canDirectWordOrLine = candidate.format == LyricsFormat.PLAIN || aiModelInstalled
+                        FilledTonalButton(
+                            onClick = if (canDirectWordOrLine) onAiSyncClick else onPreviewClick,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(Icons.Rounded.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = stringResource(
+                                    when {
+                                        candidate.format == LyricsFormat.LINE && aiModelInstalled ->
+                                            R.string.lyrics_ai_upgrade_word_button
+                                        candidate.format == LyricsFormat.LINE && !aiModelInstalled ->
+                                            R.string.lyrics_ai_download_model_short
+                                        else -> R.string.lyrics_ai_generate_button
+                                    },
+                                ),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        TextButton(onClick = onPreviewClick) {
+                            Text(stringResource(R.string.lyrics_local_preview_button))
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -8,9 +8,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
+enum class SpeakerWarningTrigger {
+    PLAY_START,
+    VOLUME_RAISE_FROM_ZERO,
+}
+
 data class SpeakerWarningRequest(
     val id: Long = nextRequestId.incrementAndGet(),
     val isExternalPreview: Boolean = false,
+    val trigger: SpeakerWarningTrigger = SpeakerWarningTrigger.PLAY_START,
+    val pendingVolumeLevel: Int? = null,
+    val volumeRaiseViaHardwareKey: Boolean = false,
+    val pausedByService: Boolean = false,
 ) {
     private companion object {
         val nextRequestId = AtomicLong(0L)
@@ -39,6 +48,31 @@ internal fun shouldWarnBeforeSpeakerPlaybackDecision(
     return activeOutputDeviceType == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
 }
 
+/**
+ * Pure decision helper determining whether raising media volume from 0/muted while
+ * playback is already running should be intercepted by the built-in speaker warning.
+ */
+internal fun shouldWarnBeforeVolumeRaiseFromZeroDecision(
+    settingEnabled: Boolean,
+    castActive: Boolean,
+    isPlayingOrPlayWhenReady: Boolean,
+    previousVolumeLevel: Int,
+    previousStreamMuted: Boolean,
+    targetVolumeLevel: Int,
+    targetStreamMuted: Boolean,
+    activeOutputDeviceType: Int?,
+    alreadyApprovedInSession: Boolean,
+): Boolean {
+    if (!settingEnabled) return false
+    if (castActive) return false
+    if (!isPlayingOrPlayWhenReady) return false
+    if (alreadyApprovedInSession) return false
+    val wasZeroOrMuted = previousVolumeLevel <= 0 || previousStreamMuted
+    val becomesAudible = targetVolumeLevel > 0 && !targetStreamMuted
+    if (!wasZeroOrMuted || !becomesAudible) return false
+    return activeOutputDeviceType == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+}
+
 /** Returns true when adding/removing [deviceType] represents an external audio output route change. */
 internal fun isExternalWarningResetDeviceType(deviceType: Int): Boolean =
     deviceType != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER &&
@@ -62,6 +96,9 @@ object SpeakerWarningBus {
     @Volatile
     private var externalPreviewResumer: (() -> Unit)? = null
 
+    @Volatile
+    private var volumeRaiseGuard: ((targetVolume: Int, viaHardwareKey: Boolean) -> Boolean)? = null
+
     private val foregroundHosts = AtomicInteger(0)
 
     fun onForegroundHostChanged(attached: Boolean) {
@@ -82,9 +119,26 @@ object SpeakerWarningBus {
         _pendingRequest.value = null
     }
 
+    /** Re-arms the speaker warning whenever media volume drops to 0 or muted. */
+    fun onMediaVolumeBecameZero() {
+        sessionApproved = false
+    }
+
     fun registerExternalPreviewResumer(resumer: (() -> Unit)?) {
         externalPreviewResumer = resumer
     }
+
+    fun registerVolumeRaiseGuard(guard: ((targetVolume: Int, viaHardwareKey: Boolean) -> Boolean)?) {
+        volumeRaiseGuard = guard
+    }
+
+    /**
+     * Called by foreground UI controls (in-app volume slider and hardware volume-up key)
+     * before raising STREAM_MUSIC above 0. Returns true if the raise was intercepted and
+     * a warning dialog was requested so the caller should skip applying the volume change.
+     */
+    fun interceptVolumeRaise(targetVolume: Int, viaHardwareKey: Boolean): Boolean =
+        volumeRaiseGuard?.invoke(targetVolume, viaHardwareKey) == true
 
     fun requestWarning(
         request: SpeakerWarningRequest,
@@ -108,13 +162,32 @@ object SpeakerWarningBus {
     }
 
     fun confirmAndPlay(onPlayMain: () -> Unit) {
+        confirmAndPlay(onPlayMain = onPlayMain, onApplyVolume = null)
+    }
+
+    fun confirmAndPlay(
+        onPlayMain: () -> Unit,
+        onApplyVolume: ((targetVolume: Int?, viaHardwareKey: Boolean) -> Unit)?,
+    ) {
         val current = _pendingRequest.value
         sessionApproved = true
         _pendingRequest.value = null
-        if (current?.isExternalPreview == true) {
-            externalPreviewResumer?.invoke() ?: onPlayMain()
-        } else {
-            onPlayMain()
+        when {
+            current?.trigger == SpeakerWarningTrigger.VOLUME_RAISE_FROM_ZERO -> {
+                if (current.pausedByService) {
+                    if (current.isExternalPreview) {
+                        externalPreviewResumer?.invoke() ?: onPlayMain()
+                    } else {
+                        onPlayMain()
+                    }
+                } else {
+                    onApplyVolume?.invoke(current.pendingVolumeLevel, current.volumeRaiseViaHardwareKey)
+                }
+            }
+            current?.isExternalPreview == true -> {
+                externalPreviewResumer?.invoke() ?: onPlayMain()
+            }
+            else -> onPlayMain()
         }
     }
 

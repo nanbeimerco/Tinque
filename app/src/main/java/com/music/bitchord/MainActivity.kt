@@ -522,6 +522,33 @@ class MainActivity : AppCompatActivity() {
         MusicLink.retainPersistableAudioPermission(this, intent)
         MusicLink.consume(intent)
     }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.keyCode == android.view.KeyEvent.KEYCODE_VOLUME_UP) {
+            if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+                val pending = com.music.bitchord.playback.SpeakerWarningBus.pendingRequest.value
+                if (pending?.trigger == com.music.bitchord.playback.SpeakerWarningTrigger.VOLUME_RAISE_FROM_ZERO) {
+                    return true
+                }
+                if (event.repeatCount == 0 &&
+                    com.music.bitchord.playback.SpeakerWarningBus.interceptVolumeRaise(
+                        targetVolume = 1,
+                        viaHardwareKey = true,
+                    )
+                ) {
+                    return true
+                }
+            } else if (event.action == android.view.KeyEvent.ACTION_UP) {
+                val pending = com.music.bitchord.playback.SpeakerWarningBus.pendingRequest.value
+                if (pending?.trigger == com.music.bitchord.playback.SpeakerWarningTrigger.VOLUME_RAISE_FROM_ZERO &&
+                    pending.volumeRaiseViaHardwareKey
+                ) {
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
 }
 
 internal fun applySystemBarPreferences(targetWindow: android.view.Window) {

@@ -1550,7 +1550,7 @@
     <string name="lrc_saf_choose_folder">フォルダを選択</string>
     <string name="lrc_saf_all_files">すべてのファイルへのアクセス</string>
     <string name="warn_before_speaker_playback">端末スピーカー出力時に再生前確認を表示</string>
-    <string name="warn_before_speaker_playback_subtitle">イヤホンや外部機器がつながっておらず内蔵スピーカーから音が出る状態で再生を始める前に確認します</string>
+    <string name="warn_before_speaker_playback_subtitle">イヤホンや外部機器がつながっていない状態で再生を始めるときや、音量0で再生中に音量を上げるときに確認します</string>
     <string name="speaker_warning_title">端末のスピーカーから再生しますか？</string>
     <string name="speaker_warning_message">外部オーディオ機器が接続されていないため、端末のスピーカーから音声が再生されます。再生を続けますか？</string>
     <string name="speaker_warning_play">再生する</string>
@@ -1694,4 +1694,55 @@
     <string name="lyrics_ai_open_catalog">全文を見る（歌詞を選ぶ）</string>
     <string name="lyrics_ai_applied_toast">「%1$s」の歌詞をアプリ内に適用しました</string>
     <string name="lyrics_ai_continue_bg">裏で続行</string>
+    <string name="show_player_drag_handle">プレイヤー上部のバーを表示</string>
+    <string name="show_player_drag_handle_subtitle">オフにすると縦画面・横画面の上部ドラッグバーを隠します（アルバムアートの位置は維持）</string>
+    <string name="lyrics_local_embedded_source">埋め込み歌詞</string>
+    <string name="lyrics_local_lrc_source">ローカル .lrc ファイル</string>
+    <string name="lyrics_local_ai_ready_headline">AI 同期が完了しました（タップして適用・保存）</string>
+    <string name="lyrics_local_embedded_plain_ctc_hint">ローカル AI で文字同期／行同期にできる埋め込み歌詞があります</string>
+    <string name="lyrics_local_embedded_plain_vad_hint">ローカル AI で行同期（MMS-FA 導入で文字同期）にできる埋め込み歌詞があります</string>
+    <string name="lyrics_local_embedded_line_ctc_hint">ローカル AI で文字同期にアップグレードできる埋め込み歌詞があります</string>
+    <string name="lyrics_local_embedded_line_download_hint">MMS-FA AI を導入すると文字同期にアップグレードできる埋め込み歌詞があります</string>
+    <string name="lyrics_local_lrc_plain_ctc_hint">ローカル AI で文字同期／行同期にできる .lrc 歌詞があります</string>
+    <string name="lyrics_local_lrc_plain_vad_hint">ローカル AI で行同期（MMS-FA 導入で文字同期）にできる .lrc 歌詞があります</string>
+    <string name="lyrics_local_lrc_line_ctc_hint">ローカル AI で文字同期にアップグレードできる .lrc 歌詞があります</string>
+    <string name="lyrics_local_lrc_line_download_hint">MMS-FA AI を導入すると文字同期にアップグレードできる .lrc 歌詞があります</string>
+    <string name="lyrics_local_embedded_word_ready">ファイル内に文字同期済みの埋め込み歌詞があります</string>
+    <string name="lyrics_local_lrc_word_ready">文字同期済みの .lrc ファイルがあります</string>
+    <string name="lyrics_ai_upgrade_word_button">AI で文字同期にする</string>
+    <string name="lyrics_ai_download_model_short">文字同期モデルを導入</string>
+    <string name="lyrics_local_preview_button">プレビュー</string>
+    <string name="lyrics_editor_ai_word_upgrade_hint">MMS-FA モデル（約302 MB）を導入すると、この行同期歌詞を文字同期にアップグレードできます</string>
+    <string name="speaker_volume_warning_title">端末のスピーカーから音量を上げますか？</string>
+    <string name="speaker_volume_warning_message">外部オーディオ機器が接続されていないため、音量を上げると端末のスピーカーから音声が再生されます。続けますか？</string>
+    <string name="speaker_volume_warning_confirm">音量を上げる</string>
+    <string name="downmix_settings_title">ダウンミックス</string>
+    <string name="downmix_settings_subtitle">7.1.4ch → 2ch 自前マトリクス、リアルタイム音量メーター、ミュート/ソロ、プリアンプ</string>
+    <string name="downmix_enable_title">7.1.4ch → 2ch カスタムダウンミックス</string>
+    <string name="downmix_enable_subtitle">5.1 / 7.1 / 7.1.4ch 生PCMをアプリ内で2ch化し、OSの空間化より手前で出力します</string>
+    <string name="downmix_bit_perfect_bypass">ビットパーフェクト再生がオンのためバイパス中</string>
+    <string name="downmix_dsp_spec_bw">LFE: Butterworth 4次 LPF 125 Hz (24 dB/oct, Q=0.541/1.307) · 非LFE遅延: %1$d サンプル (3.583 ms @ 48 kHz)</string>
+    <string name="downmix_dsp_spec_lr4">LFE: LR4 4次 LPF 125 Hz (Q=0.7071) · メイン L/R: 2次 All-Pass（プリリンギングゼロ・位相完全一致）</string>
+    <string name="downmix_lfe_filter_section">LFE フィルター &amp; 位相整合方式</string>
+    <string name="downmix_lfe_mode_bw4_title">Butterworth 4次 ＋ 172サンプル遅延</string>
+    <string name="downmix_lfe_mode_bw4_subtitle">LFE: 125 Hz 24 dB/oct LPF · 非LFE: 3.583 ms 固定遅延</string>
+    <string name="downmix_lfe_mode_lr4_title">Linkwitz-Riley 4次 (LR4) ＋ 2次 All-Pass</string>
+    <string name="downmix_lfe_mode_lr4_subtitle">プリリンギングゼロ＆メインと LFE の位相を完全一致（Q=0.7071）</string>
+    <string name="downmix_status_active">動作中: %1$s → 2ch (%2$.1f kHz)</string>
+    <string name="downmix_status_stereo">ステレオ入力（%1$s）— ダウンミックスせず通過</string>
+    <string name="downmix_status_inactive">マルチチャンネル音源（5.1 / 7.1 / 7.1.4ch）待機中</string>
+    <string name="downmix_output_section">最終加算ゲイン &amp; プリアンプ</string>
+    <string name="downmix_preamp_title">ダウンミックス用プリアンプ（クリップ防止）</string>
+    <string name="downmix_preamp_subtitle">全チャンネル加算後のクリップを防ぐため出力レベルを調整します</string>
+    <string name="downmix_auto_headroom_title">オートヘッドルーム</string>
+    <string name="downmix_auto_headroom_subtitle">最終出力が 0 dBFS を超えそうになると自動でプリアンプを下げてクリップを防ぎます（音質圧縮なし）</string>
+    <string name="downmix_pre_sum_label">加算直後（プリアンプ前 · 64-bit Float）</string>
+    <string name="downmix_post_out_label">最終出力（プリアンプ後）</string>
+    <string name="downmix_no_clips">クリップなし</string>
+    <string name="downmix_clips_count">クリップ %1$d 回（タップでリセット）</string>
+    <string name="downmix_clip_badge">CLIP</string>
+    <string name="downmix_channels_section">各チャンネル入力・寄与ゲイン &amp; ミュート / ソロ</string>
+    <string name="downmix_channel_in_contrib">入力 %1$s  ·  寄与 %2$s</string>
+    <string name="downmix_reset_ms">M/S 解除</string>
+    <string name="downmix_inactive_channel">現在のストリームに無し</string>
 </resources>

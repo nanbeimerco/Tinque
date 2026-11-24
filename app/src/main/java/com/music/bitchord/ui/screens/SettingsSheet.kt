@@ -77,6 +77,7 @@ import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
 import androidx.compose.material.icons.rounded.FileDownload
 import androidx.compose.material.icons.rounded.FileUpload
+import androidx.compose.material.icons.rounded.DragHandle
 import androidx.compose.material.icons.rounded.FilterAlt
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOff
@@ -240,7 +241,7 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private data class SettingsSearchEntry(
+internal data class SettingsSearchEntry(
     val title: String,
     val subtitle: String,
     val keywords: List<String> = emptyList(),
@@ -328,6 +329,22 @@ private fun autoplayExtraSearchEntries(
     )
 }
 
+@Composable
+private fun playbackAudioEffectsSearchEntries(
+    onOpenDownmix: () -> Unit,
+): List<SettingsSearchEntry> {
+    val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
+    val parametricEqEnabled by AppSettings.parametricEqEnabled.collectAsStateWithLifecycle()
+    val reverbEnabled by AppSettings.reverbEnabled.collectAsStateWithLifecycle()
+    val hideLosslessLabel by AppSettings.hideLosslessLabel.collectAsStateWithLifecycle()
+    return listOf(
+        SettingsSearchEntry(stringResource(R.string.hide_lossless_label), stringResource(R.string.hide_lossless_label_subtitle), listOf("lossless", "quality", "ロスレス", "高音質"), hideLosslessLabel) { AppSettings.setHideLosslessLabel(!hideLosslessLabel) },
+        SettingsSearchEntry(stringResource(R.string.spatial_audio), stringResource(R.string.spatial_audio_subtitle), listOf("spatial", "空間オーディオ"), spatialAudio) { AppSettings.setSpatialAudio(!spatialAudio) },
+        SettingsSearchEntry(stringResource(R.string.parametric_eq), stringResource(R.string.parametric_eq_subtitle), listOf("parametric", "equalizer", "frequency", "Q", "gain", "パラメトリック", "イコライザー", "周波数"), parametricEqEnabled) { AppSettings.setParametricEqEnabled(!parametricEqEnabled) },
+        SettingsSearchEntry(stringResource(R.string.reverb), stringResource(R.string.reverb_subtitle), listOf("reverb", "room", "残響", "リバーブ"), reverbEnabled) { AppSettings.setReverbEnabled(!reverbEnabled) },
+    ) + downmixSearchEntries(onOpenDownmix)
+}
+
 /**
  * Grouped settings, in the shape phones have taught people to expect: inset
  * cards of rows, a leading glyph per row, the current value on the right, and a
@@ -392,7 +409,6 @@ fun SettingsScreen(
     val recentlyPlayedThresholdSeconds by AppSettings.recentlyPlayedThresholdSeconds.collectAsStateWithLifecycle()
     val seekButtonMode by AppSettings.seekButtonMode.collectAsStateWithLifecycle()
     val hideSeekButtonLabels by AppSettings.hideSeekButtonLabels.collectAsStateWithLifecycle()
-    val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
     val nerdStats by AppSettings.showNerdStats.collectAsStateWithLifecycle()
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
@@ -434,6 +450,7 @@ fun SettingsScreen(
     val keepScreenOnDuringLyrics by AppSettings.keepScreenOnDuringLyrics.collectAsStateWithLifecycle()
     val showStatusBar by AppSettings.showStatusBar.collectAsStateWithLifecycle()
     val showNavigationBar by AppSettings.showNavigationBar.collectAsStateWithLifecycle()
+    val showPlayerDragHandle by AppSettings.showPlayerDragHandle.collectAsStateWithLifecycle()
     val quietMode by AppSettings.quietMode.collectAsStateWithLifecycle()
     val orientationMode by AppSettings.screenOrientationMode.collectAsStateWithLifecycle()
     val landscapePlayerLayout by AppSettings.landscapePlayerLayout.collectAsStateWithLifecycle()
@@ -462,7 +479,6 @@ fun SettingsScreen(
     val showPlayerLyricsStrip by AppSettings.showPlayerLyricsStrip.collectAsStateWithLifecycle()
     val offlineMode by AppSettings.offlineMode.collectAsStateWithLifecycle()
     val youtubeMusicEnabled by AppSettings.youtubeMusicEnabled.collectAsStateWithLifecycle()
-    val hideLosslessLabel by AppSettings.hideLosslessLabel.collectAsStateWithLifecycle()
     val showTrackDurationInsteadOfRemaining by AppSettings.showTrackDurationInsteadOfRemaining.collectAsStateWithLifecycle()
     val popupExternalAudioPlayer by AppSettings.popupExternalAudioPlayer.collectAsStateWithLifecycle()
     val preventPlayAtZeroVolume by AppSettings.preventPlayAtZeroVolume.collectAsStateWithLifecycle()
@@ -491,8 +507,6 @@ fun SettingsScreen(
     val matchButtonAccentToArtwork by AppSettings.matchButtonAccentToArtwork.collectAsStateWithLifecycle()
     val miniPlayerArtworkColor by AppSettings.miniPlayerArtworkColor.collectAsStateWithLifecycle()
     val miniPlayerPreviousButton by AppSettings.miniPlayerPreviousButton.collectAsStateWithLifecycle()
-    val parametricEqEnabled by AppSettings.parametricEqEnabled.collectAsStateWithLifecycle()
-    val reverbEnabled by AppSettings.reverbEnabled.collectAsStateWithLifecycle()
     val sessionId by AppSettings.audioSessionId.collectAsStateWithLifecycle()
     val outputPcmMode by AppSettings.outputPcmMode.collectAsStateWithLifecycle()
     val bitPerfectPlayback by AppSettings.bitPerfectPlayback.collectAsStateWithLifecycle()
@@ -546,13 +560,13 @@ fun SettingsScreen(
     var music2EmoOpenRequest by remember { mutableIntStateOf(0) }
     var lyricsAiModelOpenRequest by remember { mutableIntStateOf(0) }
     var recommendationFoldersOpenRequest by remember { mutableIntStateOf(0) }
+    var showDownmixSheet by remember { mutableStateOf(false) }
 
     val settingsSearchEntries = listOf(
         SettingsSearchEntry(stringResource(R.string.hide_lyrics_status_text), stringResource(R.string.hide_lyrics_status_text_subtitle), listOf("lyrics", "歌詞", "状態", "status"), hideLyricsStatusText) { AppSettings.setHideLyricsStatusText(!hideLyricsStatusText) },
         SettingsSearchEntry(stringResource(R.string.hide_lyrics_saved_message), stringResource(R.string.hide_lyrics_saved_message_subtitle), listOf("lyrics", "歌詞", "保存済み", "downloaded"), hideLyricsSavedMessage) { AppSettings.setHideLyricsSavedMessage(!hideLyricsSavedMessage) },
         SettingsSearchEntry(stringResource(R.string.hide_lyrics_unavailable_label), stringResource(R.string.hide_lyrics_unavailable_label_subtitle), listOf("lyrics", "歌詞", "ありません", "unavailable"), hideLyricsUnavailableLabel) { AppSettings.setHideLyricsUnavailableLabel(!hideLyricsUnavailableLabel) },
         SettingsSearchEntry(stringResource(R.string.hide_lyrics_gap_note), stringResource(R.string.hide_lyrics_gap_note_subtitle), listOf("lyrics", "歌詞", "音符", "gap", "instrumental"), hideLyricsGapNote) { AppSettings.setHideLyricsGapNote(!hideLyricsGapNote) },
-        SettingsSearchEntry(stringResource(R.string.hide_lossless_label), stringResource(R.string.hide_lossless_label_subtitle), listOf("lossless", "quality", "ロスレス", "高音質"), hideLosslessLabel) { AppSettings.setHideLosslessLabel(!hideLosslessLabel) },
         SettingsSearchEntry(
             stringResource(R.string.frosted_queue_manager),
             stringResource(R.string.frosted_queue_manager_subtitle),
@@ -612,6 +626,7 @@ fun SettingsScreen(
         ) { AppSettings.setShowTrackDurationInsteadOfRemaining(!showTrackDurationInsteadOfRemaining) },
         SettingsSearchEntry(stringResource(R.string.show_status_bar), stringResource(R.string.show_status_bar_search_help), listOf("status bar", "ステータスバー", "battery", "電池"), showStatusBar) { AppSettings.setShowStatusBar(!showStatusBar) },
         SettingsSearchEntry(stringResource(R.string.show_navigation_bar), stringResource(R.string.show_navigation_bar_search_help), listOf("navigation bar", "ナビゲーションバー", "戻る", "home"), showNavigationBar) { AppSettings.setShowNavigationBar(!showNavigationBar) },
+        SettingsSearchEntry(stringResource(R.string.show_player_drag_handle), stringResource(R.string.show_player_drag_handle_subtitle), listOf("drag handle", "grabber", "bar", "handle", "バー", "ハンドル", "プレイヤー", "ジャケット"), showPlayerDragHandle) { AppSettings.setShowPlayerDragHandle(!showPlayerDragHandle) },
         SettingsSearchEntry(stringResource(R.string.quiet_mode), stringResource(R.string.quiet_mode_subtitle), listOf("quiet", "notification", "通知", "ステータスバー", "集中", "immersive"), quietMode) { AppSettings.setQuietMode(!quietMode) },
         SettingsSearchEntry(stringResource(R.string.hide_player_artist), stringResource(R.string.hide_player_artist_subtitle), listOf("artist", "アーティスト", "player"), hidePlayerArtist) { AppSettings.setHidePlayerArtist(!hidePlayerArtist) },
         SettingsSearchEntry(stringResource(R.string.player_lyrics_strip), stringResource(R.string.player_lyrics_strip_subtitle), listOf("lyrics", "歌詞", "strip", "player"), showPlayerLyricsStrip) { AppSettings.setShowPlayerLyricsStrip(!showPlayerLyricsStrip) },
@@ -683,9 +698,6 @@ fun SettingsScreen(
         ),
         SettingsSearchEntry(stringResource(R.string.lyrics_furigana), stringResource(R.string.lyrics_furigana_subtitle), listOf("lyrics", "furigana", "ruby", "ふりがな", "ルビ"), showLyricsFurigana) { AppSettings.setShowLyricsFurigana(!showLyricsFurigana) },
         SettingsSearchEntry(stringResource(R.string.lyrics_auto_fit), stringResource(R.string.lyrics_auto_fit_subtitle), listOf("lyrics", "one line", "fit", "歌詞", "一行", "文字サイズ"), autoFitOneLineLyrics) { AppSettings.setAutoFitOneLineLyrics(!autoFitOneLineLyrics) },
-        SettingsSearchEntry(stringResource(R.string.spatial_audio), stringResource(R.string.spatial_audio_subtitle), listOf("spatial", "空間オーディオ"), spatialAudio) { AppSettings.setSpatialAudio(!spatialAudio) },
-        SettingsSearchEntry(stringResource(R.string.parametric_eq), stringResource(R.string.parametric_eq_subtitle), listOf("parametric", "equalizer", "frequency", "Q", "gain", "パラメトリック", "イコライザー", "周波数"), parametricEqEnabled) { AppSettings.setParametricEqEnabled(!parametricEqEnabled) },
-        SettingsSearchEntry(stringResource(R.string.reverb), stringResource(R.string.reverb_subtitle), listOf("reverb", "room", "残響", "リバーブ"), reverbEnabled) { AppSettings.setReverbEnabled(!reverbEnabled) },
         SettingsSearchEntry(stringResource(R.string.favorite_icon_star), stringResource(R.string.favorite_icon_star_subtitle), listOf("favorite", "star", "お気に入り", "星", "ハート"), favoriteUsesStar) { AppSettings.setFavoriteUsesStar(!favoriteUsesStar) },
         SettingsSearchEntry(stringResource(R.string.hide_unknown_player_artist), stringResource(R.string.hide_unknown_player_artist_subtitle), listOf("artist", "unknown", "アーティスト", "unknown artist"), hideUnknownPlayerArtist) { AppSettings.setHideUnknownPlayerArtist(!hideUnknownPlayerArtist) },
         SettingsSearchEntry(stringResource(R.string.center_player_track_info), stringResource(R.string.center_player_track_info_subtitle), listOf("center", "中央", "曲情報"), centerPlayerTrackInfo) { AppSettings.setCenterPlayerTrackInfo(!centerPlayerTrackInfo) },
@@ -729,7 +741,7 @@ fun SettingsScreen(
         ) { AppSettings.setMiniPlayerPreviousButton(!miniPlayerPreviousButton) },
         SettingsSearchEntry(stringResource(R.string.filter_non_music_audio), stringResource(R.string.filter_non_music_audio_subtitle), listOf("filter", "audio", "music", "音楽", "フィルター"), filterNonMusicAudio) { AppSettings.setFilterNonMusicAudio(!filterNonMusicAudio) },
         SettingsSearchEntry(stringResource(R.string.playlist_song_artwork), stringResource(R.string.playlist_song_artwork_subtitle), listOf("playlist", "artwork", "プレイリスト", "アルバムアート"), showPlaylistSongArtwork) { AppSettings.setShowPlaylistSongArtwork(!showPlaylistSongArtwork) },
-    ) + motionAndNavSearchEntries() + autoplayExtraSearchEntries(
+    ) + motionAndNavSearchEntries() + playbackAudioEffectsSearchEntries(onOpenDownmix = { showDownmixSheet = true }) + autoplayExtraSearchEntries(
         onOpenMusic2Emo = { music2EmoOpenRequest++ },
         onOpenExcludedFolders = { recommendationFoldersOpenRequest++ },
     ) + listOf(
@@ -1816,81 +1828,9 @@ fun SettingsScreen(
                 onClick = { AppSettings.setHideSeekButtonLabels(!hideSeekButtonLabels) },
             )
             RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.SurroundSound,
-                title = stringResource(R.string.spatial_audio),
-                subtitle = stringResource(R.string.spatial_audio_subtitle),
-                trailing = {
-                    Switch(
-                        checked = spatialAudio,
-                        onCheckedChange = AppSettings::setSpatialAudio,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setSpatialAudio(!spatialAudio) },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.GraphicEq,
-                title = stringResource(R.string.parametric_eq),
-                subtitle = stringResource(R.string.parametric_eq_subtitle),
-                trailing = {
-                    Switch(
-                        checked = parametricEqEnabled,
-                        onCheckedChange = AppSettings::setParametricEqEnabled,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setParametricEqEnabled(!parametricEqEnabled) },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.SurroundSound,
-                title = stringResource(R.string.reverb),
-                subtitle = stringResource(R.string.reverb_subtitle),
-                trailing = {
-                    Switch(
-                        checked = reverbEnabled,
-                        onCheckedChange = AppSettings::setReverbEnabled,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setReverbEnabled(!reverbEnabled) },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.Tune,
-                title = stringResource(R.string.equalizer),
-                subtitle = stringResource(R.string.equalizer_subtitle),
-                // The app's own equalizer page where there is one (under the
-                // bottom bar); the sheet otherwise.
-                onClick = { openEqualizerPage?.invoke() ?: run { showEqualizerSheet = true } },
-            )
-            RowDivider()
-            SettingsRow(
-                icon = Icons.Rounded.Headphones,
-                title = stringResource(R.string.hide_lossless_label),
-                subtitle = stringResource(R.string.hide_lossless_label_subtitle),
-                trailing = {
-                    Switch(
-                        checked = hideLosslessLabel,
-                        onCheckedChange = AppSettings::setHideLosslessLabel,
-                        colors = SwitchDefaults.colors(
-                            checkedTrackColor = MaterialTheme.colorScheme.primary,
-                            checkedBorderColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                },
-                onClick = { AppSettings.setHideLosslessLabel(!hideLosslessLabel) },
+            PlaybackAudioEffectsRows(
+                onOpenEqualizer = { openEqualizerPage?.invoke() ?: run { showEqualizerSheet = true } },
+                onOpenDownmix = { showDownmixSheet = true },
             )
             RowDivider()
             SettingsRow(
@@ -2333,6 +2273,16 @@ fun SettingsScreen(
                     Switch(checked = showNavigationBar, onCheckedChange = AppSettings::setShowNavigationBar)
                 },
                 onClick = { AppSettings.setShowNavigationBar(!showNavigationBar) },
+            )
+            RowDivider()
+            SettingsRow(
+                icon = Icons.Rounded.DragHandle,
+                title = stringResource(R.string.show_player_drag_handle),
+                subtitle = stringResource(R.string.show_player_drag_handle_subtitle),
+                trailing = {
+                    Switch(checked = showPlayerDragHandle, onCheckedChange = AppSettings::setShowPlayerDragHandle)
+                },
+                onClick = { AppSettings.setShowPlayerDragHandle(!showPlayerDragHandle) },
             )
             RowDivider()
             SettingsRow(
@@ -4571,6 +4521,100 @@ fun SettingsScreen(
         )
     }
 
+    if (showDownmixSheet) {
+        DownmixSettingsSheet(
+            onDismiss = { showDownmixSheet = false },
+        )
+    }
+
+}
+
+@Composable
+private fun PlaybackAudioEffectsRows(
+    onOpenEqualizer: () -> Unit,
+    onOpenDownmix: () -> Unit,
+) {
+    val spatialAudio by AppSettings.spatialAudio.collectAsStateWithLifecycle()
+    val parametricEqEnabled by AppSettings.parametricEqEnabled.collectAsStateWithLifecycle()
+    val reverbEnabled by AppSettings.reverbEnabled.collectAsStateWithLifecycle()
+    val hideLosslessLabel by AppSettings.hideLosslessLabel.collectAsStateWithLifecycle()
+
+    SettingsRow(
+        icon = Icons.Rounded.SurroundSound,
+        title = stringResource(R.string.spatial_audio),
+        subtitle = stringResource(R.string.spatial_audio_subtitle),
+        trailing = {
+            Switch(
+                checked = spatialAudio,
+                onCheckedChange = AppSettings::setSpatialAudio,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        },
+        onClick = { AppSettings.setSpatialAudio(!spatialAudio) },
+    )
+    RowDivider()
+    SettingsRow(
+        icon = Icons.Rounded.GraphicEq,
+        title = stringResource(R.string.parametric_eq),
+        subtitle = stringResource(R.string.parametric_eq_subtitle),
+        trailing = {
+            Switch(
+                checked = parametricEqEnabled,
+                onCheckedChange = AppSettings::setParametricEqEnabled,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        },
+        onClick = { AppSettings.setParametricEqEnabled(!parametricEqEnabled) },
+    )
+    RowDivider()
+    SettingsRow(
+        icon = Icons.Rounded.SurroundSound,
+        title = stringResource(R.string.reverb),
+        subtitle = stringResource(R.string.reverb_subtitle),
+        trailing = {
+            Switch(
+                checked = reverbEnabled,
+                onCheckedChange = AppSettings::setReverbEnabled,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        },
+        onClick = { AppSettings.setReverbEnabled(!reverbEnabled) },
+    )
+    RowDivider()
+    SettingsRow(
+        icon = Icons.Rounded.Tune,
+        title = stringResource(R.string.equalizer),
+        subtitle = stringResource(R.string.equalizer_subtitle),
+        onClick = onOpenEqualizer,
+    )
+    RowDivider()
+    DownmixSettingsRow(onOpen = onOpenDownmix)
+    RowDivider()
+    SettingsRow(
+        icon = Icons.Rounded.Headphones,
+        title = stringResource(R.string.hide_lossless_label),
+        subtitle = stringResource(R.string.hide_lossless_label_subtitle),
+        trailing = {
+            Switch(
+                checked = hideLosslessLabel,
+                onCheckedChange = AppSettings::setHideLosslessLabel,
+                colors = SwitchDefaults.colors(
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = MaterialTheme.colorScheme.primary,
+                ),
+            )
+        },
+        onClick = { AppSettings.setHideLosslessLabel(!hideLosslessLabel) },
+    )
 }
 
 /**
@@ -4844,6 +4888,7 @@ internal fun SettingsRow(
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
                 if (badge != null) {
                     Spacer(Modifier.width(8.dp))

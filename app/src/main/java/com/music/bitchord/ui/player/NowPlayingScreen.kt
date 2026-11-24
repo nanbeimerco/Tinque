@@ -507,6 +507,34 @@ private val DOCKED_PAGE_MIN_WIDTH = 360.dp
  * strip the gesture needed.
  */
 private val DOCKED_TOP_PAD = 12.dp
+private val LANDSCAPE_SPLIT_TOP_STRIP_HEIGHT = 20.dp
+
+/**
+ * Resolves the strip height between the status bar and the artwork box.
+ * Hiding the drag handle only hides the visual bar without shifting the
+ * artwork upward, keeping punch-hole/cutout clearance intact.
+ */
+internal fun resolvePlayerTopStripHeight(
+    docked: Boolean,
+    showDragHandle: Boolean,
+    hasRadioName: Boolean,
+    hasStatusBarPadding: Boolean,
+): Dp = if (docked) DOCKED_TOP_PAD else DISMISS_STRIP_HEIGHT
+
+/**
+ * Resolves (headerStripHeight, artworkExtraTopPadding) for phone landscape split view.
+ * When the top bar is hidden and no radio badge is shown, the right pane reclaims the
+ * 20dp strip for controls/lyrics while the left artwork pane retains the same top padding
+ * so its size and punch-hole clearance stay unchanged.
+ */
+internal fun resolveLandscapeSplitTopInsets(
+    showDragHandle: Boolean,
+    hasRadioName: Boolean,
+): Pair<Dp, Dp> = if (showDragHandle || hasRadioName) {
+    LANDSCAPE_SPLIT_TOP_STRIP_HEIGHT to 0.dp
+} else {
+    0.dp to LANDSCAPE_SPLIT_TOP_STRIP_HEIGHT
+}
 /**
  * How far a tall screen is allowed to push the transport from the blocks either
  * side of it.
@@ -1171,6 +1199,7 @@ fun NowPlayingScreen(
     val quietMode by AppSettings.quietMode.collectAsStateWithLifecycle()
     val showStatusBar by AppSettings.showStatusBar.collectAsStateWithLifecycle()
     val showNavigationBar by AppSettings.showNavigationBar.collectAsStateWithLifecycle()
+    val showPlayerDragHandle by AppSettings.showPlayerDragHandle.collectAsStateWithLifecycle()
 
     if (!docked) {
         val artLuminance = rememberArtworkLuminance(backdropArtworkUrl)
@@ -1834,10 +1863,16 @@ fun NowPlayingScreen(
     var playerBounds by remember { mutableStateOf(lastPlayerBounds) }
     val statusBarTop = if (showStatusBar && !quietMode) WindowInsets.statusBars.asPaddingValues().calculateTopPadding() else 0.dp
     // What sits between the status bar and the artwork: the drag strip in a
-    // sheet, plain padding in a pane. Read in three places — the strip itself,
-    // the scrim drawn over it and the banner's own height — which all have to
-    // agree or the artwork and the credits under it move.
-    val topStrip = if (docked) DOCKED_TOP_PAD else DISMISS_STRIP_HEIGHT
+    // sheet, plain padding in a pane or when the drag handle is hidden. Read in
+    // three places — the strip itself, the scrim drawn over it and the banner's
+    // own height — which all have to agree or the artwork and the credits under
+    // it move.
+    val topStrip = resolvePlayerTopStripHeight(
+        docked = docked,
+        showDragHandle = showPlayerDragHandle,
+        hasRadioName = song.radioName != null,
+        hasStatusBarPadding = showStatusBar && !quietMode,
+    )
 
     var dismissBandTop by remember { mutableFloatStateOf(0f) }
     var dismissBandBottom by remember { mutableFloatStateOf(0f) }
@@ -2000,6 +2035,7 @@ fun NowPlayingScreen(
                     scrubbing = false
                 },
                 showStatusBar = showStatusBar && !quietMode,
+                showDragHandle = showPlayerDragHandle,
                 localPreviewRequest = localPreviewRequest,
                 artRequest = artRequest,
                 useRemoteArtworkFallback = useRemoteArtworkFallback,
@@ -2065,9 +2101,20 @@ fun NowPlayingScreen(
                 hideVolumeBar = hideVolumeBar,
                 volume = volume.value,
                 onVolumeChange = {
-                    volumeDragging = true
-                    scope.launch { volume.snapTo(it) }
-                    audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, (it * maxVolume).roundToInt(), 0)
+                    val targetLevel = (it * maxVolume).roundToInt()
+                    if (targetLevel > 0 &&
+                        com.music.bitchord.playback.SpeakerWarningBus.interceptVolumeRaise(
+                            targetVolume = targetLevel,
+                            viaHardwareKey = false,
+                        )
+                    ) {
+                        volumeDragging = false
+                        scope.launch { volume.snapTo(0f) }
+                    } else {
+                        volumeDragging = true
+                        scope.launch { volume.snapTo(it) }
+                        audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, targetLevel, 0)
+                    }
                 },
                 onVolumeChangeFinished = { volumeDragging = false },
                 queue = queue,
@@ -2145,19 +2192,21 @@ fun NowPlayingScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 if (!docked) {
-                    // Centred in the strip when it's the only thing there; nudged
-                    // up when the radio caption needs the room below it.
-                    Box(
-                        (if (song.radioName != null) {
-                            Modifier.align(Alignment.TopCenter).offset(y = 6.dp)
-                        } else {
-                            Modifier.align(Alignment.Center)
-                        })
-                            .width(38.dp)
-                            .height(5.dp)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(Color.White.copy(alpha = 0.32f)),
-                    )
+                    if (showPlayerDragHandle) {
+                        // Centred in the strip when it's the only thing there; nudged
+                        // up when the radio caption needs the room below it.
+                        Box(
+                            (if (song.radioName != null) {
+                                Modifier.align(Alignment.TopCenter).offset(y = 6.dp)
+                            } else {
+                                Modifier.align(Alignment.Center)
+                            })
+                                .width(38.dp)
+                                .height(5.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(Color.White.copy(alpha = 0.32f)),
+                        )
+                    }
                     song.radioName?.let { radioName ->
                         Text(
                             text = stringResource(R.string.playing_radio, radioName),
@@ -2167,8 +2216,12 @@ fun NowPlayingScreen(
                             overflow = TextOverflow.Ellipsis,
                             textAlign = TextAlign.Center,
                             modifier = Modifier
-                                .align(Alignment.BottomCenter)
-                                .padding(start = PLAYER_GUTTER, end = PLAYER_GUTTER, bottom = 1.dp),
+                                .align(if (showPlayerDragHandle) Alignment.BottomCenter else Alignment.Center)
+                                .padding(
+                                    start = PLAYER_GUTTER,
+                                    end = PLAYER_GUTTER,
+                                    bottom = if (showPlayerDragHandle) 1.dp else 0.dp,
+                                ),
                         )
                     }
                 }
@@ -3855,14 +3908,25 @@ fun NowPlayingScreen(
                 PlayerVolumeArea(
                     volume = volume.value,
                     onVolumeChange = {
-                        volumeDragging = true
-                        // Follow the finger exactly; only external changes tween.
-                        scope.launch { volume.snapTo(it) }
-                        audioManager?.setStreamVolume(
-                            AudioManager.STREAM_MUSIC,
-                            (it * maxVolume).roundToInt(),
-                            0,
-                        )
+                        val targetLevel = (it * maxVolume).roundToInt()
+                        if (targetLevel > 0 &&
+                            com.music.bitchord.playback.SpeakerWarningBus.interceptVolumeRaise(
+                                targetVolume = targetLevel,
+                                viaHardwareKey = false,
+                            )
+                        ) {
+                            volumeDragging = false
+                            scope.launch { volume.snapTo(0f) }
+                        } else {
+                            volumeDragging = true
+                            // Follow the finger exactly; only external changes tween.
+                            scope.launch { volume.snapTo(it) }
+                            audioManager?.setStreamVolume(
+                                AudioManager.STREAM_MUSIC,
+                                targetLevel,
+                                0,
+                            )
+                        }
                     },
                     onVolumeChangeFinished = { volumeDragging = false },
                 )
@@ -7907,6 +7971,7 @@ private fun LandscapeSplitPlayerContent(
     onScrubChange: (Float) -> Unit,
     onScrubFinished: () -> Unit,
     showStatusBar: Boolean,
+    showDragHandle: Boolean,
     localPreviewRequest: ImageRequest?,
     artRequest: ImageRequest,
     useRemoteArtworkFallback: Boolean,
@@ -8003,6 +8068,11 @@ private fun LandscapeSplitPlayerContent(
     val stillRacing = song.videoId in racingLossless
     val miniLyricsVisible = showPlayerLyricsStrip && (syncedLyricsEnabled || !lyrics.isNullOrEmpty())
 
+    val (headerStripHeight, artworkExtraTopPad) = resolveLandscapeSplitTopInsets(
+        showDragHandle = showDragHandle,
+        hasRadioName = song.radioName != null,
+    )
+
     Column(
         modifier = modifier
             .then(if (showStatusBar) Modifier.statusBarsPadding() else Modifier)
@@ -8010,30 +8080,34 @@ private fun LandscapeSplitPlayerContent(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // Slim drag handle strip at top so downward swipe dismisses the sheet without stealing vertical room.
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(20.dp),
-            contentAlignment = Alignment.Center,
-        ) {
+        if (headerStripHeight > 0.dp) {
             Box(
-                Modifier
-                    .width(38.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.30f)),
-            )
-            song.radioName?.let { radioName ->
-                Text(
-                    text = stringResource(R.string.playing_radio, radioName),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White.copy(alpha = 0.72f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .padding(end = PLAYER_GUTTER),
-                )
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(headerStripHeight),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (showDragHandle) {
+                    Box(
+                        Modifier
+                            .width(38.dp)
+                            .height(4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(Color.White.copy(alpha = 0.30f)),
+                    )
+                }
+                song.radioName?.let { radioName ->
+                    Text(
+                        text = stringResource(R.string.playing_radio, radioName),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.72f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = PLAYER_GUTTER),
+                    )
+                }
             }
         }
 
@@ -8054,6 +8128,7 @@ private fun LandscapeSplitPlayerContent(
                 modifier = Modifier
                     .weight(0.44f)
                     .fillMaxHeight()
+                    .padding(top = artworkExtraTopPad)
                     .pointerInput(Unit) {
                         var total = 0f
                         detectHorizontalDragGestures(

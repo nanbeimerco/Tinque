@@ -13,6 +13,8 @@ import com.music.bitchord.data.Http
 import com.music.bitchord.data.innertube.YoutubeStreamBootstrap
 import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.feature.artistimage.model.ArtistSort
+import com.music.bitchord.playback.DownmixConfig
+import com.music.bitchord.playback.DownmixLfeFilterMode
 import com.music.bitchord.playback.equalizer.EelEqParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.Locale
@@ -493,6 +495,13 @@ object AppSettings {
      * us a stereo stream, so there's no Atmos-style source to render.
      */
     val spatialAudio = MutableStateFlow(false)
+    /** In-app multichannel (7.1.4 / 5.1 / 7.1) to 2ch stereo downmixer with 125 Hz LFE Butterworth LPF. */
+    val multichannelDownmixEnabled = MutableStateFlow(true)
+    val multichannelDownmixPreampDb = MutableStateFlow(DownmixConfig.DEFAULT_PREAMP_DB)
+    val multichannelDownmixMutedChannels = MutableStateFlow<Set<String>>(emptySet())
+    val multichannelDownmixSoloChannels = MutableStateFlow<Set<String>>(emptySet())
+    val multichannelDownmixLfeFilterMode = MutableStateFlow(DownmixLfeFilterMode.BUTTERWORTH_4_DELAY)
+    val multichannelDownmixAutoHeadroom = MutableStateFlow(false)
     /** Optional in-app high-precision PCM parametric EQ & EEL DSP; disabled until the listener opts in. */
     val parametricEqEnabled = MutableStateFlow(false)
     val parametricEqBands = MutableStateFlow(ParametricEqBand.DEFAULTS)
@@ -666,6 +675,8 @@ object AppSettings {
     /** System UI preferences; bars remain transiently revealable by swipe when hidden. */
     val showStatusBar = MutableStateFlow(true)
     val showNavigationBar = MutableStateFlow(true)
+    /** Shows the top grabber bar above the player artwork on non-docked sheet layouts. */
+    val showPlayerDragHandle = MutableStateFlow(true)
     /**
      * Quiet mode: the status bar is folded away and the media notification is
      * not posted at all. Playback keeps running from the service; the status
@@ -1177,6 +1188,19 @@ object AppSettings {
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
         dolbyAtmos.value = prefs.getBoolean(KEY_DOLBY_ATMOS, true)
         spatialAudio.value = prefs.getBoolean(KEY_SPATIAL_AUDIO, false)
+        multichannelDownmixEnabled.value = prefs.getBoolean(KEY_MULTICHANNEL_DOWNMIX_ENABLED, true)
+        multichannelDownmixPreampDb.value = prefs.getFloat(
+            KEY_MULTICHANNEL_DOWNMIX_PREAMP_DB,
+            DownmixConfig.DEFAULT_PREAMP_DB,
+        ).coerceIn(DownmixConfig.MIN_PREAMP_DB, DownmixConfig.MAX_PREAMP_DB)
+        multichannelDownmixMutedChannels.value =
+            prefs.getStringSet(KEY_MULTICHANNEL_DOWNMIX_MUTED, emptySet())?.toSet() ?: emptySet()
+        multichannelDownmixSoloChannels.value =
+            prefs.getStringSet(KEY_MULTICHANNEL_DOWNMIX_SOLO, emptySet())?.toSet() ?: emptySet()
+        multichannelDownmixLfeFilterMode.value =
+            DownmixLfeFilterMode.fromKey(prefs.getString(KEY_MULTICHANNEL_DOWNMIX_LFE_FILTER_MODE, null))
+        multichannelDownmixAutoHeadroom.value =
+            prefs.getBoolean(KEY_MULTICHANNEL_DOWNMIX_AUTO_HEADROOM, false)
         val legacyPeqEnabled = prefs.getBoolean(KEY_PARAMETRIC_EQ_ENABLED, false)
         val legacyPeqBands = ParametricEqBand.decode(prefs.getString(KEY_PARAMETRIC_EQ_BANDS, null))
         val savedPeqConfig = ParametricEqConfig.fromJsonString(prefs.getString(KEY_PARAMETRIC_EQ_CONFIG_JSON, null))
@@ -1303,6 +1327,7 @@ object AppSettings {
         hiddenLibrarySections.value = readSet(KEY_LIBRARY_SECTIONS_HIDDEN, LibrarySection.entries)
         showStatusBar.value = prefs.getBoolean(KEY_SHOW_STATUS_BAR, true)
         showNavigationBar.value = prefs.getBoolean(KEY_SHOW_NAVIGATION_BAR, true)
+        showPlayerDragHandle.value = prefs.getBoolean(KEY_SHOW_PLAYER_DRAG_HANDLE, true)
         quietMode.value = prefs.getBoolean(KEY_QUIET_MODE, false)
         keepScreenOn.value = prefs.getBoolean(KEY_KEEP_SCREEN_ON, false)
         keepScreenOnDuringLyrics.value = prefs.getBoolean(KEY_KEEP_SCREEN_ON_DURING_LYRICS, true)
@@ -1654,6 +1679,61 @@ object AppSettings {
         spatialAudio.value = value
         prefs.edit().putBoolean(KEY_SPATIAL_AUDIO, value).apply()
     }
+
+    fun setMultichannelDownmixEnabled(value: Boolean) {
+        multichannelDownmixEnabled.value = value
+        prefs.edit().putBoolean(KEY_MULTICHANNEL_DOWNMIX_ENABLED, value).apply()
+    }
+
+    fun setMultichannelDownmixPreampDb(value: Float) {
+        val normalized = value.coerceIn(DownmixConfig.MIN_PREAMP_DB, DownmixConfig.MAX_PREAMP_DB)
+        multichannelDownmixPreampDb.value = normalized
+        prefs.edit().putFloat(KEY_MULTICHANNEL_DOWNMIX_PREAMP_DB, normalized).apply()
+    }
+
+    fun toggleMultichannelDownmixMute(channelId: String) {
+        val next = multichannelDownmixMutedChannels.value.toMutableSet()
+        if (!next.add(channelId)) next.remove(channelId)
+        val immutable = next.toSet()
+        multichannelDownmixMutedChannels.value = immutable
+        prefs.edit().putStringSet(KEY_MULTICHANNEL_DOWNMIX_MUTED, immutable).apply()
+    }
+
+    fun toggleMultichannelDownmixSolo(channelId: String) {
+        val next = multichannelDownmixSoloChannels.value.toMutableSet()
+        if (!next.add(channelId)) next.remove(channelId)
+        val immutable = next.toSet()
+        multichannelDownmixSoloChannels.value = immutable
+        prefs.edit().putStringSet(KEY_MULTICHANNEL_DOWNMIX_SOLO, immutable).apply()
+    }
+
+    fun clearMultichannelDownmixMuteSolo() {
+        multichannelDownmixMutedChannels.value = emptySet()
+        multichannelDownmixSoloChannels.value = emptySet()
+        prefs.edit()
+            .remove(KEY_MULTICHANNEL_DOWNMIX_MUTED)
+            .remove(KEY_MULTICHANNEL_DOWNMIX_SOLO)
+            .apply()
+    }
+
+    fun setMultichannelDownmixLfeFilterMode(mode: DownmixLfeFilterMode) {
+        multichannelDownmixLfeFilterMode.value = mode
+        prefs.edit().putString(KEY_MULTICHANNEL_DOWNMIX_LFE_FILTER_MODE, mode.key).apply()
+    }
+
+    fun setMultichannelDownmixAutoHeadroom(enabled: Boolean) {
+        multichannelDownmixAutoHeadroom.value = enabled
+        prefs.edit().putBoolean(KEY_MULTICHANNEL_DOWNMIX_AUTO_HEADROOM, enabled).apply()
+    }
+
+    fun currentDownmixConfig(): DownmixConfig = DownmixConfig(
+        enabled = multichannelDownmixEnabled.value,
+        preampDb = multichannelDownmixPreampDb.value,
+        mutedChannels = multichannelDownmixMutedChannels.value,
+        soloChannels = multichannelDownmixSoloChannels.value,
+        lfeFilterMode = multichannelDownmixLfeFilterMode.value,
+        autoHeadroom = multichannelDownmixAutoHeadroom.value,
+    )
 
     fun setPlaybackSpeed(value: Float) {
         val normalized = value.coerceIn(0.1f, 10.0f)
@@ -2163,6 +2243,11 @@ object AppSettings {
     fun setShowNavigationBar(value: Boolean) {
         showNavigationBar.value = value
         prefs.edit().putBoolean(KEY_SHOW_NAVIGATION_BAR, value).apply()
+    }
+
+    fun setShowPlayerDragHandle(value: Boolean) {
+        showPlayerDragHandle.value = value
+        prefs.edit().putBoolean(KEY_SHOW_PLAYER_DRAG_HANDLE, value).apply()
     }
 
     fun setQuietMode(value: Boolean) {
@@ -3490,6 +3575,12 @@ object AppSettings {
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_DOLBY_ATMOS = "dolby_atmos"
     private const val KEY_SPATIAL_AUDIO = "spatial_audio"
+    private const val KEY_MULTICHANNEL_DOWNMIX_ENABLED = "multichannel_downmix_enabled"
+    private const val KEY_MULTICHANNEL_DOWNMIX_PREAMP_DB = "multichannel_downmix_preamp_db"
+    private const val KEY_MULTICHANNEL_DOWNMIX_MUTED = "multichannel_downmix_muted"
+    private const val KEY_MULTICHANNEL_DOWNMIX_SOLO = "multichannel_downmix_solo"
+    private const val KEY_MULTICHANNEL_DOWNMIX_LFE_FILTER_MODE = "multichannel_downmix_lfe_filter_mode"
+    private const val KEY_MULTICHANNEL_DOWNMIX_AUTO_HEADROOM = "multichannel_downmix_auto_headroom"
     private const val KEY_SPEED = "playback_speed"
     private const val KEY_PITCH = "playback_pitch"
     private const val KEY_THEME = "theme_mode"
@@ -3574,6 +3665,7 @@ object AppSettings {
     private const val KEY_LIBRARY_SECTIONS_HIDDEN = "library_sections_hidden"
     private const val KEY_SHOW_STATUS_BAR = "show_status_bar"
     private const val KEY_SHOW_NAVIGATION_BAR = "show_navigation_bar"
+    private const val KEY_SHOW_PLAYER_DRAG_HANDLE = "show_player_drag_handle"
     private const val KEY_QUIET_MODE = "quiet_mode"
     private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
     private const val KEY_KEEP_SCREEN_ON_DURING_LYRICS = "keep_screen_on_during_lyrics"
